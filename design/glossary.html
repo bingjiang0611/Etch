@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Etch · 审计术语表</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .glossary-view { max-width: 1180px; min-height: 520px; margin: 0 auto; overflow: hidden; }
+  .glossary-catalog-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  .glossary-catalog-heading h2 { margin: 0; }
+  .glossary-catalog-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+  .glossary-search { position: relative; width: min(420px, 46%); }
+  .glossary-search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--faint); }
+  .glossary-search input { width: 100%; height: 34px; padding: 0 11px 0 32px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-sunken); color: #edf0f3; caret-color: var(--blue); }
+  .glossary-search input::placeholder { color: #59616c; }
+
+  .catalog-list { display: grid; }
+  .catalog-row { display: grid; width: 100%; grid-template-columns: minmax(0,1fr) 200px 96px; gap: 20px; align-items: center; padding: 13px 18px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; color: inherit; }
+  .video-identity { display: grid; min-width: 0; gap: 5px; }
+  .video-identity strong { overflow: hidden; color: #e5e8ec; font-size: 13px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+  .video-identity small { display: flex; align-items: center; gap: 6px; overflow: hidden; color: #77818d; font: 10px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+  .video-status { display: grid; gap: 4px; }
+  .video-status strong { color: #9ca6b2; font-size: 12px; font-weight: 560; }
+  .video-status[data-state="ready"] strong { color: var(--ok); }
+  .video-status[data-state="invalid"] strong { color: var(--danger); }
+  .video-status[data-state="not-audited"] strong { color: var(--faint); }
+  .video-status small { color: #68727e; font: 9px/1.3 var(--font-mono); }
+  .open-label { display: inline-flex; align-items: center; gap: 5px; justify-self: end; color: var(--blue-ink); font-size: 10px; }
+  .open-label svg { width: 12px; height: 12px; }
+
+  /* 单任务术语表 */
+  .glossary-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  .glossary-heading h2 { margin: 0; font-size: 15px; }
+  .glossary-heading p { max-width: 640px; margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+  .glossary-heading-actions { display: flex; flex: none; gap: 8px; }
+  .glossary-table { display: grid; }
+  .glossary-row { display: grid; grid-template-columns: minmax(160px,1fr) minmax(160px,1fr) minmax(220px,1.2fr); gap: 18px; align-items: center; min-height: 56px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+  .glossary-row strong { color: #dce1e7; font-size: 13px; }
+  .glossary-row .target { color: var(--ok); font-size: 13px; }
+  .glossary-row .cues { color: #778493; font: 10px/1.55 var(--font-mono); }
+  .glossary-table-heading { min-height: 38px; background: var(--surface-sunken); }
+  .glossary-table-heading span { color: #79838f; font-size: 10px; font-weight: 600; letter-spacing: .04em; }
+  .section-tabs { display: flex; gap: 4px; padding: 12px 18px 0; }
+  .section-tab { padding: 6px 12px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; }
+  .section-tab.is-active { border-color: var(--line-strong); background: var(--surface-raised); color: var(--fg); }
+
+  @media (max-width: 1120px) {
+    .glossary-catalog-heading { align-items: stretch; flex-direction: column; }
+    .glossary-search { width: 100%; }
+    .catalog-row { grid-template-columns: minmax(0,1fr) 150px; }
+    .open-label { display: none; }
+    .glossary-row { grid-template-columns: 1fr; gap: 5px; }
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="主导航">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><span>Etch</span></div>
+    <nav>
+      <a class="nav-item" href="queue.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>任务队列<span class="nav-count">3</span></a>
+      <a class="nav-item is-active" href="glossary.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>审计术语表</a>
+      <a class="nav-item" href="settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>设置</a>
+    </nav>
+    <div class="runtime-state"><span class="status-dot" data-status="ready" aria-hidden="true"></span><div><strong>环境 9/9 可用</strong><span>arm64 · v0.1.0</span></div></div>
+  </aside>
+
+  <main class="main-panel">
+    <header class="page-header"><div><p class="eyebrow">跨任务术语一致性</p><h1>审计术语表</h1></div></header>
+
+    <!-- 单任务术语视图 -->
+    <section class="panel glossary-view" aria-label="当前任务审计术语">
+      <div class="section-tabs" role="tablist">
+        <button class="section-tab" type="button" role="tab">全部视频术语表</button>
+        <button class="section-tab is-active" type="button" role="tab" aria-selected="true">当前任务</button>
+      </div>
+      <div class="glossary-heading">
+        <div>
+          <span class="eyebrow-blue">当前任务 · 14 条术语</span>
+          <h2>How the Attention Mechanism Actually Works — Deep Dive</h2>
+          <p>人工字幕修改优先于术语表;此处保留模型全量审计结果供追溯。点击引用 cue 可回到工作台对应位置。</p>
+        </div>
+        <div class="glossary-heading-actions"><button class="secondary-button" type="button">返回字幕校对</button></div>
+      </div>
+      <div class="glossary-table">
+        <div class="glossary-row glossary-table-heading"><span>原文术语</span><span>统一译法</span><span>引用 cue</span></div>
+        <article class="glossary-row"><strong>attention head</strong><span class="target">注意力头</span><small class="cues">#12  #34  #87  #103  #158  #201  #244</small></article>
+        <article class="glossary-row"><strong>context window</strong><span class="target">上下文窗口</span><small class="cues">#88  #142  #189</small></article>
+        <article class="glossary-row"><strong>positional encoding</strong><span class="target">位置编码</span><small class="cues">#89  #90  #176</small></article>
+        <article class="glossary-row"><strong>token</strong><span class="target">token(保留原词)</span><small class="cues">#5  #21  #86  #133  …</small></article>
+        <article class="glossary-row"><strong>softmax</strong><span class="target">softmax(保留原词)</span><small class="cues">#44  #45  #71</small></article>
+        <article class="glossary-row"><strong>key / value</strong><span class="target">键 / 值</span><small class="cues">#33  #34  #35</small></article>
+      </div>
+    </section>
+
+    <!-- 全部视频术语目录(参考态,展示搜索/状态) -->
+    <section class="panel glossary-view" aria-label="全部视频术语目录" style="margin-top:12px">
+      <div class="glossary-catalog-heading">
+        <div><h2>视频术语表 · 全部任务</h2><p>按视频标题、URL 或本地路径查找,选择视频查看完整审计术语。</p></div>
+        <label class="glossary-search"><span class="sr-only">搜索视频术语表</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg><input type="search" placeholder="搜索标题、URL 或本地路径" /></label>
+      </div>
+      <div class="catalog-list" role="list">
+        <button class="catalog-row row-hover" role="listitem" type="button">
+          <span class="video-identity"><strong>How the Attention Mechanism Actually Works — Deep Dive</strong><small><span class="src-chip">URL</span> youtube.com/watch?v=kytkf5Zg9pQ</small></span>
+          <span class="video-status" data-state="ready"><strong>14 条术语</strong><small>2026-07-15 16:08</small></span>
+          <span class="open-label">查看<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="9 6 15 12 9 18"/></svg></span>
+        </button>
+        <button class="catalog-row row-hover" role="listitem" type="button">
+          <span class="video-identity"><strong>局部重训练如何影响下游泛化(会议录像)</strong><small><span class="src-chip">本地</span> ~/Movies/talks/retrain-generalization.mp4</small></span>
+          <span class="video-status" data-state="not-audited"><strong>尚未生成术语表</strong><small>审计待运行</small></span>
+          <span class="open-label">查看<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="9 6 15 12 9 18"/></svg></span>
+        </button>
+        <button class="catalog-row row-hover" role="listitem" type="button">
+          <span class="video-identity"><strong>Building a Local-First Desktop App — full talk</strong><small><span class="src-chip">URL</span> youtube.com/watch?v=abc123XYZ</small></span>
+          <span class="video-status" data-state="ready"><strong>28 条术语</strong><small>2026-07-14 22:41</small></span>
+          <span class="open-label">查看<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="9 6 15 12 9 18"/></svg></span>
+        </button>
+        <button class="catalog-row row-hover" role="listitem" type="button">
+          <span class="video-identity"><strong>Rustconf keynote — 短片段测试</strong><small><span class="src-chip">URL</span> youtube.com/watch?v=def456QRS</small></span>
+          <span class="video-status" data-state="ready"><strong>审计完成 · 无术语</strong><small>2026-07-12 09:15</small></span>
+          <span class="open-label">查看<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="9 6 15 12 9 18"/></svg></span>
+        </button>
+      </div>
+      <footer class="pagination">
+        <span class="mono">1–10 / 12</span>
+        <div><button class="secondary-button" type="button" disabled>上一页</button><button class="secondary-button" type="button">下一页</button></div>
+      </footer>
+    </section>
+  </main>
+</div>
+</body>
+</html>

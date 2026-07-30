@@ -1,0 +1,52 @@
+{
+  "name": "etch",
+  "version": "0.1.1",
+  "description": "本地英中双语硬字幕工作站",
+  "author": "bingjiang0611",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:e2e": "npm run e2e:hermetic",
+    "e2e:hermetic": "npm run build && playwright test e2e/electron.spec.ts",
+    "smoke:installed": "npm run pack && playwright test e2e/installed-smoke.spec.ts",
+    "test:watch": "vitest",
+    "pack": "npm run build && electron-builder --dir --arm64 && npm run verify:pack",
+    "dist:mac": "npm run build && electron-builder --mac dmg --arm64 && npm run verify:dmg",
+    "verify:pack": "node scripts/verify-macos-app.mjs dist/mac-arm64/Etch.app",
+    "verify:dmg": "node scripts/verify-macos-dmg.mjs",
+    "verify:l1": "npm run typecheck && npm run lint && npm test && npm run build",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@playwright/test": "1.61.1",
+    "@types/node": "22.19.11",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.0.4",
+    "electron": "43.1.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "eslint": "9.39.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4",
+    "vite": "7.1.12",
+    "vitest": "4.1.10"
+  }
+}

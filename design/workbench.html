@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Etch · 工作台</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  /* 工作台 = 任务详情/编辑页:顶部头 + 折叠流水线 + 编辑区(视频 | 中英双列转录) */
+  .main-panel { padding: 22px 24px 22px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+  /* 头 */
+  .wb-header { flex: none; display: grid; gap: 10px; margin-bottom: 10px; }
+  .back-link { display: inline-flex; align-items: center; gap: 6px; width: fit-content; color: var(--muted); font-size: 12px; text-decoration: none; }
+  .back-link:hover { color: var(--blue-ink); }
+  .back-link svg { width: 14px; height: 14px; }
+  .wb-title-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  .wb-title-row > div { display: grid; min-width: 0; gap: 3px; }
+  .wb-title-row .provider-tag { color: var(--blue); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+  .wb-title-row h1 { font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wb-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+
+  /* 折叠流水线 */
+  .pipeline-collapse { flex: none; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); margin-bottom: 10px; }
+  .pipeline-collapse > summary { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: default; list-style: none; }
+  .pipeline-collapse > summary::-webkit-details-marker { display: none; }
+  .pipeline-collapse .chev { width: 14px; height: 14px; color: var(--faint); transition: transform .15s var(--ease-out); }
+  .pipeline-collapse[open] .chev { transform: rotate(90deg); }
+  .pc-title { font-size: 12px; font-weight: 600; color: var(--fg-soft); }
+  .pc-mini { display: flex; align-items: center; gap: 10px; margin-left: auto; font: 10px/1 var(--font-mono); color: var(--muted); }
+  .pc-mini .warn { color: var(--warn); }
+  .pc-mini .mini-bar { width: 120px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .pc-mini .mini-bar i { display: block; height: 100%; width: 45%; background: var(--run); }
+  .pc-body { padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+
+  .audit-checkpoint { margin: 12px 0 0; padding: 12px 14px; border: 1px solid var(--warn-line); border-radius: 8px; background: var(--warn-bg); }
+  .audit-checkpoint > .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--warn); font-size: 11px; font-weight: 600; }
+  .audit-checkpoint > .head svg { width: 14px; height: 14px; }
+  .audit-item { display: grid; gap: 3px; padding: 8px 0; border-top: 1px solid #2c2517; }
+  .audit-item strong { color: #ecd29a; font-size: 11px; }
+  .audit-item .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 2px; }
+  .audit-item .cmp div { display: grid; gap: 2px; }
+  .audit-item .cmp span { font: 9px/1 var(--font-mono); color: #9a8f78; text-transform: uppercase; letter-spacing: .04em; }
+  .audit-item .cmp p { margin: 0; font-size: 12px; }
+  .audit-item .cmp .before p { color: #c3b89f; }
+  .audit-item .cmp .after p { color: var(--ok); }
+  .audit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+  /* 编辑区:视频 | 转录面板 */
+  .editor-shell { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(440px, 1fr); gap: 10px; min-height: 0; }
+
+  .editor-stage { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: #050607; }
+  .stage-video { position: relative; flex: 1 1 auto; min-height: 0; display: grid; place-items: end center; overflow: hidden; background: radial-gradient(120% 90% at 50% 22%, #10161f, #050607 78%); }
+  .stage-video .frame-grid { position: absolute; inset: 0; background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 44px 44px; opacity: .1; }
+  .stage-video .center-play { position: absolute; top: 42%; left: 50%; transform: translate(-50%,-50%); display: grid; place-items: center; width: 60px; height: 60px; border: 1.5px solid rgb(255 255 255 / 22%); border-radius: 50%; background: rgb(10 14 20 / 55%); backdrop-filter: blur(3px); }
+  .stage-video .center-play svg { width: 22px; height: 22px; color: #dfe6ef; margin-left: 3px; }
+  .burn-overlay { position: relative; z-index: 1; width: 100%; padding: 0 0 26px; text-align: center; }
+  .burn-overlay .en { color: #f4f6f9; font-size: 18px; font-weight: 560; letter-spacing: -.01em; text-shadow: 0 1px 3px rgb(0 0 0 / 92%), 0 0 1px rgb(0 0 0 / 90%); }
+  .burn-overlay .zh { margin-top: 4px; color: #ffe9a8; font-size: 21px; font-weight: 620; text-shadow: 0 1px 3px rgb(0 0 0 / 92%), 0 0 1px rgb(0 0 0 / 90%); }
+  /* 视频下方:进度 + Original / Subtitle-style 预览切换 + 播放 */
+  .stage-toolbar { flex: none; display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-top: 1px solid var(--line); background: var(--surface); }
+  .stage-toolbar .tbtn { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line-strong); border-radius: 6px; background: #202630; color: var(--fg-soft); flex: none; }
+  .stage-toolbar .tbtn.play { background: var(--blue-strong); border-color: var(--blue-strong); color: #fff; }
+  .stage-toolbar .tbtn svg { width: 14px; height: 14px; }
+  .stage-toolbar .tl-time { font: 11px/1 var(--font-mono); color: var(--fg-soft); flex: none; }
+  .stage-toolbar .tl-time .sep { color: var(--faint); margin: 0 4px; }
+  .stage-toolbar .scrub { flex: 1; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .stage-toolbar .scrub i { display: block; height: 100%; width: 38%; background: var(--blue); }
+  .seg-toggle { display: inline-flex; padding: 2px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-sunken); flex: none; }
+  .seg-toggle button { padding: 5px 11px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 11px; }
+  .seg-toggle button.is-active { background: var(--surface-raised); color: var(--fg); }
+
+  /* 转录面板:中英双列 */
+  .transcript-panel { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); overflow: hidden; }
+  .tp-tabs { flex: none; display: flex; align-items: center; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); }
+  .tp-tab { padding: 7px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 12px; }
+  .tp-tab.is-active { color: var(--fg); border-bottom-color: var(--blue-strong); }
+  .tp-tab .n { margin-left: 5px; color: var(--faint); font: 9px/1 var(--font-mono); }
+  .tp-colhead { flex: none; display: grid; grid-template-columns: 1fr 1fr; background: var(--surface-sunken); border-bottom: 1px solid var(--line); }
+  .tp-colhead span { padding: 8px 14px; color: #79838f; font: 10px/1.3 var(--font-mono); font-weight: 600; letter-spacing: .03em; }
+  .tp-colhead span + span { border-left: 1px solid var(--line); }
+
+  .cue-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .cue-row { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); border-left: 2px solid transparent; }
+  .cue-row.is-current { background: #111923; border-left-color: var(--blue-strong); }
+  .cue-row[data-changed="true"] .cue-zh-col { background: #0f1a26; }
+  .cue-col { padding: 11px 14px; min-width: 0; }
+  .cue-en-col { border-right: 1px solid var(--line); display: grid; gap: 6px; align-content: start; }
+  .cue-meta { display: flex; align-items: center; gap: 8px; }
+  .cue-meta .spk { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-soft); font-size: 11px; font-weight: 550; }
+  .cue-meta .spk .avatar { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #22304a; color: var(--blue-ink); font: 8px/1 var(--font-mono); }
+  .cue-meta .stamp { margin-left: auto; color: var(--faint); font: 9px/1 var(--font-mono); }
+  .cue-meta .stamp b { color: var(--blue-ink); font-weight: 600; }
+  .cue-en { margin: 0; color: #d7dbe0; font-size: 12.5px; line-height: 1.55; }
+  .cue-zh-col { display: grid; align-content: start; gap: 5px; }
+  .cue-zh { margin: 0; color: #eef1f4; font-size: 13px; line-height: 1.55; outline: 0; border-radius: 5px; padding: 4px 6px; margin: -4px -6px; min-height: 24px; }
+  .cue-zh:hover { background: #0d1620; }
+  .cue-zh:focus { background: #0d1620; box-shadow: inset 0 0 0 1px var(--blue-strong); }
+  /* 状态提示放译文下方独立一行,右对齐,不遮挡文字 */
+  .cue-zh-col .edit-hint { justify-self: end; display: inline-flex; align-items: center; gap: 4px; height: 11px; color: var(--faint); font: 8px/1 var(--font-mono); opacity: 0; transition: opacity .12s; }
+  .cue-row:hover .cue-zh-col .edit-hint { opacity: 1; }
+  .cue-row[data-changed="true"] .cue-zh-col .edit-hint { opacity: 1; color: var(--blue); }
+  .cue-zh-col .edit-hint svg { width: 11px; height: 11px; }
+
+  @media (max-width: 1180px) {
+    .editor-shell { grid-template-columns: 1fr; grid-template-rows: minmax(200px, .9fr) minmax(0, 1.1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="主导航">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><span>Etch</span></div>
+    <nav>
+      <a class="nav-item" href="queue.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>任务队列<span class="nav-count">3</span></a>
+      <a class="nav-item" href="glossary.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>审计术语表</a>
+      <a class="nav-item" href="settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>设置</a>
+    </nav>
+    <div class="runtime-state"><span class="status-dot" data-status="ready" aria-hidden="true"></span><div><strong>环境 9/9 可用</strong><span>arm64 · v0.1.0</span></div></div>
+  </aside>
+
+  <main class="main-panel">
+    <!-- 任务头 -->
+    <div class="wb-header">
+      <a class="back-link" href="queue.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>任务队列</a>
+      <div class="wb-title-row">
+        <div>
+          <span class="provider-tag">Codex · 运行中</span>
+          <h1>How the Attention Mechanism Actually Works — Deep Dive</h1>
+        </div>
+        <div class="wb-actions">
+          <button class="secondary-button" type="button">查看审计术语表</button>
+          <button class="primary-button" type="button">重新生成成片</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 折叠流水线 + 审计 -->
+    <details class="pipeline-collapse">
+      <summary>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        <span class="pc-title">处理流水线</span>
+        <span class="pc-mini">
+          <span>4 / 10 · 翻译中</span>
+          <span class="mini-bar"><i></i></span>
+          <span class="warn">⚠ 2 处待裁决</span>
+        </span>
+      </summary>
+      <div class="pc-body">
+        <div class="pipeline" style="padding:14px 0 0">
+          <div class="rail" role="list" aria-label="流水线阶段">
+            <div class="rail-node" data-status="completed" data-done="true" role="listitem"><span class="rail-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg></span><span class="rail-label">抓取</span><span class="rail-sub">source</span></div>
+            <div class="rail-node" data-status="completed" data-done="true" role="listitem"><span class="rail-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg></span><span class="rail-label">探测</span><span class="rail-sub">1080p</span></div>
+            <div class="rail-node" data-status="completed" data-done="true" role="listitem"><span class="rail-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg></span><span class="rail-label">英文字幕</span><span class="rail-sub">whisper</span></div>
+            <div class="rail-node" data-status="completed" data-done="true" role="listitem"><span class="rail-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg></span><span class="rail-label">切句</span><span class="rail-sub">312 cue</span></div>
+            <div class="rail-node" data-status="running" role="listitem"><span class="rail-dot">05</span><span class="rail-label">翻译</span><span class="rail-sub">3/6 批</span><div class="rail-progress"><i style="width:50%"></i></div></div>
+            <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">06</span><span class="rail-label">术语审计</span><span class="rail-sub"></span></div>
+            <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">07</span><span class="rail-label">人工校对</span><span class="rail-sub"></span></div>
+            <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">08</span><span class="rail-label">生成 SRT</span><span class="rail-sub"></span></div>
+            <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">09</span><span class="rail-label">压制</span><span class="rail-sub"></span></div>
+            <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">10</span><span class="rail-label">验证</span><span class="rail-sub"></span></div>
+          </div>
+          <div class="pipeline-pools">
+            <span class="pool-tag"><span class="dot" style="background:var(--ok)"></span><b>download</b> 已释放</span>
+            <span class="pool-tag"><span class="dot" style="background:var(--ok)"></span><b>whisper</b> 已释放</span>
+            <span class="pool-tag"><span class="dot" style="background:var(--run)"></span><b>agent</b> 占用 1/3</span>
+            <span class="pool-tag"><span class="dot" style="background:var(--idle)"></span><b>audit</b> 空闲</span>
+            <span class="pool-tag"><span class="dot" style="background:var(--idle)"></span><b>ffmpeg</b> 空闲</span>
+          </div>
+        </div>
+        <div class="audit-checkpoint" role="alertdialog" aria-labelledby="audit-title">
+          <div class="head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3 2 20h20z"/><line x1="12" y1="10" x2="12" y2="14"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg><span id="audit-title">术语审计发现 2 处歧义,等待你的裁决</span></div>
+          <div class="audit-item"><strong>Cue 87 · "attention head"</strong><div class="cmp"><div class="before"><span>当前译法</span><p>注意力头部</p></div><div class="after"><span>建议统一为</span><p>注意力头</p></div></div></div>
+          <div class="audit-item"><strong>Cue 142 · "context window"</strong><div class="cmp"><div class="before"><span>当前译法</span><p>上下文视窗</p></div><div class="after"><span>建议统一为</span><p>上下文窗口</p></div></div></div>
+          <div class="audit-actions"><button class="secondary-button" type="button">全部保留当前译法</button><button class="primary-button" type="button">全部采用建议译法</button></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- 编辑区 -->
+    <div class="editor-shell">
+      <!-- 左:视频 + 硬字幕预览 + transport + Original/Subtitle-style 切换 -->
+      <div class="editor-stage">
+        <div class="stage-video">
+          <div class="frame-grid" aria-hidden="true"></div>
+          <div class="center-play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
+          <div class="burn-overlay" id="burn-overlay">
+            <p class="en">And then, we had started to build some interesting…</p>
+            <p class="zh">当然,我们已经开始开发一些有意思的东西。</p>
+          </div>
+        </div>
+        <div class="stage-toolbar">
+          <button class="tbtn play" type="button" aria-label="播放/暂停"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+          <span class="tl-time">07:02<span class="sep">/</span>18:24</span>
+          <span class="scrub" aria-hidden="true"><i></i></span>
+          <div class="seg-toggle" role="group" aria-label="预览模式">
+            <button class="is-active" type="button" data-preview="burn">Subtitle style</button>
+            <button type="button" data-preview="original">Original</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右:中英双列转录面板 -->
+      <aside class="transcript-panel">
+        <div class="tp-tabs" role="tablist">
+          <button class="tp-tab is-active" role="tab" type="button">Transcript<span class="n">312</span></button>
+          <button class="tp-tab" role="tab" type="button">Subtitle</button>
+          <button class="tp-tab" role="tab" type="button">Translate<span class="n">312</span></button>
+          <button class="tp-tab" role="tab" type="button">Style</button>
+        </div>
+        <div class="tp-colhead">
+          <span>英文原文 · 00:00–18:24</span>
+          <span>中文译文 · 简体中文</span>
+        </div>
+        <div class="cue-scroll" id="cue-scroll">
+          <article class="cue-row">
+            <div class="cue-col cue-en-col">
+              <div class="cue-meta"><span class="spk"><span class="avatar">KL</span>Katelyn Lucas</span><span class="stamp"><b>#84</b>06:52</span></div>
+              <p class="cue-en">And you, you get access to interviews.</p>
+            </div>
+            <div class="cue-col cue-zh-col">
+              <p class="cue-zh" contenteditable="true">让你有机会拿到访谈素材。</p>
+              <span class="edit-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>点击编辑</span>
+            </div>
+          </article>
+          <article class="cue-row">
+            <div class="cue-col cue-en-col">
+              <div class="cue-meta"><span class="spk"><span class="avatar">KL</span>Katelyn Lucas</span><span class="stamp"><b>#85</b>06:56</span></div>
+              <p class="cue-en">And we learn in and out of the model.</p>
+            </div>
+            <div class="cue-col cue-zh-col">
+              <p class="cue-zh" contenteditable="true">我们会摸透这个模型的里里外外。</p>
+              <span class="edit-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>点击编辑</span>
+            </div>
+          </article>
+          <article class="cue-row is-current" data-changed="true">
+            <div class="cue-col cue-en-col">
+              <div class="cue-meta"><span class="spk"><span class="avatar">KL</span>Katelyn Lucas</span><span class="stamp"><b>#86</b>07:00</span></div>
+              <p class="cue-en">And then, we had started to build some interesting…</p>
+            </div>
+            <div class="cue-col cue-zh-col">
+              <p class="cue-zh" contenteditable="true">当然,我们已经开始开发一些有意思的东西。</p>
+              <span class="edit-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>已修改·自动保存</span>
+            </div>
+          </article>
+          <article class="cue-row">
+            <div class="cue-col cue-en-col">
+              <div class="cue-meta"><span class="spk"><span class="avatar">KL</span>Katelyn Lucas</span><span class="stamp"><b>#87</b>07:03</span></div>
+              <p class="cue-en">Each attention head can specialize on a relationship.</p>
+            </div>
+            <div class="cue-col cue-zh-col">
+              <p class="cue-zh" contenteditable="true">每个注意力头都能专注于一种关系。</p>
+              <span class="edit-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>点击编辑</span>
+            </div>
+          </article>
+          <article class="cue-row">
+            <div class="cue-col cue-en-col">
+              <div class="cue-meta"><span class="spk"><span class="avatar">KL</span>Katelyn Lucas</span><span class="stamp"><b>#88</b>07:07</span></div>
+              <p class="cue-en">And the context window bounds how far back it looks.</p>
+            </div>
+            <div class="cue-col cue-zh-col">
+              <p class="cue-zh" contenteditable="true">而上下文窗口决定了它能回看多远。</p>
+              <span class="edit-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>点击编辑</span>
+            </div>
+          </article>
+          <article class="cue-row">
+            <div class="cue-col cue-en-col">
+              <div class="cue-meta"><span class="spk"><span class="avatar">KL</span>Katelyn Lucas</span><span class="stamp"><b>#89</b>07:11</span></div>
+              <p class="cue-en">This is why long-context models need clever encodings.</p>
+            </div>
+            <div class="cue-col cue-zh-col">
+              <p class="cue-zh" contenteditable="true">这就是长上下文模型需要精巧编码的原因。</p>
+              <span class="edit-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>点击编辑</span>
+            </div>
+          </article>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<script>
+  // 轻量交互:预览模式切换 / tab —— 静态蓝本用,落地走 React state
+  (function () {
+    var overlay = document.getElementById('burn-overlay');
+    document.querySelectorAll('.seg-toggle button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        document.querySelectorAll('.seg-toggle button').forEach(function (x) { x.classList.remove('is-active'); });
+        b.classList.add('is-active');
+        overlay.style.visibility = b.getAttribute('data-preview') === 'original' ? 'hidden' : 'visible';
+      });
+    });
+    document.querySelectorAll('.tp-tab').forEach(function (t) {
+      t.addEventListener('click', function () {
+        document.querySelectorAll('.tp-tab').forEach(function (x) { x.classList.remove('is-active'); });
+        t.classList.add('is-active');
+      });
+    });
+    // 编辑即标记已改(静态示意)
+    document.querySelectorAll('.cue-zh').forEach(function (z) {
+      z.addEventListener('input', function () { z.closest('.cue-row').setAttribute('data-changed', 'true'); });
+    });
+  })();
+</script>
+</body>
+</html>

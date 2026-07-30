@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Etch 是面向英文视频的本地双语译制工作站：转写、翻译、术语审计、逐句校对与硬字幕成片，一条工作流完成。">
+  <meta name="theme-color" content="#090b0e">
+  <meta property="og:title" content="Etch · 英文视频双语译制工作站">
+  <meta property="og:description" content="把英文视频刻成术语一致、可逐句校对的双语成片。">
+  <meta property="og:type" content="website">
+  <title>Etch · 英文视频双语译制工作站</title>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Etch",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "macOS 13.5 or later, Apple Silicon",
+      "softwareVersion": "0.1.1",
+      "downloadUrl": "https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg",
+      "description": "本地英中双语硬字幕工作站"
+    }
+  </script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b0e;
+      --bg-soft: #0d1015;
+      --surface: #11151b;
+      --surface-raised: #161b23;
+      --line: #252c36;
+      --line-strong: #374251;
+      --text: #f5f7fa;
+      --text-soft: #c8ced8;
+      --muted: #858e9d;
+      --faint: #606977;
+      --blue: #438cf5;
+      --blue-bright: #69a6ff;
+      --blue-ink: #07101e;
+      --green: #70d9ad;
+      --amber: #f0c56a;
+      --shadow: 0 32px 100px rgba(0, 0, 0, .5);
+      --ease-out: cubic-bezier(.23, 1, .32, 1);
+      --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 50% -10%, rgba(67, 140, 245, .13), transparent 32rem),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    a { color: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    ::selection { background: rgba(67, 140, 245, .34); color: #fff; }
+
+    .skip-link {
+      position: fixed;
+      z-index: 100;
+      top: 12px;
+      left: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: var(--text);
+      color: var(--bg);
+      transform: translateY(-160%);
+      transition: transform 160ms var(--ease-out);
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .container { width: min(1160px, calc(100% - 48px)); margin: 0 auto; }
+    .section { padding: 112px 0; }
+    .section-line { border-top: 1px solid var(--line); }
+
+    .site-header {
+      position: sticky;
+      z-index: 30;
+      top: 0;
+      border-bottom: 1px solid rgba(37, 44, 54, .72);
+      background: rgba(9, 11, 14, .78);
+      backdrop-filter: blur(18px) saturate(130%);
+    }
+    .nav {
+      display: flex;
+      min-height: 68px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 28px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 11px;
+      text-decoration: none;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -.02em;
+    }
+    .brand-mark {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border: 1px solid #3b4b62;
+      border-radius: 9px;
+      background: linear-gradient(145deg, #1b2635, #101722);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+      color: #dbe9ff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .nav-links { display: flex; align-items: center; gap: 28px; }
+    .nav-links a {
+      color: var(--muted);
+      font-size: 13px;
+      text-decoration: none;
+      transition: color 160ms ease;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-download {
+      display: inline-flex;
+      min-height: 38px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 16px;
+      border-radius: 9px;
+      background: var(--text);
+      color: var(--bg) !important;
+      font-weight: 700;
+      transition: transform 140ms var(--ease-out), background-color 160ms ease;
+    }
+    .nav-download:active { transform: scale(.97); }
+
+    .hero { padding: 116px 0 68px; text-align: center; }
+    .hero-inner { display: grid; justify-items: center; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 24px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(17, 21, 27, .72);
+      color: var(--text-soft);
+      font: 11px/1 var(--font-mono);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      animation: reveal 620ms 40ms var(--ease-out) both;
+    }
+    .eyebrow-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(112, 217, 173, .09);
+    }
+    .hero h1 {
+      max-width: 920px;
+      margin: 0;
+      font-size: clamp(48px, 7vw, 88px);
+      font-weight: 760;
+      letter-spacing: -.067em;
+      line-height: .98;
+      animation: reveal 700ms 90ms var(--ease-out) both;
+    }
+    .hero h1 span {
+      background: linear-gradient(100deg, #fff 10%, #a9c9fa 52%, #fff 88%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .hero-copy {
+      max-width: 700px;
+      margin: 28px auto 0;
+      color: var(--text-soft);
+      font-size: clamp(17px, 2vw, 20px);
+      line-height: 1.75;
+      animation: reveal 700ms 140ms var(--ease-out) both;
+    }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 36px;
+      animation: reveal 700ms 190ms var(--ease-out) both;
+    }
+    .button {
+      display: inline-flex;
+      min-height: 52px;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 0 22px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 700;
+      transition: transform 140ms var(--ease-out), border-color 160ms ease, background-color 160ms ease;
+    }
+    .button:active { transform: scale(.97); }
+    .button-primary {
+      background: var(--blue);
+      box-shadow: 0 12px 34px rgba(67, 140, 245, .22);
+      color: #fff;
+    }
+    .button-secondary { border-color: var(--line-strong); background: var(--surface); color: var(--text-soft); }
+    .button svg { width: 17px; height: 17px; }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px 22px;
+      margin: 25px 0 0;
+      padding: 0;
+      color: var(--muted);
+      font-size: 12px;
+      list-style: none;
+      animation: reveal 700ms 240ms var(--ease-out) both;
+    }
+    .hero-meta li { display: inline-flex; align-items: center; gap: 7px; }
+    .hero-meta svg { width: 14px; height: 14px; color: var(--green); }
+
+    .product-stage { position: relative; padding: 34px 0 116px; }
+    .product-stage::before {
+      position: absolute;
+      z-index: -1;
+      inset: 10% 15% 0;
+      border-radius: 50%;
+      background: rgba(67, 140, 245, .14);
+      filter: blur(100px);
+      content: "";
+    }
+    .app-window {
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      background: #0b0e12;
+      box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .05);
+    }
+    .window-bar {
+      display: flex;
+      height: 48px;
+      align-items: center;
+      gap: 7px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: #10141a;
+    }
+    .traffic { width: 10px; height: 10px; border-radius: 50%; background: #313946; }
+    .window-title { margin: 0 auto; padding-right: 44px; color: var(--faint); font: 10px/1 var(--font-mono); }
+    .app-shell { display: grid; min-height: 560px; grid-template-columns: 176px minmax(0, 1fr); }
+    .app-sidebar { padding: 20px 14px; border-right: 1px solid var(--line); background: #0d1015; }
+    .app-brand { display: flex; align-items: center; gap: 9px; margin-bottom: 30px; font-size: 13px; font-weight: 700; }
+    .app-brand .brand-mark { width: 27px; height: 27px; border-radius: 7px; font-size: 11px; }
+    .side-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 4px 0;
+      padding: 9px 10px;
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .side-item.active { background: #1a2029; color: var(--text-soft); }
+    .side-icon { width: 13px; color: var(--faint); text-align: center; }
+    .app-main { padding: 26px; }
+    .app-kicker { margin: 0 0 6px; color: var(--blue-bright); font: 9px/1 var(--font-mono); letter-spacing: .08em; }
+    .app-title-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .app-title { margin: 0; font-size: 19px; letter-spacing: -.02em; }
+    .small-button { padding: 8px 12px; border-radius: 7px; background: var(--blue); color: #fff; font-size: 10px; font-weight: 700; }
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 7px;
+      margin-top: 22px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    .pipe-step { min-width: 0; }
+    .pipe-top { display: flex; align-items: center; gap: 6px; color: var(--faint); font: 8px/1 var(--font-mono); }
+    .pipe-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+    .pipe-step.done .pipe-dot { background: var(--green); }
+    .pipe-step.active .pipe-dot { background: var(--blue-bright); box-shadow: 0 0 0 3px rgba(67, 140, 245, .14); }
+    .pipe-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pipe-line { height: 2px; margin-top: 9px; border-radius: 2px; background: var(--line); }
+    .pipe-step.done .pipe-line { background: var(--green); }
+    .pipe-step.active .pipe-line { background: linear-gradient(90deg, var(--blue) 62%, var(--line) 62%); }
+    .workbench { display: grid; grid-template-columns: minmax(0, .95fr) minmax(320px, 1.05fr); gap: 12px; margin-top: 12px; }
+    .video-well {
+      display: grid;
+      min-height: 350px;
+      align-content: end;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background:
+        linear-gradient(rgba(31, 38, 47, .22) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(31, 38, 47, .22) 1px, transparent 1px),
+        #07090c;
+      background-size: 42px 42px;
+    }
+    .subtitle-preview { padding: 26px 18px; background: linear-gradient(transparent, rgba(0, 0, 0, .78)); text-align: center; }
+    .subtitle-en { margin: 0 0 7px; color: #fff; font-size: 13px; }
+    .subtitle-zh { margin: 0; color: #f5d77b; font-size: 15px; font-weight: 700; }
+    .player-bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); background: #0f1319; }
+    .play { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 6px; background: var(--blue); font-size: 9px; }
+    .time { color: var(--muted); font: 8px/1 var(--font-mono); }
+    .scrub { height: 3px; flex: 1; border-radius: 4px; background: linear-gradient(90deg, var(--blue) 39%, var(--line) 39%); }
+    .cue-panel { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+    .cue-tabs { display: flex; gap: 22px; padding: 13px 16px 10px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 10px; }
+    .cue-tabs span:first-child { color: var(--text); }
+    .cue-grid { display: grid; grid-template-columns: 1fr 1fr; }
+    .cue {
+      min-height: 78px;
+      padding: 13px;
+      border-bottom: 1px solid var(--line);
+      color: var(--text-soft);
+      font-size: 10px;
+      line-height: 1.55;
+    }
+    .cue:nth-child(odd) { border-right: 1px solid var(--line); }
+    .cue.selected { background: rgba(67, 140, 245, .07); box-shadow: inset 2px 0 var(--blue); }
+    .cue-meta { display: block; margin-bottom: 6px; color: var(--faint); font: 8px/1 var(--font-mono); }
+
+    .section-head { display: grid; max-width: 760px; gap: 16px; margin-bottom: 52px; }
+    .section-tag { color: var(--blue-bright); font: 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+    .section-title { margin: 0; font-size: clamp(34px, 5vw, 56px); letter-spacing: -.052em; line-height: 1.06; }
+    .section-copy { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.75; }
+    .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .feature-card {
+      min-height: 286px;
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(145deg, rgba(22, 27, 35, .78), rgba(13, 16, 21, .78));
+    }
+    .feature-icon {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid #30415a;
+      border-radius: 10px;
+      background: rgba(67, 140, 245, .08);
+      color: var(--blue-bright);
+    }
+    .feature-icon svg { width: 20px; height: 20px; }
+    .feature-card h3 { margin: 46px 0 12px; font-size: 19px; letter-spacing: -.025em; }
+    .feature-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+
+    .workflow-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; counter-reset: workflow; }
+    .workflow-step {
+      position: relative;
+      padding: 26px 28px 28px 0;
+      border-top: 1px solid var(--line-strong);
+      counter-increment: workflow;
+    }
+    .workflow-step:not(:last-child)::after { position: absolute; top: -3px; right: 28px; width: 5px; height: 5px; border-radius: 50%; background: var(--blue); content: ""; }
+    .workflow-step::before { display: block; margin-bottom: 28px; color: var(--faint); font: 11px/1 var(--font-mono); content: "0" counter(workflow); }
+    .workflow-step h3 { margin: 0 0 10px; font-size: 16px; }
+    .workflow-step p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+
+    .local-panel {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 72px;
+      align-items: center;
+      padding: 48px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(135deg, #141a23, #0d1117 66%);
+    }
+    .local-panel h2 { margin: 0 0 18px; font-size: clamp(30px, 4vw, 48px); letter-spacing: -.05em; line-height: 1.08; }
+    .local-panel p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.75; }
+    .provider-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .provider {
+      display: flex;
+      min-height: 62px;
+      align-items: center;
+      gap: 12px;
+      padding: 0 15px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(9, 11, 14, .62);
+      color: var(--text-soft);
+      font: 11px/1 var(--font-mono);
+    }
+    .provider-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(112, 217, 173, .08); }
+
+    .download-panel {
+      position: relative;
+      overflow: hidden;
+      padding: 68px;
+      border: 1px solid rgba(105, 166, 255, .26);
+      border-radius: 22px;
+      background:
+        radial-gradient(circle at 100% 0, rgba(105, 166, 255, .21), transparent 45%),
+        linear-gradient(135deg, #1a2637, #111823 64%);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+    }
+    .download-panel::after {
+      position: absolute;
+      right: -60px;
+      bottom: -110px;
+      width: 300px;
+      height: 300px;
+      border: 1px solid rgba(105, 166, 255, .12);
+      border-radius: 50%;
+      box-shadow: 0 0 0 40px rgba(105, 166, 255, .025), 0 0 0 80px rgba(105, 166, 255, .018);
+      content: "";
+    }
+    .download-content { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr auto; gap: 48px; align-items: end; }
+    .download-panel h2 { max-width: 660px; margin: 0; font-size: clamp(40px, 6vw, 68px); letter-spacing: -.058em; line-height: 1; }
+    .download-panel p { max-width: 650px; margin: 20px 0 0; color: #aebbd0; font-size: 16px; line-height: 1.7; }
+    .download-actions { display: grid; min-width: 250px; gap: 10px; }
+    .release-status { padding: 14px 18px; border: 1px solid rgba(112, 217, 173, .28); border-radius: 8px; background: rgba(112, 217, 173, .08); color: var(--green); font: 600 11px/1.4 var(--font-mono); text-align: center; text-decoration: none; }
+    .download-sub { color: #8090a8; font: 10px/1.5 var(--font-mono); text-align: center; }
+    .requirements { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 12px 28px; margin-top: 44px; padding-top: 24px; border-top: 1px solid rgba(105, 166, 255, .17); color: #b3bfd0; font-size: 12px; }
+    .requirements span { display: inline-flex; align-items: center; gap: 8px; }
+    .requirements svg { width: 14px; height: 14px; color: var(--green); }
+
+    .faq-grid { display: grid; grid-template-columns: .75fr 1.25fr; gap: 80px; }
+    .faq-title { margin: 0; font-size: clamp(32px, 4vw, 48px); letter-spacing: -.05em; }
+    .faq-list { border-top: 1px solid var(--line); }
+    details { border-bottom: 1px solid var(--line); }
+    summary {
+      display: flex;
+      min-height: 76px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      cursor: pointer;
+      color: var(--text-soft);
+      font-size: 15px;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { color: var(--faint); font: 18px/1 var(--font-mono); content: "+"; transition: transform 180ms var(--ease-out); }
+    details[open] summary::after { transform: rotate(45deg); }
+    details p { max-width: 660px; margin: -2px 40px 24px 0; color: var(--muted); font-size: 13px; line-height: 1.75; }
+
+    .site-footer { padding: 34px 0 46px; border-top: 1px solid var(--line); }
+    .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; color: var(--faint); font-size: 11px; }
+    .footer-brand { color: var(--text-soft); font-weight: 700; }
+
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .button-primary:hover { background: #5598f7; transform: translateY(-1px); }
+      .button-secondary:hover { border-color: #4a586b; background: var(--surface-raised); }
+      .nav-download:hover { background: #dfe5ed; }
+      .feature-card { transition: transform 200ms var(--ease-out), border-color 180ms ease; }
+      .feature-card:hover { transform: translateY(-3px); border-color: var(--line-strong); }
+    }
+
+    @media (max-width: 900px) {
+      .section { padding: 88px 0; }
+      .nav-links a:not(.nav-download) { display: none; }
+      .app-shell { grid-template-columns: 1fr; }
+      .app-sidebar { display: none; }
+      .workbench { grid-template-columns: 1fr; }
+      .video-well { min-height: 290px; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .feature-card { min-height: auto; }
+      .feature-card h3 { margin-top: 28px; }
+      .workflow-grid { grid-template-columns: 1fr 1fr; gap: 0 18px; }
+      .local-panel { grid-template-columns: 1fr; gap: 34px; padding: 36px; }
+      .download-content { grid-template-columns: 1fr; align-items: start; }
+      .download-actions { min-width: 0; width: min(100%, 340px); }
+      .faq-grid { grid-template-columns: 1fr; gap: 40px; }
+    }
+
+    @media (max-width: 620px) {
+      .container { width: min(100% - 28px, 1160px); }
+      .nav { min-height: 60px; }
+      .nav-download { min-height: 34px; padding: 0 12px; }
+      .hero { padding: 82px 0 44px; }
+      .hero h1 { font-size: clamp(43px, 14vw, 62px); }
+      .hero-copy { font-size: 16px; }
+      .hero-actions { width: 100%; }
+      .hero-actions .button { width: 100%; }
+      .product-stage { padding-bottom: 82px; }
+      .app-main { padding: 16px; }
+      .pipeline { grid-template-columns: repeat(3, 1fr); }
+      .pipeline .pipe-step:nth-child(n+4) { display: none; }
+      .workbench { grid-template-columns: 1fr; }
+      .video-well { min-height: 270px; }
+      .cue-panel { display: none; }
+      .workflow-grid { grid-template-columns: 1fr; }
+      .workflow-step:not(:last-child)::after { right: 0; }
+      .local-panel { padding: 28px 22px; }
+      .provider-list { grid-template-columns: 1fr; }
+      .download-panel { padding: 38px 24px; }
+      .download-panel h2 { font-size: 42px; }
+      .requirements { display: grid; gap: 13px; }
+      .footer-inner { align-items: flex-start; flex-direction: column; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <header class="site-header">
+    <nav class="nav container" aria-label="主导航">
+      <a class="brand" href="#top" aria-label="Etch 首页">
+        <span class="brand-mark" aria-hidden="true">E</span>
+        <span>Etch</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">为什么 Etch</a>
+        <a href="#workflow">工作流</a>
+        <a href="#requirements">运行要求</a>
+        <a class="nav-download" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg">下载 DMG</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="container hero-inner">
+        <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Etch 0.1.1 · macOS · 公开测试版</p>
+        <h1>把英文视频，<br><span>刻成可信的双语成片。</span></h1>
+        <p class="hero-copy">转写、翻译、术语审计、逐句校对与硬字幕输出，一条本地工作流完成。不是先生成再祈祷——每一句都留给你检查。</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            下载 Apple Silicon DMG
+          </a>
+          <a class="button button-secondary" href="#workflow">看看它怎么工作</a>
+        </div>
+        <ul class="hero-meta" aria-label="系统要求摘要">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>macOS 13.5 或更高版本</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>Apple Silicon</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>本地优先处理</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="product-stage" aria-label="Etch 产品界面预览">
+      <div class="container">
+        <div class="app-window">
+          <div class="window-bar" aria-hidden="true"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span><span class="window-title">Etch · Workbench</span></div>
+          <div class="app-shell">
+            <aside class="app-sidebar" aria-hidden="true">
+              <div class="app-brand"><span class="brand-mark">E</span>Etch</div>
+              <div class="side-item"><span class="side-icon">☰</span>任务队列</div>
+              <div class="side-item active"><span class="side-icon">▣</span>工作台</div>
+              <div class="side-item"><span class="side-icon">▤</span>审计术语表</div>
+              <div class="side-item"><span class="side-icon">⚙</span>设置</div>
+            </aside>
+            <div class="app-main">
+              <p class="app-kicker">CODEX · TRANSLATING</p>
+              <div class="app-title-row"><h2 class="app-title">How the Attention Mechanism Actually Works</h2><span class="small-button">重新生成成片</span></div>
+              <div class="pipeline" aria-label="处理流水线示意">
+                <div class="pipe-step done"><div class="pipe-top"><span class="pipe-dot"></span><span class="pipe-name">下载</span></div><div class="pipe-line"></div></div>
+                <div class="pipe-step done"><div class="pipe-top"><span class="pipe-dot"></span><span class="pipe-name">转写</span></div><div class="pipe-line"></div></div>
+                <div class="pipe-step active"><div class="pipe-top"><span class="pipe-dot"></span><span class="pipe-name">翻译</span></div><div class="pipe-line"></div></div>
+                <div class="pipe-step"><div class="pipe-top"><span class="pipe-dot"></span><span class="pipe-name">术语审计</span></div><div class="pipe-line"></div></div>
+                <div class="pipe-step"><div class="pipe-top"><span class="pipe-dot"></span><span class="pipe-name">压制验证</span></div><div class="pipe-line"></div></div>
+              </div>
+              <div class="workbench">
+                <div class="video-well">
+                  <div class="subtitle-preview"><p class="subtitle-en">And then, we had started to build something interesting...</p><p class="subtitle-zh">当然，我们已经开始开发一些有意思的东西。</p></div>
+                  <div class="player-bar"><span class="play">▶</span><span class="time">07:02 / 18:24</span><span class="scrub"></span></div>
+                </div>
+                <div class="cue-panel">
+                  <div class="cue-tabs"><span>Transcript 312</span><span>Subtitle</span><span>Glossary 14</span></div>
+                  <div class="cue-grid">
+                    <div class="cue"><span class="cue-meta">#84 · 06:52</span>And you get access to interviews.</div><div class="cue">让你有机会看到访谈素材。</div>
+                    <div class="cue selected"><span class="cue-meta">#86 · 07:00</span>We started to build something interesting.</div><div class="cue selected">我们已经开始开发一些有意思的东西。</div>
+                    <div class="cue"><span class="cue-meta">#88 · 07:03</span>Each attention head can specialize.</div><div class="cue">每个注意力头都能专注于一种关系。</div>
+                    <div class="cue"><span class="cue-meta">#89 · 07:11</span>The context window bounds how far back it looks.</div><div class="cue">上下文窗口决定了它能回看多远。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-line" id="features">
+      <div class="container">
+        <header class="section-head">
+          <span class="section-tag">Why Etch</span>
+          <h2 class="section-title">生成字幕不难。<br>难的是每句都经得起检查。</h2>
+          <p class="section-copy">视频译制最怕的不是慢，而是同一个专有名词前后变译法、错误藏在数百条字幕里，以及失败后整条流水线重来。Etch 把质量控制放进生成过程本身。</p>
+        </header>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M4 12h10M4 19h16"/><path d="m17 9 3 3-3 3"/></svg></div>
+            <h3>术语跨批次一致</h3>
+            <p>集中审计专业术语和歧义译法，回到对应字幕逐条确认。长视频被分成多少批，都不该失去同一套语言。</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M12 4v16M7 9h2m-2 4h3m4-4h3m-3 4h2"/></svg></div>
+            <h3>逐句双语校对</h3>
+            <p>英文原句、中文译文、时间码并排呈现。修改自动保存，确认后再压制，不把“AI 已生成”误当成“已经可发布”。</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"/><path d="M4 4v4.6h4.6"/><path d="M12 8v5l3 2"/></svg></div>
+            <h3>任务失败可恢复</h3>
+            <p>下载、转写、翻译、审计和压制都有明确产物。某一步失败或字幕被修改，只重跑真正受影响的阶段。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-line" id="workflow">
+      <div class="container">
+        <header class="section-head">
+          <span class="section-tag">One calm workflow</span>
+          <h2 class="section-title">从一条链接，到可交付成片。</h2>
+          <p class="section-copy">把散落在终端、字幕编辑器和压制脚本里的步骤，收进一个能看见进度、错误与人工决策的位置。</p>
+        </header>
+        <div class="workflow-grid">
+          <article class="workflow-step"><h3>导入视频</h3><p>当前仅支持粘贴 HTTP(S) 视频链接；本地文件导入尚未实现。源文件与过程产物留在你指定的工作区。</p></article>
+          <article class="workflow-step"><h3>转写与翻译</h3><p>使用 MLX Whisper 转写英文，再选择本机可用的 Agent CLI 完成长上下文翻译。</p></article>
+          <article class="workflow-step"><h3>审计与校对</h3><p>检查跨批次术语冲突，在工作台逐句修改，保留真正需要人判断的地方。</p></article>
+          <article class="workflow-step"><h3>压制与验证</h3><p>生成中英双语 SRT，将字幕压制进视频，并验证成片可播放与输出完整。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-line">
+      <div class="container">
+        <div class="local-panel">
+          <div>
+            <span class="section-tag">Use what you already have</span>
+            <h2>复用你已经登录的本地 Agent。</h2>
+            <p>Etch 不要求你再配置一套模型 API。选择本机已有的 Claude、Codex、Qoder 或 OpenCode CLI 完成翻译；媒体处理仍在本机工作区执行。</p>
+          </div>
+          <div class="provider-list" aria-label="支持的本地 Agent CLI">
+            <div class="provider"><span class="provider-dot"></span>Claude</div>
+            <div class="provider"><span class="provider-dot"></span>Codex</div>
+            <div class="provider"><span class="provider-dot"></span>Qoder</div>
+            <div class="provider"><span class="provider-dot"></span>OpenCode</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-line" id="requirements">
+      <div class="container">
+        <div class="download-panel">
+          <div class="download-content">
+            <div>
+              <h2>把下一条英文视频，交给 Etch。</h2>
+              <p>下载 0.1.1 Apple Silicon DMG。Etch 会检查本机工具环境，并把缺少的依赖明确列出来。</p>
+            </div>
+            <div class="download-actions" aria-label="当前发行状态">
+              <a class="release-status" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg">下载 Etch 0.1.1 DMG</a>
+              <span class="download-sub">Apple Silicon · ad-hoc 签名 · 未公证</span>
+            </div>
+          </div>
+          <div class="requirements" aria-label="完整系统要求">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>macOS 13.5+</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>Apple Silicon Mac</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>至少一个已登录的 Agent CLI</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>yt-dlp / FFmpeg / Python / MLX Whisper</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-line" aria-labelledby="faq-title">
+      <div class="container faq-grid">
+        <div><span class="section-tag">FAQ</span><h2 class="faq-title" id="faq-title">构建前，你可能想知道。</h2></div>
+        <div class="faq-list">
+          <details><summary>Etch 会把视频上传到自己的云端吗？</summary><p>不会。Etch 的下载、转写、文件管理和压制流程运行在你的 Mac 与本地工作区。翻译内容是否离开设备，取决于你所选择的 Agent CLI 及其服务条款。</p></details>
+          <details><summary>为什么需要本地 Agent CLI？</summary><p>Etch 复用你已经安装并登录的 Claude、Codex、Qoder 或 OpenCode CLI 完成长上下文翻译，因此不需要在 Etch 内重复配置模型 API。至少安装其中一个即可。</p></details>
+          <details><summary>支持 Intel Mac 吗？</summary><p>当前 0.1.1 DMG 只面向 Apple Silicon，最低系统版本为 macOS 13.5。</p></details>
+          <details><summary>它支持哪些类型的视频？</summary><p>课程、访谈、演讲、视频播客、纪录片和其他英文视频都可以。Etch 专注双语字幕译制，不提供时间线剪辑、短视频模板或特效工具。</p></details>
+          <details><summary>有可公开下载的安装包吗？</summary><p>有。GitHub Release 提供 Apple Silicon DMG；当前仍是 ad-hoc 签名且未经 Apple 公证，首次启动可能需要在 Finder 中右键打开，或到“系统设置 → 隐私与安全性”选择“仍要打开”。</p></details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner"><span class="footer-brand">Etch · 可信译制</span><span>© <span id="year">2026</span> Etch. Made for bilingual storytelling.</span></div>
+  </footer>
+
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>

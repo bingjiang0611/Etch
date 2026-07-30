@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Etch · 任务队列</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  /* queue 专属 */
+  .url-entry { display: grid; grid-template-columns: 236px minmax(0,1fr); gap: 34px; align-items: start; padding: 18px 20px; border-radius: 9px 9px 0 0; }
+  .url-entry .intro p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+  .url-form { display: grid; gap: 10px; }
+  .url-controls { display: flex; gap: 8px; }
+  .url-controls .field-input { flex: 1 1 auto; min-width: 0; }
+  .url-controls .field-select { flex: none; width: auto; min-width: 138px; }
+  .url-controls .secondary-button { flex: none; }
+  .task-style-field { display: grid; gap: 6px; }
+  .task-style-field span { color: #8f98a4; font-size: 10px; }
+  .form-error { margin: 0; color: var(--danger); font-size: 11px; }
+
+  .queue-section { min-height: 300px; margin-top: 12px; overflow: hidden; }
+  .task-list { display: grid; }
+  .task-row { display: grid; grid-template-columns: 68px minmax(0,1fr) auto; gap: 14px; width: 100%; align-items: center; padding: 12px 18px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; text-align: left; }
+  .task-row.is-selected { background: #171d25; box-shadow: inset 2px 0 0 var(--blue-strong); }
+  .task-meta { display: grid; min-width: 0; gap: 5px; }
+  .task-meta strong { overflow: hidden; font-size: 13px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+  .task-sub { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .task-sub .id { color: var(--faint); font: 10px/1 var(--font-mono); }
+  .task-sub .provider { color: var(--muted); font-size: 10px; }
+  .task-sub .dot-sep { width: 3px; height: 3px; border-radius: 50%; background: #3a424c; }
+  .task-right { display: grid; justify-items: end; gap: 6px; }
+  .task-mini-progress { width: 128px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .task-mini-progress i { display: block; height: 100%; border-radius: 2px; background: var(--run); }
+  .task-mini-progress.is-done i { background: var(--ok); }
+  .task-mini-label { color: var(--faint); font: 9px/1 var(--font-mono); }
+  .task-row { cursor: default; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="主导航">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><span>Etch</span></div>
+    <nav>
+      <a class="nav-item is-active" href="queue.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>
+        任务队列<span class="nav-count">3</span>
+      </a>
+      <a class="nav-item" href="glossary.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>
+        审计术语表
+      </a>
+      <a class="nav-item" href="settings.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+        设置
+      </a>
+    </nav>
+    <div class="runtime-state">
+      <span class="status-dot" data-status="ready" aria-hidden="true"></span>
+      <div><strong>环境 9/9 可用</strong><span>arm64 · v0.1.0</span></div>
+    </div>
+  </aside>
+
+  <main class="main-panel">
+    <header class="page-header">
+      <div><p class="eyebrow">本地双语字幕流水线</p><h1>任务队列</h1></div>
+      <button class="primary-button" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" style="width:15px;height:15px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        新建任务
+      </button>
+    </header>
+
+    <!-- 添加视频 -->
+    <section class="panel url-entry" aria-labelledby="url-title">
+      <div class="intro">
+        <h2 id="url-title">添加视频</h2>
+        <p>粘贴 YouTube、X、Vimeo 链接,或拖入本地视频。产物全程留在本地工作区。</p>
+      </div>
+      <div class="url-form">
+        <div class="url-controls">
+          <input class="field-input" id="video-url" placeholder="https://www.youtube.com/watch?v=…" aria-label="视频链接" />
+          <select class="field-select" aria-label="翻译 Provider">
+            <option>Claude Code</option><option selected>Codex</option><option>Qoder</option><option>OpenCode</option>
+          </select>
+          <button class="secondary-button" type="button">加入队列</button>
+        </div>
+        <label class="task-style-field" for="style-note">
+          <span>翻译风格(选填)</span>
+          <textarea class="field-area" id="style-note" placeholder="例如:简洁自然,保留足球解说的临场感;术语沿用上一条视频的统一译法"></textarea>
+        </label>
+      </div>
+    </section>
+
+    <!-- 队列表 -->
+    <section class="panel queue-section" aria-labelledby="queue-title">
+      <div class="section-heading">
+        <div><h2 id="queue-title">全部任务</h2><span class="count-badge">3</span></div>
+        <p class="sub">每阶段并发 3 · 1 个运行中</p>
+      </div>
+      <div class="task-list" role="list">
+
+        <a class="task-row row-hover" role="listitem" href="workbench.html" aria-label="打开工作台:How the Attention Mechanism Actually Works">
+          <span class="thumb" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 8.5 16 12l-6 3.5z" fill="currentColor" stroke="none"/></svg>
+            <span class="dur mono">18:24</span>
+          </span>
+          <span class="task-meta">
+            <strong>How the Attention Mechanism Actually Works — Deep Dive</strong>
+            <span class="task-sub">
+              <span class="src-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 8.4a2.7 2.7 0 0 0-1.9-1.9C17.4 6 12 6 12 6s-5.4 0-7.1.5A2.7 2.7 0 0 0 3 8.4 28 28 0 0 0 2.6 12 28 28 0 0 0 3 15.6a2.7 2.7 0 0 0 1.9 1.9C6.6 18 12 18 12 18s5.4 0 7.1-.5a2.7 2.7 0 0 0 1.9-1.9A28 28 0 0 0 21.4 12 28 28 0 0 0 21 8.4z"/><path d="M10 9.2 15 12l-5 2.8z" fill="currentColor" stroke="none"/></svg>URL</span>
+              <span class="dot-sep"></span><span class="provider">Codex</span>
+              <span class="dot-sep"></span><span class="id mono">7f3a9c2e</span>
+            </span>
+          </span>
+          <span class="task-right">
+            <span class="pill" data-status="running">translate</span>
+            <span class="task-mini-progress"><i style="width:45%"></i></span>
+            <span class="task-mini-label mono">4 / 10 完成 · 翻译中</span>
+          </span>
+        </a>
+
+        <a class="task-row row-hover" role="listitem" href="workbench.html">
+          <span class="thumb" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 8.5 16 12l-6 3.5z" fill="currentColor" stroke="none"/></svg>
+            <span class="dur mono">6:02</span>
+          </span>
+          <span class="task-meta">
+            <strong>局部重训练如何影响下游泛化(会议录像)</strong>
+            <span class="task-sub">
+              <span class="src-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M9 8.5 15 12l-6 3.5z" fill="currentColor" stroke="none"/></svg>本地</span>
+              <span class="dot-sep"></span><span class="provider">Claude Code</span>
+              <span class="dot-sep"></span><span class="id mono">a1c85b40</span>
+            </span>
+          </span>
+          <span class="task-right">
+            <span class="pill" data-status="checkpoint">audit · 待确认</span>
+            <span class="task-mini-progress"><i style="width:58%"></i></span>
+            <span class="task-mini-label mono">6 / 10 阶段 · 需决策</span>
+          </span>
+        </a>
+
+        <a class="task-row row-hover" role="listitem" href="workbench.html">
+          <span class="thumb" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 8.5 16 12l-6 3.5z" fill="currentColor" stroke="none"/></svg>
+            <span class="dur mono">42:11</span>
+          </span>
+          <span class="task-meta">
+            <strong>Building a Local-First Desktop App — full talk</strong>
+            <span class="task-sub">
+              <span class="src-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 8.4a2.7 2.7 0 0 0-1.9-1.9C17.4 6 12 6 12 6s-5.4 0-7.1.5A2.7 2.7 0 0 0 3 8.4 28 28 0 0 0 2.6 12 28 28 0 0 0 3 15.6a2.7 2.7 0 0 0 1.9 1.9C6.6 18 12 18 12 18s5.4 0 7.1-.5a2.7 2.7 0 0 0 1.9-1.9A28 28 0 0 0 21.4 12 28 28 0 0 0 21 8.4z"/><path d="M10 9.2 15 12l-5 2.8z" fill="currentColor" stroke="none"/></svg>URL</span>
+              <span class="dot-sep"></span><span class="provider">OpenCode</span>
+              <span class="dot-sep"></span><span class="id mono">c93de017</span>
+            </span>
+          </span>
+          <span class="task-right">
+            <span class="pill" data-status="completed">completed</span>
+            <span class="task-mini-progress is-done"><i style="width:100%"></i></span>
+            <span class="task-mini-label mono">10 / 10 阶段 · 成片就绪</span>
+          </span>
+        </a>
+
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>
