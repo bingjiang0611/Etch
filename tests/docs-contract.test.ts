@@ -7,6 +7,8 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageJson = JSON.parse(readFileSync(resolve(projectRoot, 'package.json'), 'utf8')) as { version: string }
 const website = readFileSync(resolve(projectRoot, 'website/index.html'), 'utf8')
 const readme = readFileSync(resolve(projectRoot, 'README.md'), 'utf8')
+const readmeEn = readFileSync(resolve(projectRoot, 'README_EN.md'), 'utf8')
+const readmeJa = readFileSync(resolve(projectRoot, 'README_JA.md'), 'utf8')
 const dmgUrl = `https://github.com/bingjiang0611/Etch/releases/download/v${packageJson.version}/Etch-${packageJson.version}-arm64.dmg`
 
 describe('documentation capability contract', () => {
@@ -28,5 +30,19 @@ describe('documentation capability contract', () => {
     expect(readme).toContain('| Planned |')
     expect(readme).toContain('GitHub Release 提供 Apple Silicon DMG')
     expect(readme).toContain('当前 DMG 未经 Apple 公证')
+  })
+
+  it('keeps localized READMEs discoverable and aligned with the release contract', () => {
+    expect(readme).toContain('./README_EN.md')
+    expect(readme).toContain('./README_JA.md')
+
+    for (const localized of [readmeEn, readmeJa]) {
+      expect(localized).toContain(`Etch-${packageJson.version}-arm64.dmg`)
+      expect(localized).toContain('HTTP(S)')
+      expect(localized).toContain('./README.md')
+    }
+
+    expect(readmeEn).toContain('./README_JA.md')
+    expect(readmeJa).toContain('./README_EN.md')
   })
 })

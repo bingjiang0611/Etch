@@ -1,4 +1,8 @@
 <p align="center">
+  <a href="./README_EN.md">English</a> | <strong>中文文档</strong> | <a href="./README_JA.md">日本語</a>
+</p>
+
+<p align="center">
   <img src="./assets/readme/hero.svg" width="100%" alt="Etch：把英文视频刻写成可校对的双语硬字幕成片">
 </p>
 
