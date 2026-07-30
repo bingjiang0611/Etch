@@ -1,98 +1,197 @@
-# Etch
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Etch：把英文视频刻写成可校对的双语硬字幕成片">
+</p>
 
-Etch 是 Apple Silicon macOS 上的本地英中双语硬字幕工作站。它把视频获取、英文字幕获取或转写、Agent CLI 翻译、术语审计、逐句校对、双语字幕压制和成片验证组织成可恢复的任务流水线。
+<p align="center">
+  <strong>URL 进，双语硬字幕成片出。</strong><br>
+  Etch 把视频获取、英文字幕或本地转写、Agent CLI 翻译、术语审计、人工校对、SRT 生成和 FFmpeg 压制组织成一条可恢复的本地流水线。
+</p>
+
+<p align="center">
+  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>下载最新版 DMG</strong></a>
+  ·
+  <a href="#从源码运行">从源码运行</a>
+  ·
+  <a href="#能力与边界">能力与边界</a>
+  ·
+  <a href="#验证层级">验证层级</a>
+</p>
+
+<p align="center">
+  <img src="./design/preview-workbench.png" width="100%" alt="Etch 工作台：视频预览、处理流水线、双栏字幕校对和术语审计">
+</p>
+
+> 上图为 Etch Workbench 设计预览。实际数据来自你的本地任务、媒体文件和所选 Agent CLI；README 不使用伪造的 token、字幕或处理结果。
 
 ## 当前状态
 
 - 当前版本：`0.1.1`
-- 当前输入：**仅支持 HTTP(S) URL**；`local` 仍只是领域 schema 的预留类型，UI 与 pipeline 尚未实现本地文件导入。
-- 当前发行：GitHub Release 提供 Apple Silicon DMG。App 使用 ad-hoc 签名，**没有 Developer ID 签名、公证或自动更新**，首次打开可能被 Gatekeeper 拦截。
+- 当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。
+- 当前发行：GitHub Release 提供 Apple Silicon DMG。
 - 当前平台：Apple Silicon Mac，macOS 13.5 或更高版本。
 
-## Capability matrix
+## 从 URL 到成片
 
-| 状态 | 能力 | 当前边界 |
-| --- | --- | --- |
-| Implemented | URL 任务队列 | 一次可创建 1–50 个 HTTP(S) URL 任务；支持暂停队列、停止与恢复。 |
-| Implemented | 视频与字幕获取 | 使用 `yt-dlp` 获取源视频并优先尝试英文字幕；失败时可回退到本地 Whisper。 |
-| Implemented | 本地转写 | 使用 `mlx_whisper`；超过 20 分钟的媒体按固定 20 分钟窗口分段，带 2 秒重叠、逐段缓存、失败续跑与时间轴合并。 |
-| Implemented | 四个 Agent CLI adapter | 支持 Claude、Codex、Qoder、OpenCode 的检测、翻译、session resume 与结构化输出校验。 |
-| Implemented | 翻译质量工作流 | 支持批次翻译、全局术语审计、历史术语提示、英文源审计、人工逐句编辑和局部修复。 |
-| Implemented | 字幕与成片 | 生成双语 SRT，按任务选择紧凑/标准/大字三档字幕预设，使用 FFmpeg 压制并用 ffprobe 验证成片。 |
-| Implemented | 可恢复任务状态 | `task.json` 是任务权威；阶段产物使用 run-scoped 不可变候选，提交受 lease、revision 与 fingerprint 约束。 |
-| Implemented | 本地运行治理 | 队列索引在启动时从任务目录重建于内存；工具健康、任务发现冲突、退出收敛、通知和防睡眠状态可见或可恢复。 |
-| Partial | Provider 兼容性 | adapter 单元/集成测试覆盖四端协议；hermetic E2E 覆盖桌面边界与工具探测。真实账号、具体 CLI 版本和服务端行为仍需在当前机器逐个验证。 |
-| Partial | 长媒体资源治理 | 已有确定性分段和恢复；尚无静音点切分、全局磁盘预算或自动缓存清理策略。 |
-| Planned | 本地文件导入 | 需要完整实现文件选择、APFS clone/copy、空间检查、字幕探测、canonical media 与恢复，当前没有入口。 |
-| Partial | 公开发行 | GitHub Release 提供 arm64 DMG 与 SHA-256；Developer ID、公证、provenance、CI release gate 和自动更新尚未实现。 |
+```text
+视频 URL
+  → 获取视频与英文字幕
+  → 无字幕时使用 mlx_whisper 本地转写
+  → Agent CLI 分批翻译
+  → 历史术语约束与全局术语审计
+  → 人工逐句校对并全局应用术语修改
+  → 生成双语 SRT
+  → FFmpeg 压制并用 ffprobe 验证
+```
 
-## 运行依赖
+Etch 不把这些步骤伪装成一次不可见的“AI 生成”。每个任务保留十阶段状态、失败原因、Provider session、不可变候选产物和可恢复 checkpoint；人工校对是正式流水线阶段，不是出错后的补救页面。
 
-- Node.js `22.22.1`（项目 `.nvmrc` 的验证版本；`package.json` 最低要求为 `22.12.0`）
+## 为什么是 Etch
+
+- **Local-first**：下载、转写、文件管理、字幕生成和压制在本机完成。
+- **可恢复**：异常退出后从 `task.json`、durable run registry 和阶段产物恢复，不把退出码 `0` 当作成功证明。
+- **术语一致**：新任务参考历史视频术语表；术语修改可先预览影响 cue，再一次性应用到译文。
+- **Provider 可替换**：支持 Claude、Codex、Qoder、OpenCode 本地 CLI，不绑定单一 SDK 或常驻服务。
+- **人工可控**：逐句中英对照、视频定位、自动保存、审核 checkpoint、重新生成 SRT 与成片。
+- **删除语义明确**：可以只隐藏任务记录，也可以把 Etch 管理的任务目录和产物移入 macOS 废纸篓。
+
+## 最快开始
+
+### 1. 安装
+
+1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.1-arm64.dmg`。
+2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
+3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
+
+当前 DMG 未经 Apple 公证，使用 ad-hoc 签名，尚未使用 Apple Developer ID。DMG 只是安装容器，不会绕过 Gatekeeper。
+
+### 2. 检查本地工具
+
+Etch 启动后会自动检测 executable、版本、关键能力和登录状态。开始任务前至少需要：
+
 - Apple Silicon Mac，macOS 13.5+
 - `yt-dlp`
 - 带 `libass` 的 `ffmpeg` 与配套 `ffprobe`
 - Python 3.12 与 `mlx_whisper`
 - 至少一个已安装并登录的 `claude`、`codex`、`qodercli` 或 `opencode`
 
-Etch 会在设置页检测 executable、版本、关键能力和登录状态。工具不在常规 `PATH` 时，可在设置中指定绝对路径 override。
+工具不在常规 `PATH` 时，可在设置页指定绝对路径 override。
 
-## 从源码运行与构建
+### 3. 创建任务
+
+在任务队列中输入一个或多个 HTTP(S) 视频 URL，选择 Provider，并按需填写翻译风格。任务创建后自动开始；处理中可以停止，之后从已提交阶段继续。
+
+## 能力与边界
+
+| 状态 | 能力 | 当前边界 |
+| --- | --- | --- |
+| Implemented | URL 任务队列 | 一次创建 1–50 个 URL 任务；支持暂停队列、停止、恢复和阶段并发。 |
+| Implemented | 字幕获取与本地转写 | 优先获取英文字幕；失败时回退到 `mlx_whisper`，长媒体按窗口分段缓存和合并。 |
+| Implemented | 四个 Agent CLI | Claude、Codex、Qoder、OpenCode 的检测、翻译、session resume 与结构化输出校验。 |
+| Implemented | 翻译质量工作流 | 分批翻译、英文源审计、历史术语提示、全局术语审计、逐句编辑和局部修复。 |
+| Implemented | 双语字幕与硬字幕 | 生成双语 SRT，支持紧凑/标准/大字三档预设，FFmpeg 压制后用 ffprobe 验证。 |
+| Implemented | 可恢复任务状态 | `task.json` 是任务权威；产物提交受 lease、revision 与 fingerprint 约束。 |
+| Partial | Provider 兼容性 | 自动化测试覆盖四端协议；真实账号、CLI 版本和服务端行为仍需在当前机器验证。 |
+| Partial | 长媒体资源治理 | 已有确定性分段和续跑；尚无静音点切分、全局磁盘预算或自动缓存清理。 |
+| Partial | 公开发行 | 提供 arm64 DMG 与 SHA-256；尚无 Developer ID、公证、自动更新或 CI release gate。 |
+| Planned | 本地文件导入 | schema 已预留，但 UI、APFS clone/copy、空间检查和恢复链路尚未实现。当前仅支持 URL。 |
+
+<details>
+<summary><strong>查看更多界面</strong></summary>
+
+### 任务队列
+
+<img src="./design/preview-queue.png" width="100%" alt="Etch 任务队列设计预览">
+
+### 历史审计术语表
+
+<img src="./design/preview-glossary.png" width="100%" alt="Etch 历史审计术语表设计预览">
+
+</details>
+
+## 从源码运行
+
+验证环境使用 Node.js `22.22.1`：
 
 ```bash
+git clone https://github.com/bingjiang0611/Etch.git
+cd Etch
 nvm use
 npm ci
 npm run dev
 ```
 
-构建当前源码并验证 Apple Silicon 目录包：
+构建并验证 Apple Silicon `.app`：
 
 ```bash
 npm run pack
 ```
 
-输出位于 `dist/mac-arm64/Etch.app`。该产物是本机开发构建，不是可公开分发的安装包。
+输出：`dist/mac-arm64/Etch.app`
 
-构建并挂载验证 Apple Silicon DMG：
+构建、挂载并验证 DMG：
 
 ```bash
 npm run dist:mac
 ```
 
-输出位于 `dist/Etch-0.1.1-arm64.dmg`。验证脚本会检查 DMG 文件结构，并直接校验卷内 `Etch.app` 的签名、entitlements、arm64 架构、版本和最低系统版本。
+输出：`dist/Etch-0.1.1-arm64.dmg`
 
-## 安装公开 DMG
-
-1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases) 下载 `Etch-0.1.1-arm64.dmg`。
-2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
-3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 `Etch.app` 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
-
-当前 DMG 未经 Apple 公证。DMG 只是安装容器，不会绕过 Gatekeeper；需要无警告安装的正式发行版仍需 Developer ID Application 签名和 Apple notarization。
+DMG 验证会检查卷内 allowlist，并校验 `Etch.app` 的签名、entitlements、arm64 架构、版本和最低系统版本。
 
 ## 验证层级
 
-- L1：`npm run verify:l1`，再运行 `npm run pack` 与 `git diff --check`。覆盖类型、lint、Vitest、renderer/main build 和目录包结构。
-- 开发 E2E：`npm run e2e:hermetic`。它使用固定 fake tools、隔离 HOME/PATH/env，验证 UI、任务状态和进程合同；它不等于安装包 smoke，也不证明真实 Provider/网络可用。
-- L2：先把本次构建的 `Etch.app` 覆盖安装到 `/Applications/Etch.app`，再运行 `npm run smoke:installed` 并人工走查受影响的真实工具路径。
-- L3：使用真实 URL、真实媒体和四个已登录 Provider 覆盖完整用户路径。仓库没有把 L3 伪装成可自动通过的脚本；未逐项执行时不得宣称 MVP 全路径通过。
+| 层级 | 命令或路径 | 能证明什么 |
+| --- | --- | --- |
+| L1 | `npm run verify:l1`、`npm run pack`、`git diff --check` | 类型、lint、Vitest、renderer/main build 与目录包结构。 |
+| 开发 E2E | `npm run e2e:hermetic` | 使用隔离 HOME/PATH 与固定 fake tools 验证 UI、任务状态和进程合同；不证明真实 Provider/网络可用。 |
+| L2 | 安装 `/Applications/Etch.app` 后运行 `npm run smoke:installed` | 安装包 preload、菜单、durable IPC、任务恢复和受影响的真实工具路径。 |
+| L3 | 真实 URL、真实媒体、四个已登录 Provider | 完整用户路径。未逐项执行时不得宣称 MVP 全路径通过。 |
 
-## 数据与隐私边界
+## 数据与隐私
 
-- 任务媒体、字幕、日志、manifest 和成片保存在设置中的 workspace（默认 `~/Movies/Bilingual Subs`）。每个任务目录内的 `task.json` 是权威状态。
-- 设置、位置注册表、运行注册表、隐藏任务记录和全局术语表位于 Electron 的 `app.getPath('userData')` 目录；任务队列索引只存在于内存，并在每次启动时从任务目录重建。
-- 当前代码没有 Etch 自建遥测或 Etch 云端。下载、转写、文件管理与压制在本机执行。
-- 翻译、审计与修复会把对应的字幕文本、风格说明和术语上下文交给用户选择的 Agent CLI；内容是否离开设备及其保留策略由该 CLI 与其后端服务决定。
-- 默认情况下，媒体工具只接收运行所需的操作环境，Provider 只接收 adapter 声明的凭据/配置变量；显式设置 `ETCH_LEGACY_FULL_CHILD_ENV=1` 会临时恢复旧的完整 child env（仍移除嵌套 Agent 污染变量）。诊断日志记录环境变量名，不记录变量值。
-- “删除全部产物”会把已登记的任务目录移到 macOS 废纸篓；“仅移除记录”只从 Etch 隐藏任务，原目录仍保留。删除任务后，全局术语派生来源会重新核对。
+- 媒体、字幕、日志、manifest 和成片保存在设置中的 workspace，默认位置为 `~/Movies/Bilingual Subs`。
+- 设置、位置注册表、运行注册表、隐藏任务记录和全局术语表位于 Electron `userData` 目录。
+- Etch 当前没有自建遥测或 Etch 云端。
+- 翻译、审计与修复会把必要字幕文本、风格说明和术语上下文交给用户选择的 Agent CLI；数据是否离开设备以及保留策略由该 CLI 与其后端决定。
+- 默认只向子进程传递 allowlist 环境变量；诊断日志记录变量名，不记录变量值。
+- “删除全部产物”把已登记任务目录移入 macOS 废纸篓；“仅移除记录”只在 Etch 中隐藏任务，原目录保留。
 
 ## 常见故障
 
-- 工具显示不健康：先看设置页给出的 executable、版本、登录或 `libass` 诊断，再修正 PATH 或配置绝对路径 override。
-- 异常退出后任务暂停：Etch 会先核对 durable run registry，避免旧 Provider 进程与恢复任务并发写入；确认恢复摘要后再继续。
-- 任务未出现在队列：检查启动诊断中的无效 manifest 或重复 task ID；队列索引会在每次启动时从可读取的 `task.json` 重建。
-- Provider 失败：确认相应 CLI 已登录且版本兼容。真实账号/网络问题不能由 hermetic E2E 证明正常。
+<details>
+<summary><strong>工具显示不健康</strong></summary>
 
-## 设计文档
+先查看设置页显示的 executable、版本、登录状态或 `libass` 诊断，再修正 `PATH` 或配置绝对路径 override。
 
-- [`CLAUDE.md`](./CLAUDE.md)：稳定架构约定与项目验证 profile。
-- 聚合工作区另有目标架构与审计修复 RFC；它们不属于 Etch 独立 Git 仓库，也不是当前文件 inventory。
+</details>
+
+<details>
+<summary><strong>异常退出后任务暂停</strong></summary>
+
+Etch 会先核对 durable run registry，避免旧 Provider 进程与恢复任务并发写入。确认恢复摘要后再继续。
+
+</details>
+
+<details>
+<summary><strong>任务没有出现在队列</strong></summary>
+
+检查启动诊断中的无效 manifest 或重复 task ID。队列索引会在每次启动时从可读取的 `task.json` 重建。
+
+</details>
+
+<details>
+<summary><strong>Provider 失败</strong></summary>
+
+确认对应 CLI 已登录且版本兼容。Hermetic E2E 无法证明真实账号、网络和服务端当前正常。
+
+</details>
+
+## 项目文档
+
+- [`CLAUDE.md`](./CLAUDE.md)：稳定架构约定与验证 profile。
+- [`electron-builder.yml`](./electron-builder.yml)：macOS arm64 打包配置。
+- [`scripts/verify-macos-dmg.mjs`](./scripts/verify-macos-dmg.mjs)：DMG 与卷内 App 校验。
+
+## License
+
+本仓库当前没有声明开源许可证。代码公开可见不等于授予复制、修改或再分发权利。
