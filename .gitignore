@@ -7,3 +7,4 @@ test-results/
 .DS_Store
 *.log
 .claude/audits/
+audit-report-*
