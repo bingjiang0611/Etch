@@ -8,6 +8,7 @@
 - 四 Provider 只使用本地 `claude`、`codex exec`、`qodercli`、`opencode run` CLI；不得改用 SDK、app-server 或常驻 server。
 - 外部进程统一使用独立 process group、durable registry 与参数数组；成功以验证后原子提交产物为准，不以退出码 0 为准。
 - 工作流产品约束源：`../workflows/youtube-bilingual-subs-app.md`；实施方案：`../docs/rfc/Etch/etch-mvp.md`。
+- 静态 HTML、截图或设计稿里的字段必须先映射到 Etch 的 `task.json` / manifest / IPC，再决定是否渲染。没有真实持久化数据的 speaker、Token、source/final 媒体切换等字段不得照搬成假能力；优先复用校对、任务信息、审计术语和样式等真实入口。
 
 ## 改完代码后的验证 profile
 
@@ -29,6 +30,7 @@ PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH" npm run pack
 
 - 覆盖安装 `/Applications/Etch.app`，从 Finder 启动而非 dev server。
 - 先运行 `npm run smoke:installed`；它会重新 pack、核对 installed `app.asar` 与本次构建一致，并通过重启验证 packaged preload、菜单和 durable IPC。
+- 需要 DOM 级 installed smoke 时，可用 Playwright 直接启动 `/Applications/Etch.app/Contents/MacOS/Etch`，核对 packaged main/preload/renderer、真实 userData、安装哈希和关键 DOM；这只算 L2，不替代四 Provider 与多平台 L3。
 - 人工验证队列、设置、工具健康、Chrome cookies 参数、应用菜单、通知、电源 assertion、强杀恢复与 task manifest/内存索引重建。
 - 使用真实 URL 生成并验证一个短视频硬字幕成品；真实工具不健康时明确记录阻塞，不得写“L2 通过”。
 - 托盘与本地文件导入当前未实现，不属于现行 L2 合同。
@@ -38,5 +40,6 @@ PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH" npm run pack
 - 真实覆盖 YouTube 有字幕、YouTube→Whisper、X/通用 URL。
 - 真实覆盖 Claude/Codex/Qoder/OpenCode 四 Provider 的翻译、resume 与全局审计。
 - 覆盖三任务跨阶段并发、低清/超长/术语歧义/session 丢失 checkpoint、局部重试、样式重压、完成 brief。
+- 固定窗口工作台至少检查 `1360×860`、`1360×680`、`1100×900`；低高度下重点核对 recovery banner、展开流水线、固定 tabs/footer 是否挤压 cue 列表，以及主区滚动和 editor 最低高度是否仍成立。
 - 只有上述全部成功才能宣称 Etch MVP 完成；登录态、平台或环境阻塞逐项列残余风险。
 - 本地视频导入是 planned 能力，不属于现行 URL-only L3 合同。
