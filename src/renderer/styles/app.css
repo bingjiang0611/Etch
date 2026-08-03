@@ -265,10 +265,11 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .task-record-confirm:hover { border-color: #806845; background: #2a2318; }
 
 /* Workbench */
-.main-panel.is-workbench { display: flex; height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; padding: 22px 24px; }
-.workbench-view { display: flex; width: 100%; max-width: 1480px; min-height: 0; flex: 1 1 auto; flex-direction: column; gap: 10px; margin: 0 auto; }
+.main-panel.is-workbench { display: flex; height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; padding: 22px 24px; -webkit-app-region: drag; }
+.workbench-view { display: flex; width: 100%; max-width: 1480px; min-height: 0; flex: 1 1 auto; flex-direction: column; gap: 10px; margin: 0 auto; -webkit-app-region: no-drag; }
 .workbench { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; gap: 10px; }
-.wb-header { display: grid; flex: none; gap: 8px; }
+.wb-header { display: grid; flex: none; gap: 8px; -webkit-app-region: drag; }
+.wb-header > * { -webkit-app-region: no-drag; }
 .back-link { display: inline-flex; width: fit-content; align-items: center; gap: 6px; padding: 3px 0; border: 0; background: transparent; color: var(--muted); font-size: 13px; }
 .back-link:hover { color: var(--blue-ink); }
 .back-link svg { width: 14px; height: 14px; }

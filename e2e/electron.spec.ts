@@ -183,6 +183,22 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
     expect(workbenchHeaderBox).not.toBeNull()
     expect(glossaryTaskBox).not.toBeNull()
     expect(startTaskBox).not.toBeNull()
+    expect(await window.evaluate(() => {
+      const appRegion = (selector: string): string => getComputedStyle(document.querySelector(selector)!).getPropertyValue('-webkit-app-region')
+      return {
+        workbenchPanel: appRegion('.main-panel.is-workbench'),
+        workbenchContent: appRegion('.workbench-view'),
+        workbenchHeader: appRegion('.wb-header'),
+        backButton: appRegion('.back-link'),
+        titleRow: appRegion('.wb-title-row')
+      }
+    })).toEqual({
+      workbenchPanel: 'drag',
+      workbenchContent: 'no-drag',
+      workbenchHeader: 'drag',
+      backButton: 'no-drag',
+      titleRow: 'no-drag'
+    })
     await expect(window.locator('.recovery-banner')).toHaveCount(0)
     await expect(window.getByRole('button', { name: '确认恢复并继续' })).toHaveCount(0)
     expect(Math.abs((glossaryTaskBox?.x ?? 0) - (startTaskBox?.x ?? 0))).toBeLessThan(1)
