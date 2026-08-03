@@ -89,6 +89,28 @@ function supportedPlatform(): boolean {
   return process.platform === 'darwin' && process.arch === 'arm64' && (major > 13 || (major === 13 && minor >= 5))
 }
 
+function encodeBilibiliCoverJpeg(path: string): Buffer {
+  let image = nativeImage.createFromPath(path)
+  if (image.isEmpty()) throw new Error('投稿封面不是 Etch 可读取的图片')
+  const size = image.getSize()
+  const scale = Math.min(1, 1920 / size.width, 1080 / size.height)
+  if (scale < 1) image = image.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: 'best' })
+  let bytes = image.toJPEG(90)
+  if (bytes.length > 2_500_000) {
+    image = image.resize({ width: Math.min(1280, image.getSize().width), quality: 'best' })
+    bytes = image.toJPEG(82)
+  }
+  if (bytes.length > 2_800_000) throw new Error('投稿封面转换为 JPEG 后仍然过大，请选择尺寸更小的图片')
+  return bytes
+}
+
+async function normalizeBilibiliCover(sourcePath: string, taskDirectory: string): Promise<string> {
+  const coverRelativePath = 'publication/cover.jpg'
+  await mkdir(join(taskDirectory, 'publication'), { recursive: true })
+  await writeAtomic(join(taskDirectory, coverRelativePath), encodeBilibiliCoverJpeg(sourcePath))
+  return coverRelativePath
+}
+
 function setVideoFullscreen(window: BrowserWindow, fullscreen: boolean): void {
   window.setSimpleFullScreen(fullscreen)
   const active = window.isSimpleFullScreen()
@@ -403,6 +425,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     runRegistry,
     appRuns,
     publishManifest,
+    normalizeCover: normalizeBilibiliCover,
     onActiveChange: (active) => {
       publisherActive = active
       syncPowerWorkers()
@@ -643,17 +666,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       ? await dialog.showOpenDialog(mainWindow, { title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
       : await dialog.showOpenDialog({ title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
     if (result.canceled || !result.filePaths[0]) return BilibiliPublicationCoverSchema.parse({ cancelled: true })
-    let image = nativeImage.createFromPath(result.filePaths[0])
-    if (image.isEmpty()) throw new Error('选择的文件不是 Etch 可读取的图片')
-    const size = image.getSize()
-    const scale = Math.min(1, 1920 / size.width, 1080 / size.height)
-    if (scale < 1) image = image.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: 'best' })
-    let bytes = image.toJPEG(90)
-    if (bytes.length > 2_500_000) {
-      const reduced = image.resize({ width: Math.min(1280, image.getSize().width), quality: 'best' })
-      bytes = reduced.toJPEG(82)
-    }
-    if (bytes.length > 2_800_000) throw new Error('封面压缩后仍然过大，请选择尺寸更小的图片')
+    const bytes = encodeBilibiliCoverJpeg(result.filePaths[0])
     const coverRelativePath = 'publication/cover.jpg'
     const coverPath = join(indexed.location, coverRelativePath)
     await mkdir(join(indexed.location, 'publication'), { recursive: true })

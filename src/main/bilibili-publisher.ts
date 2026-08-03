@@ -39,6 +39,7 @@ interface PublisherOptions {
   appRuns: AsyncRunScope
   publishManifest(taskDirectory: string, manifest: TaskManifest): void
   runExternal?(spec: ProcessSpec): Promise<ProcessResult>
+  normalizeCover?(sourcePath: string, taskDirectory: string): Promise<string>
   onActiveChange?(active: boolean): void
   sleep?(milliseconds: number): Promise<void>
 }
@@ -58,8 +59,8 @@ export function parseBiliupReceipt(output: string): BilibiliReceipt | undefined 
 }
 
 export function classifyBiliupFailure(output: string): { code: string; message: string; retryable: boolean } {
-  const compact = output.replace(ANSI_ESCAPE_PATTERN, '').replace(/\s+/gu, ' ').trim().slice(-500)
-  if (/SESSDATA|cookie|登录|oauth2\/info|token|Unauthorized|code:\s*-101/iu.test(compact)) {
+  const compact = sanitizeBiliupDiagnostic(output)
+  if (/SESSDATA|cookie|登录|oauth2\/info|access[_ ]?token|refresh[_ ]?token|Unauthorized|code:\s*-101/iu.test(compact)) {
     return { code: 'auth-expired', message: 'B站登录已失效，请重新扫码登录', retryable: false }
   }
   if (/captcha|验证码|风控|账号异常|敏感|分区|标题|标签|转载来源|copyright|code:\s*(?:-?210|211|220|601)/iu.test(compact)) {
@@ -69,9 +70,21 @@ export function classifyBiliupFailure(output: string): { code: string; message: 
   const retryable = /timeout|timed out|connection|network|reset|broken pipe|temporar|502|503|504|dns|resolve|限流|稍后重试/iu.test(compact)
   return {
     code: retryable ? 'transient-network' : 'sidecar-failed',
-    message: retryable ? 'B站上传网络异常，请稍后重试' : 'biliup 投稿失败，请检查账号状态和稿件参数',
+    message: retryable ? 'B站上传网络异常，请稍后重试' : compact ? `biliup 投稿失败：${compact}` : 'biliup 投稿失败，但没有返回错误详情',
     retryable
   }
+}
+
+export function sanitizeBiliupDiagnostic(output: string): string {
+  return output
+    .replace(ANSI_ESCAPE_PATTERN, '')
+    .replace(/("name"\s*:\s*"(?:SESSDATA|bili_jct)"\s*,\s*"value"\s*:\s*")[^"]*(")/giu, '$1[已隐藏]$2')
+    .replace(/((?:SESSDATA|bili_jct|access_token|refresh_token)\s*["']?\s*[:=]\s*["']?)[^"',;\s}\]]+/giu, '$1[已隐藏]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._~-]+/giu, '$1[已隐藏]')
+    .replace(/\S*biliup-[^/\s]+\/cookies\.json/gu, '[临时凭证文件]')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(-420)
 }
 
 export class BilibiliPublisher {
@@ -104,12 +117,19 @@ export class BilibiliPublisher {
   }
 
   async start(taskDirectory: string, draftInput: BilibiliPublicationDraft): Promise<TaskManifest> {
-    const draft = BilibiliPublicationDraftSchema.parse(draftInput)
+    let draft = BilibiliPublicationDraftSchema.parse(draftInput)
     const manifest = await this.options.store.load(taskDirectory)
     if (this.hasTask(manifest.taskId)) throw new Error('这个任务已经在投稿队列中')
     if (manifest.publication.status === 'submitted') throw new Error('这个任务已经确认投稿成功，不能重复投稿')
     if (manifest.publication.status === 'unknown') throw new Error('提交结果未知，请先在 B站创作中心确认，避免重复投稿')
     if ((await this.options.accountStore.account()).status !== 'connected') throw new Error('请先重新扫码连接 B站账号')
+    if (draft.coverRelativePath && this.options.normalizeCover) {
+      const sourcePath = this.#containedPath(taskDirectory, draft.coverRelativePath, '封面')
+      draft = BilibiliPublicationDraftSchema.parse({
+        ...draft,
+        coverRelativePath: await this.options.normalizeCover(sourcePath, taskDirectory)
+      })
+    }
     await this.#preflight(taskDirectory, manifest, draft)
     const queued = await this.options.store.mutate(taskDirectory, (next) => {
       next.publication.draft = draft

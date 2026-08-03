@@ -294,6 +294,7 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .publication-status-banner[data-status="submitted"] strong { color: var(--ok); }
 .publication-status-banner[data-status="failed"], .publication-status-banner[data-status="unknown"] { border-color: var(--danger-line); background: var(--danger-bg); }
 .publication-status-banner[data-status="failed"] strong, .publication-status-banner[data-status="unknown"] strong { color: var(--danger); }
+.publication-status-banner[data-status="failed"] span { overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
 .publication-status-banner[data-status="paused"], .publication-status-banner[data-status="waiting_config"] { border-color: var(--warn-line); background: var(--warn-bg); }
 .publication-status-banner[data-status="paused"] strong, .publication-status-banner[data-status="waiting_config"] strong { color: var(--warn); }
 .review-checkpoint-banner { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 14px; border: 1px solid var(--run-line); border-radius: 8px; background: linear-gradient(110deg, var(--run-bg), #111923 72%); }

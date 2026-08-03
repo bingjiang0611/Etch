@@ -119,6 +119,15 @@ test('gates, edits and recovers a B站 publication through the Electron UI', asy
     let updated = JSON.parse(await readFile(manifestPath, 'utf8')) as TaskManifest
     updated.revision += 1
     updated.updatedAt = new Date().toISOString()
+    updated.publication.status = 'failed'
+    updated.publication.phaseMessage = '投稿失败，可继续投稿'
+    updated.publication.lastError = { code: 'platform-rejected', message: 'B站拒绝了封面格式（code -400）', retryable: false }
+    await writeManifest(manifestPath, updated)
+    await expect(window.locator('.publication-status-banner span')).toHaveText('B站拒绝了封面格式（code -400）', { timeout: 10_000 })
+
+    updated = JSON.parse(await readFile(manifestPath, 'utf8')) as TaskManifest
+    updated.revision += 1
+    updated.updatedAt = new Date().toISOString()
     updated.publication = {
       autoPublish: false,
       status: 'uploading',

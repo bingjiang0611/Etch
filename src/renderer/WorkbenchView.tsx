@@ -471,7 +471,11 @@ export function WorkbenchView({
         {publication && (publication.autoPublish || publication.status !== 'idle') && (
           <div className="publication-status-banner" data-status={publication.status} role="status">
             <strong>{bilibiliPublicationText(selected)}</strong>
-            <span>{publication.phaseMessage ?? (publication.autoPublish ? '此任务已开启完成后自动投稿' : '等待手动投稿')}</span>
+            <span title={publication.lastError?.message}>
+              {publication.status === 'failed' && publication.lastError
+                ? publication.lastError.message
+                : publication.phaseMessage ?? (publication.autoPublish ? '此任务已开启完成后自动投稿' : '等待手动投稿')}
+            </span>
             {publication.receipt?.bvid && <code>{publication.receipt.bvid}</code>}
             {publication.status === 'submitted' && publication.draft && selected.manifest.artifacts.final?.sha256 !== publication.draft.finalSha256 && <em>已投稿的是旧成片</em>}
           </div>

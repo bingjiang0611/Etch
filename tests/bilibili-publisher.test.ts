@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { BilibiliPublisher, classifyBiliupFailure, parseBiliupReceipt } from '../src/main/bilibili-publisher'
+import { BilibiliPublisher, classifyBiliupFailure, parseBiliupReceipt, sanitizeBiliupDiagnostic } from '../src/main/bilibili-publisher'
 import { AsyncRunScope } from '../src/main/runtime/async-run-scope'
 import { runProcess, type ProcessResult, type ProcessSpec } from '../src/main/runtime/process-runner'
 import { RunRegistry } from '../src/main/runtime/run-registry'
@@ -22,7 +22,7 @@ const loginInfo: BiliupLoginInfo = {
   platform: 'BiliTV'
 }
 
-async function fixture(sidecarSource: string, runExternal?: (spec: ProcessSpec) => Promise<ProcessResult>): Promise<{
+async function fixture(sidecarSource: string, runExternal?: (spec: ProcessSpec) => Promise<ProcessResult>, normalizeCover?: (sourcePath: string, taskDirectory: string) => Promise<string>): Promise<{
   directory: string
   store: TaskStore
   publisher: BilibiliPublisher
@@ -70,6 +70,7 @@ async function fixture(sidecarSource: string, runExternal?: (spec: ProcessSpec) 
     appRuns,
     publishManifest: () => undefined,
     runExternal: runExternal ?? ((spec) => runProcess(spec)),
+    normalizeCover,
     sleep: async () => undefined
   })
   await publisher.initialize([directory])
@@ -127,6 +128,37 @@ describe('BilibiliPublisher', () => {
   it('separates authentication and validation failures from retryable network failures', () => {
     expect(classifyBiliupFailure('open cookies file: token expired')).toMatchObject({ code: 'auth-expired', retryable: false })
     expect(classifyBiliupFailure('connection reset by peer')).toMatchObject({ code: 'transient-network', retryable: true })
+  })
+
+  it('keeps an actionable sidecar diagnostic while removing credentials', () => {
+    const output = 'upload failed: SESSDATA=secret access_token:token123 cover image decode error'
+    expect(sanitizeBiliupDiagnostic(output)).toBe('upload failed: SESSDATA=[已隐藏] access_token:[已隐藏] cover image decode error')
+    expect(classifyBiliupFailure(output).message).not.toContain('secret')
+    expect(classifyBiliupFailure('cover image decode error')).toMatchObject({
+      code: 'sidecar-failed',
+      message: 'biliup 投稿失败：cover image decode error'
+    })
+  })
+
+  it('normalizes a task thumbnail to a JPEG cover before invoking biliup', async () => {
+    let sidecarArgs: readonly string[] = []
+    const test = await fixture('#!/bin/sh\nexit 1\n', async (spec) => {
+      sidecarArgs = spec.args
+      return { ...interruptedResult(), cancelled: false, exitCode: 1 }
+    }, async (sourcePath, taskDirectory) => {
+      expect(sourcePath).toBe(join(taskDirectory, 'source.webp'))
+      await mkdir(join(taskDirectory, 'publication'))
+      await writeFile(join(taskDirectory, 'publication/cover.jpg'), Buffer.from('jpeg-cover'))
+      return 'publication/cover.jpg'
+    })
+    await writeFile(join(test.directory, 'source.webp'), Buffer.from('webp-cover'))
+
+    await test.publisher.start(test.directory, { ...draft(test.finalSha256), coverRelativePath: 'source.webp' })
+    await test.appRuns.whenIdle()
+
+    expect(sidecarArgs).toContain('--cover')
+    expect(sidecarArgs).toContain(join(test.directory, 'publication/cover.jpg'))
+    expect((await test.store.load(test.directory)).publication.draft?.coverRelativePath).toBe('publication/cover.jpg')
   })
 
   it('retries transient upload failures three times and commits only a verified receipt', async () => {
