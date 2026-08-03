@@ -1,5 +1,6 @@
 /* global URL, console, process */
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -76,4 +77,21 @@ if (appVersion !== packageJson.version || buildVersion !== packageJson.version) 
 }
 if (minimumSystemVersion !== '13.5.0') throw new Error(`Etch 最低系统版本必须为 13.5.0，实际为 ${minimumSystemVersion}`)
 
-console.log(`Etch macOS 包验证通过：${machOFiles.length} 个 Mach-O，arm64，v${appVersion}，macOS ${minimumSystemVersion}+，ad-hoc hardened runtime`)
+const biliupPath = join(appPath, 'Contents/Resources/biliup/biliup')
+const biliupMetadata = JSON.parse(readFileSync(join(appPath, 'Contents/Resources/biliup/metadata.json'), 'utf8'))
+const biliupHash = createHash('sha256').update(readFileSync(biliupPath)).digest('hex')
+if (biliupMetadata.version !== '1.2.2') throw new Error(`biliup 版本未锁定为 1.2.2：${biliupMetadata.version}`)
+if (biliupMetadata.upstreamBinarySha256 !== '9810912b4c61d13d9c4d7afc885f9d464150172c83ea41caddbadf10d672d78f') {
+  throw new Error(`biliup 上游二进制 SHA-256 元数据不匹配：${biliupMetadata.upstreamBinarySha256}`)
+}
+if (biliupMetadata.binarySha256 !== biliupHash || biliupHash !== 'ca2980a7419e2905a8e456cdfcea227f5377faaf3dca7b537d4d22870d315b3e') {
+  throw new Error(`biliup SHA-256 不匹配：${biliupHash}`)
+}
+if (run('lipo', ['-archs', biliupPath]).trim() !== 'arm64') throw new Error('biliup sidecar 必须为 arm64')
+if (!run(biliupPath, ['--version']).includes('biliup-cli 1.2.2')) throw new Error('biliup sidecar 版本输出不匹配')
+const biliupSignature = run('codesign', ['-d', '--verbose=4', biliupPath])
+assertIncludes(biliupSignature, 'Identifier=com.baobingjiang.etch.biliup', 'biliup 签名标识')
+assertIncludes(biliupSignature, '(adhoc,runtime)', 'biliup 签名 flags')
+if (!readFileSync(join(appPath, 'Contents/Resources/biliup/LICENSE'), 'utf8').includes('MIT License')) throw new Error('安装包缺少 biliup MIT 许可证')
+
+console.log(`Etch macOS 包验证通过：${machOFiles.length} 个 Mach-O，arm64，v${appVersion}，biliup ${biliupMetadata.version}，macOS ${minimumSystemVersion}+，ad-hoc hardened runtime`)

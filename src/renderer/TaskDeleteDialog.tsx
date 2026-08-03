@@ -7,6 +7,7 @@ export type TaskDeleteRequest = {
   title: string
   taskDirectory: string
   mode: DeleteTaskMode
+  publicationSubmitted: boolean
 }
 
 export function TaskDeleteDialog({
@@ -66,6 +67,9 @@ export function TaskDeleteDialog({
               ? '任务文件会原样保留，但此 taskId 将永久从 Etch 的队列和历史记录中隐藏。需要保留路径时，建议先使用“在访达中显示”。'
               : '下列 Etch 任务目录、中间文件、字幕和成片将整体移入 macOS 废纸篓。工作区外的本地原视频不会被删除。'}
           </p>
+          {request.publicationSubmitted && (
+            <p className="task-delete-remote-note">B站稿件不会被删除；Etch 只删除本地任务记录或本地产物。</p>
+          )}
           <code className="task-delete-path">{request.taskDirectory}</code>
           {error && <p className="task-delete-error" role="alert">{error}</p>}
           <div className="task-delete-actions">

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationDraftSchema, BilibiliQrStateSchema, type BilibiliAccount, type BilibiliPartition, type BilibiliPublicationDraft, type BilibiliQrState } from './bilibili'
 import { ProviderIdSchema, StageStatusSchema, SubtitlePresetSchema, TaskManifestSchema } from './task-schema'
 import { AppSettingsSchema, ToolIdSchema, type AppSettings } from './settings-schema'
 
@@ -38,7 +39,8 @@ export type QueuePage = z.infer<typeof QueuePageSchema>
 export const CreateUrlsSchema = z.object({
   urls: z.array(z.string().url()).min(1).max(50),
   provider: ProviderIdSchema,
-  styleNote: z.string().trim().max(1000).default('')
+  styleNote: z.string().trim().max(1000).default(''),
+  autoPublish: z.boolean().default(false)
 })
 
 export const TaskDetailSchema = z.object({ taskDirectory: z.string().min(1), manifest: TaskManifestSchema, mediaUrl: z.string().url().optional() })
@@ -50,6 +52,14 @@ export const TaskThumbnailDataUrlSchema = z.string().startsWith('data:image/').m
 export const DeleteTaskModeSchema = z.enum(['record-only', 'all-artifacts'])
 export type DeleteTaskMode = z.infer<typeof DeleteTaskModeSchema>
 export const DeleteTaskPayloadSchema = TaskIdPayloadSchema.extend({ mode: DeleteTaskModeSchema })
+export const BilibiliQrSessionPayloadSchema = z.object({ sessionId: z.string().uuid() })
+export const BilibiliPublicationStartPayloadSchema = TaskIdPayloadSchema.extend({ draft: BilibiliPublicationDraftSchema })
+export const BilibiliPublicationCoverSchema = z.object({
+  cancelled: z.boolean(),
+  coverRelativePath: z.string().min(1).optional(),
+  dataUrl: z.string().startsWith('data:image/jpeg;base64,').max(4_000_000).optional()
+})
+export type BilibiliPublicationCover = z.infer<typeof BilibiliPublicationCoverSchema>
 
 export const ReviewPagePayloadSchema = z.object({
   taskId: z.string().uuid(),
@@ -249,7 +259,7 @@ export type ToolHealthSnapshot = z.infer<typeof ToolHealthSnapshotSchema>
 export interface EtchApi {
   bootstrap(): Promise<Bootstrap>
   queuePage(offset?: number, limit?: number): Promise<QueuePage>
-  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string): Promise<QueuePage>
+  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string, autoPublish?: boolean): Promise<QueuePage>
   taskDetail(taskId: string): Promise<TaskDetail>
   taskThumbnail(taskId: string, expectedSha256: string): Promise<string | undefined>
   startTask(taskId: string): Promise<TaskDetail>
@@ -272,6 +282,16 @@ export interface EtchApi {
   getSettings(): Promise<AppSettings>
   updateSettings(settings: AppSettings): Promise<AppSettings>
   detectTools(): Promise<ToolHealthSnapshot[]>
+  bilibiliAccount(): Promise<BilibiliAccount>
+  startBilibiliQrLogin(): Promise<BilibiliQrState>
+  pollBilibiliQrLogin(sessionId: string): Promise<BilibiliQrState>
+  disconnectBilibili(): Promise<BilibiliAccount>
+  bilibiliPartitions(): Promise<BilibiliPartition[]>
+  selectBilibiliCover(taskId: string): Promise<BilibiliPublicationCover>
+  publishToBilibili(taskId: string, draft: BilibiliPublicationDraft): Promise<TaskDetail>
+  stopBilibiliPublication(taskId: string): Promise<TaskDetail>
+  continueBilibiliPublication(taskId: string): Promise<TaskDetail>
+  openBilibiliCreatorCenter(): Promise<void>
   setVideoFullscreen(fullscreen: boolean): Promise<void>
   openFullDiskAccessSettings(): Promise<void>
   onVideoFullscreenChanged(listener: (fullscreen: boolean) => void): () => void
@@ -279,3 +299,4 @@ export interface EtchApi {
 }
 
 export { AppSettingsSchema }
+export { BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationDraftSchema, BilibiliQrStateSchema }

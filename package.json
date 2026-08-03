@@ -29,12 +29,14 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",
     "@playwright/test": "1.61.1",
     "@types/node": "22.19.11",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.0.4",

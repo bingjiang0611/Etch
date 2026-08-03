@@ -235,6 +235,21 @@ export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePa
   return getStage(detail, 'verify').status === 'completed' ? '已完成' : fallbackLabels[fallback]
 }
 
+export function bilibiliPublicationText(detail: TaskDetail): string {
+  const labels: Record<TaskDetail['manifest']['publication']['status'], string> = {
+    idle: '未投稿',
+    waiting_config: '投稿待配置',
+    queued: 'B站排队中',
+    uploading: 'B站上传中',
+    submitting: 'B站提交中',
+    submitted: '已提交 B站',
+    paused: 'B站投稿已暂停',
+    failed: 'B站投稿失败',
+    unknown: 'B站结果待确认'
+  }
+  return labels[detail.manifest.publication.status]
+}
+
 export function stageSubLabel(detail: TaskDetail, id: StageId, stage: StageState): string {
   if (stage.errorCode) return stage.errorCode
   if (id === 'inspect' && detail.manifest.runtime.width && detail.manifest.runtime.height) return `${detail.manifest.runtime.width}×${detail.manifest.runtime.height}`

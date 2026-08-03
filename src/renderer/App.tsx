@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { publicationTemplateReady, type BilibiliAccount } from '../shared/bilibili'
 import type { Bootstrap, DeleteTaskMode, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
 import { defaultSettings, type AppSettings, type ToolId } from '../shared/settings-schema'
@@ -11,7 +12,9 @@ import { detectInitialToolsWithRetry } from './tool-detection'
 import { parseTaskUrls } from './task-input'
 import { TaskDeleteDialog, type TaskDeleteRequest } from './TaskDeleteDialog'
 import { WorkbenchView } from './WorkbenchView'
-import { Icon, PresetDemo, SwitchControl, completedStageCount, durationLabel, getStage, providerNames, subtitleKindLabel, taskStatusText, type SubtitlePreset } from './ui'
+import { BilibiliPublishDialog } from './BilibiliPublishDialog'
+import { BilibiliSettingsCard } from './BilibiliSettingsCard'
+import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, subtitleKindLabel, taskStatusText, type SubtitlePreset } from './ui'
 
 const tools: ToolId[] = ['yt-dlp', 'ffmpeg', 'ffprobe', 'python', 'mlx_whisper', 'claude', 'codex', 'qoder', 'opencode']
 const REVIEW_PAGE_SIZE = 100
@@ -44,9 +47,11 @@ export function App(): React.JSX.Element {
   const [startingTaskIds, setStartingTaskIds] = useState<Record<string, number>>({})
   const [url, setUrl] = useState('')
   const [styleNote, setStyleNote] = useState('')
+  const [autoPublish, setAutoPublish] = useState(false)
   const [provider, setProvider] = useState<ProviderId>(DEFAULT_PROVIDER)
   const [creatingTask, setCreatingTask] = useState(false)
   const [stoppingTask, setStoppingTask] = useState(false)
+  const [publicationActionBusy, setPublicationActionBusy] = useState(false)
   const [newTaskOpen, setNewTaskOpen] = useState(false)
   const [fullDiskAccessGuideOpen, setFullDiskAccessGuideOpen] = useState(false)
   const [openingFullDiskAccessSettings, setOpeningFullDiskAccessSettings] = useState(false)
@@ -56,6 +61,8 @@ export function App(): React.JSX.Element {
   const [selected, setSelected] = useState<TaskDetail>()
   const [recovery, setRecovery] = useState<RecoveryState>({ hold: true, interruptedTasks: 0 })
   const [settings, setSettings] = useState<AppSettings>(defaultSettings('~'))
+  const [bilibiliAccount, setBilibiliAccount] = useState<BilibiliAccount>({ status: 'disconnected' })
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [toolHealth, setToolHealth] = useState<ToolHealthSnapshot[]>([])
@@ -254,6 +261,9 @@ export function App(): React.JSX.Element {
         setSettingsLoaded(true)
       })
       .catch((caught) => setSettingsError(caught instanceof Error ? caught.message : '设置读取失败'))
+    void window.etch.bilibiliAccount()
+      .then(setBilibiliAccount)
+      .catch((caught) => setSettingsError(caught instanceof Error ? caught.message : 'B站账号状态读取失败'))
     if (!initialToolDetectionStartedRef.current) {
       initialToolDetectionStartedRef.current = true
       void detectTools(true)
@@ -430,6 +440,19 @@ export function App(): React.JSX.Element {
     if (settingsLoaded && settings !== persistedSettingsRef.current) setSettingsSaved(false)
   }, [settings, settingsLoaded])
 
+  useEffect(() => {
+    if (bilibiliAccount.status !== 'connected' || !publicationTemplateReady(settings.bilibiliPublishTemplate)) setAutoPublish(false)
+  }, [bilibiliAccount.status, settings.bilibiliPublishTemplate])
+
+  useEffect(() => {
+    if (selected?.manifest.publication.lastError?.code !== 'auth-expired') return
+    setBilibiliAccount((current) => ({
+      ...current,
+      status: 'expired',
+      message: selected.manifest.publication.lastError?.message ?? 'B站登录已失效，请重新扫码登录'
+    }))
+  }, [selected?.manifest.publication.lastError])
+
   const addUrl = async (): Promise<void> => {
     if (createTaskInFlightRef.current || !url.trim()) return
     let submittedUrls: string[]
@@ -441,16 +464,18 @@ export function App(): React.JSX.Element {
     }
     const submittedUrlText = url
     const submittedStyleNote = styleNote
+    const submittedAutoPublish = autoPublish
     const submittedProvider = providerOrDefault(provider)
     createTaskInFlightRef.current = true
     setCreatingTask(true)
     try {
       setError('')
       await ensureRecoveryReleased()
-      const next = await window.etch.createUrls(submittedUrls, submittedProvider, submittedStyleNote)
+      const next = await window.etch.createUrls(submittedUrls, submittedProvider, submittedStyleNote, submittedAutoPublish)
       commitQueuePage(next)
       setUrl((current) => (current === submittedUrlText ? '' : current))
       setStyleNote((current) => (current === submittedStyleNote ? '' : current))
+      setAutoPublish((current) => (current === submittedAutoPublish ? false : current))
       setNewTaskOpen(false)
       window.requestAnimationFrame(() => newTaskTriggerRef.current?.focus())
     } catch (caught) {
@@ -558,6 +583,37 @@ export function App(): React.JSX.Element {
     }
   }
 
+  const applyPublicationDetail = (detail: TaskDetail): void => {
+    rememberDetail(detail)
+    setSelected((current) => current?.manifest.taskId === detail.manifest.taskId && current.manifest.revision <= detail.manifest.revision ? detail : current)
+  }
+
+  const stopPublication = async (): Promise<void> => {
+    if (!selected || publicationActionBusy) return
+    setPublicationActionBusy(true)
+    setTaskActionError('')
+    try {
+      applyPublicationDetail(await window.etch.stopBilibiliPublication(selected.manifest.taskId))
+    } catch (caught) {
+      setTaskActionError(caught instanceof Error ? caught.message : 'B站投稿停止失败')
+    } finally {
+      setPublicationActionBusy(false)
+    }
+  }
+
+  const continuePublication = async (): Promise<void> => {
+    if (!selected || publicationActionBusy) return
+    setPublicationActionBusy(true)
+    setTaskActionError('')
+    try {
+      applyPublicationDetail(await window.etch.continueBilibiliPublication(selected.manifest.taskId))
+    } catch (caught) {
+      setTaskActionError(caught instanceof Error ? caught.message : 'B站投稿继续失败')
+    } finally {
+      setPublicationActionBusy(false)
+    }
+  }
+
   const requestTaskDelete = async (taskId: string, title: string, mode: DeleteTaskMode): Promise<void> => {
     closeTaskContextMenu(false)
     if (selected?.manifest.taskId === taskId && auditSubmittingRef.current) {
@@ -569,7 +625,7 @@ export function App(): React.JSX.Element {
       setTaskDeleteError('')
       const detail = queueDetailsRef.current[taskId] ?? await window.etch.taskDetail(taskId)
       rememberDetail(detail)
-      setDeleteRequest({ taskId, title, taskDirectory: detail.taskDirectory, mode })
+      setDeleteRequest({ taskId, title, taskDirectory: detail.taskDirectory, mode, publicationSubmitted: detail.manifest.publication.status === 'submitted' })
     } catch (caught) {
       setTaskActionError(caught instanceof Error ? caught.message : '任务目录读取失败')
     }
@@ -762,6 +818,7 @@ export function App(): React.JSX.Element {
     if (next !== 'workbench') {
       openTaskGenerationRef.current += 1
       setOpeningTaskId(undefined)
+      setPublishDialogOpen(false)
     }
     setReviewError('')
     setView(next)
@@ -1342,6 +1399,9 @@ export function App(): React.JSX.Element {
                               {detail ? (detail.manifest.input.kind === 'url' ? 'URL' : '本地') : '来源 —'}
                             </span>
                             <span className="task-tag">{detail ? subtitleKindLabel(detail.manifest.runtime.subtitleKind) : queueDetailFailures[task.taskId] ? '详情读取失败' : '字幕读取中'}</span>
+                            {detail && (detail.manifest.publication.autoPublish || detail.manifest.publication.status !== 'idle') && (
+                              <span className="publication-chip" data-status={detail.manifest.publication.status}>{bilibiliPublicationText(detail)}</span>
+                            )}
                           </span>
                           <span className="task-card-footer">
                             <span className="id mono">{task.taskId.slice(0, 8)}</span>
@@ -1411,11 +1471,17 @@ export function App(): React.JSX.Element {
             selectedIsRunning={selectedIsRunning}
             selectedIsPaused={selectedIsPaused}
             stoppingTask={stoppingTask}
+            publicationActionBusy={publicationActionBusy}
+            bilibiliAccount={bilibiliAccount}
             needsRebuild={needsRebuild}
             videoRef={videoRef}
             onBack={() => changeView('queue')}
             onStart={startSelected}
             onStop={stopSelected}
+            onPublish={() => setPublishDialogOpen(true)}
+            onStopPublication={stopPublication}
+            onContinuePublication={continuePublication}
+            onOpenCreatorCenter={() => window.etch.openBilibiliCreatorCenter()}
             onResolveAudit={resolveAudit}
             onCompleteReview={completeReview}
             onPreset={persistWorkbenchPreset}
@@ -1541,6 +1607,14 @@ export function App(): React.JSX.Element {
                 ))}
               </div>
             </section>
+
+            <BilibiliSettingsCard
+              account={bilibiliAccount}
+              settings={settings}
+              disabled={!settingsLoaded || savingSettings || savingPreset}
+              onAccountChange={setBilibiliAccount}
+              onSettingsChange={setSettings}
+            />
 
             <section className="panel settings-card tools-card">
               <div className="settings-card-heading">
@@ -1712,6 +1786,18 @@ export function App(): React.JSX.Element {
               onChange={(event) => setStyleNote(event.target.value)}
             />
           </label>
+          <div className="new-task-auto-publish">
+            <span>
+              <strong>完成后自动投稿到 B站</strong>
+              <small>{bilibiliAccount.status !== 'connected' ? '请先在设置中扫码登录' : !publicationTemplateReady(settings.bilibiliPublishTemplate) ? '请先补全默认分区和标签' : '使用设置中的投稿模板；默认关闭'}</small>
+            </span>
+            <SwitchControl
+              label="完成后自动投稿到 B站"
+              checked={autoPublish}
+              disabled={creatingTask || bilibiliAccount.status !== 'connected' || !publicationTemplateReady(settings.bilibiliPublishTemplate)}
+              onChange={setAutoPublish}
+            />
+          </div>
           {error && <p className="form-error new-task-error" role="alert">{error}</p>}
           <footer className="new-task-actions">
             <button className="secondary-button" type="button" disabled={creatingTask} onClick={closeNewTask}>取消</button>
@@ -1725,6 +1811,14 @@ export function App(): React.JSX.Element {
           </footer>
         </form>
       </dialog>
+      <BilibiliPublishDialog
+        task={selected}
+        settings={settings}
+        account={bilibiliAccount}
+        open={publishDialogOpen}
+        onClose={() => setPublishDialogOpen(false)}
+        onUpdated={applyPublicationDetail}
+      />
       {taskContextMenu && (
         <div
           className="task-context-layer"

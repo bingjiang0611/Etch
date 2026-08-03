@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BilibiliPublicationSchema } from './bilibili'
 
 export const STAGE_IDS = [
   'source',
@@ -107,8 +108,8 @@ export function taskInputName(input: TaskInput): string {
   return input.kind === 'url' ? input.url : input.sourcePath
 }
 
-export const TaskManifestSchema = z.object({
-  schemaVersion: z.literal(1),
+const TaskManifestV2Schema = z.object({
+  schemaVersion: z.literal(2),
   revision: z.number().int().nonnegative(),
   taskId: z.string().uuid(),
   title: z.string(),
@@ -152,8 +153,19 @@ export const TaskManifestSchema = z.object({
     finalRelativePath: z.string().optional(),
     completedAt: z.string().datetime({ offset: true }).optional()
   }).default({ currentMessage: '等待开始', userPaused: false }),
+  publication: BilibiliPublicationSchema,
   identityConflict: z.boolean().default(false)
 })
+export const TaskManifestSchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const legacy = raw as Record<string, unknown>
+  if (legacy.schemaVersion !== 1) return raw
+  return {
+    ...legacy,
+    schemaVersion: 2,
+    publication: { autoPublish: false, status: 'idle', attempt: 0 }
+  }
+}, TaskManifestV2Schema)
 export type TaskManifest = z.infer<typeof TaskManifestSchema>
 
 export function createTaskManifest(
@@ -161,13 +173,14 @@ export function createTaskManifest(
   title = '',
   provider?: ProviderId,
   styleNote = '',
-  subtitlePreset: SubtitlePreset = 'standard'
+  subtitlePreset: SubtitlePreset = 'standard',
+  autoPublish = false
 ): TaskManifest {
   const now = new Date().toISOString()
   const parsedInput = TaskInputSchema.parse(input)
   const stages = Object.fromEntries(STAGE_IDS.map((stage) => [stage, { status: stage === 'source' ? 'ready' : 'pending', attempt: 0 }]))
   return TaskManifestSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 0,
     taskId: globalThis.crypto.randomUUID(),
     title: title.trim() || taskInputName(parsedInput),
@@ -180,6 +193,7 @@ export function createTaskManifest(
     artifacts: {},
     translation: { styleNote, selectedProvider: provider, selectedModel: { source: 'cli-default' }, sessionGenerations: [], batches: [] },
     runtime: { currentMessage: '等待开始', userPaused: false },
+    publication: { autoPublish, status: 'idle', attempt: 0 },
     identityConflict: false
   })
 }

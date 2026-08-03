@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
+import type { BilibiliAccount } from '../shared/bilibili'
 import type { GlossaryApplyResult, GlossaryImpactPreview, TaskDetail, TaskReviewPage } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
@@ -9,6 +10,7 @@ import {
   PresetDemo,
   VideoPreview,
   activeStageId,
+  bilibiliPublicationText,
   completedStageCount,
   durationLabel,
   getStage,
@@ -59,11 +61,17 @@ interface WorkbenchViewProps {
   selectedIsRunning: boolean
   selectedIsPaused: boolean
   stoppingTask: boolean
+  publicationActionBusy: boolean
+  bilibiliAccount: BilibiliAccount
   needsRebuild: boolean
   videoRef: RefObject<HTMLVideoElement | null>
   onBack: () => void
   onStart: () => Promise<void>
   onStop: () => Promise<void>
+  onPublish: () => void
+  onStopPublication: () => Promise<void>
+  onContinuePublication: () => Promise<void>
+  onOpenCreatorCenter: () => Promise<void>
   onResolveAudit: (decisions: AuditDecision[]) => Promise<void>
   onCompleteReview: () => Promise<void>
   onPreset: (preset: SubtitlePreset) => Promise<void>
@@ -265,11 +273,17 @@ export function WorkbenchView({
   selectedIsRunning,
   selectedIsPaused,
   stoppingTask,
+  publicationActionBusy,
+  bilibiliAccount,
   needsRebuild,
   videoRef,
   onBack,
   onStart,
   onStop,
+  onPublish,
+  onStopPublication,
+  onContinuePublication,
+  onOpenCreatorCenter,
   onResolveAudit,
   onCompleteReview,
   onPreset,
@@ -304,6 +318,18 @@ export function WorkbenchView({
   const reviewCheckpoint = reviewStage?.status === 'checkpoint' && reviewStage.checkpointId === 'manual-review'
   const reviewCheckpointKey = reviewCheckpoint && reviewStage ? `${selected?.manifest.taskId}:${reviewStage.checkpointId}:${reviewStage.attempt}` : undefined
   const verifyCompleted = selected ? getStage(selected, 'verify').status === 'completed' : false
+  const publication = selected?.manifest.publication
+  const publicationRunning = publication ? ['queued', 'uploading', 'submitting'].includes(publication.status) : false
+  const publicationCanContinue = publication ? ['paused', 'failed'].includes(publication.status) && Boolean(publication.draft) : false
+  const publicationActionLabel = publicationRunning
+    ? publicationActionBusy ? '正在停止投稿…' : '停止 B站投稿'
+    : publication?.status === 'submitted'
+      ? '查看 B站创作中心'
+      : publication?.status === 'unknown'
+        ? '确认 B站投稿结果'
+        : publicationCanContinue
+          ? publicationActionBusy ? '正在继续投稿…' : '继续 B站投稿'
+          : bilibiliAccount.status === 'connected' ? '投稿到 B站' : '连接 B站后投稿'
   const activeStage = selected && selectedStage ? getStage(selected, selectedStage) : undefined
   const overallProgress = Math.min(1, (selectedCompletedCount + (activeStage?.status === 'running' ? (activeStage.progress ?? 0) : 0)) / STAGE_ORDER.length)
   const saveStateText = autoSaveBlocked ? '自动保存失败，需处理' : savingCues ? '正在自动保存…' : dirtyCount ? '等待自动保存…' : cueSaveNotice || '已自动保存'
@@ -400,6 +426,21 @@ export function WorkbenchView({
             </code>
           </div>
           <div className="wb-actions">
+            {verifyCompleted && !needsRebuild && (
+              <button
+                className={publicationRunning ? 'danger-button' : 'secondary-button bilibili-publish-button'}
+                type="button"
+                disabled={publicationActionBusy || (!publicationRunning && !publicationCanContinue && publication?.status !== 'submitted' && publication?.status !== 'unknown' && bilibiliAccount.status !== 'connected')}
+                onClick={() => {
+                  if (publicationRunning) void onStopPublication()
+                  else if (publication?.status === 'submitted' || publication?.status === 'unknown') void onOpenCreatorCenter()
+                  else if (publicationCanContinue) void onContinuePublication()
+                  else onPublish()
+                }}
+              >
+                {publicationActionLabel}
+              </button>
+            )}
             <button
               className="secondary-button"
               type="button"
@@ -425,6 +466,14 @@ export function WorkbenchView({
           <p className="task-action-error" role="alert">
             {taskActionError}
           </p>
+        )}
+        {publication && (publication.autoPublish || publication.status !== 'idle') && (
+          <div className="publication-status-banner" data-status={publication.status} role="status">
+            <strong>{bilibiliPublicationText(selected)}</strong>
+            <span>{publication.phaseMessage ?? (publication.autoPublish ? '此任务已开启完成后自动投稿' : '等待手动投稿')}</span>
+            {publication.receipt?.bvid && <code>{publication.receipt.bvid}</code>}
+            {publication.status === 'submitted' && publication.draft && selected.manifest.artifacts.final?.sha256 !== publication.draft.finalSha256 && <em>已投稿的是旧成片</em>}
+          </div>
         )}
       </header>
 
@@ -723,6 +772,10 @@ export function WorkbenchView({
                   <div>
                     <dt>审计术语</dt>
                     <dd className={reviewPage?.glossaryState === 'ready' ? 'ok' : ''}>{reviewPage?.glossaryState === 'ready' ? `${reviewPage.glossary.length} 条` : reviewPage?.glossaryState === 'empty' ? '审计完成 · 无术语' : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>B站投稿</dt>
+                    <dd className={publication?.status === 'submitted' ? 'ok' : ''}>{publication ? bilibiliPublicationText(selected) : '—'}</dd>
                   </div>
                   {selected.manifest.runtime.finalRelativePath && (
                     <div>

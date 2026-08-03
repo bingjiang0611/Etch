@@ -1,0 +1,11 @@
+{
+  "name": "biliup",
+  "version": "1.2.2",
+  "repository": "https://github.com/biliup/biliup",
+  "releaseAsset": "biliupR-v1.2.2-aarch64-macos.tar.xz",
+  "releaseAssetSha256": "9024475ed37c6e3c15a4da5c47983e2b764863bde42f9424dbd468f7dc169e6e",
+  "upstreamBinarySha256": "9810912b4c61d13d9c4d7afc885f9d464150172c83ea41caddbadf10d672d78f",
+  "binarySha256": "ca2980a7419e2905a8e456cdfcea227f5377faaf3dca7b537d4d22870d315b3e",
+  "codeSignatureIdentifier": "com.baobingjiang.etch.biliup",
+  "license": "MIT"
+}

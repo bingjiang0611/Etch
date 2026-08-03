@@ -8,12 +8,19 @@ files:
 extraResources:
   - from: build/icon.png
     to: icon.png
+  - from: vendor/biliup/macos-arm64/biliup
+    to: biliup/biliup
+  - from: vendor/biliup/LICENSE
+    to: biliup/LICENSE
+  - from: vendor/biliup/metadata.json
+    to: biliup/metadata.json
 mac:
   icon: build/icon.icns
   category: public.app-category.video
   identity: '-'
   signIgnore:
     - '\.(pak|dat)$'
+    - 'Contents/Resources/biliup/biliup$'
   target:
     - target: dir
       arch:

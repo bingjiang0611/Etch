@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { AppSettingsSchema, defaultSettings, type AppSettings } from '../../shared/settings-schema'
+import { AppSettingsSchema, defaultSettings, migrateAppSettings, type AppSettings } from '../../shared/settings-schema'
 import { writeJsonAtomic } from './atomic-json'
 
 export class SettingsStore {
@@ -7,7 +7,7 @@ export class SettingsStore {
 
   async load(): Promise<AppSettings> {
     try {
-      return AppSettingsSchema.parse(JSON.parse(await readFile(this.path, 'utf8')))
+      return migrateAppSettings(JSON.parse(await readFile(this.path, 'utf8')), this.homeDirectory)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       return defaultSettings(this.homeDirectory)

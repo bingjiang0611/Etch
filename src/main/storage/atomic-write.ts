@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 
 export async function writeAtomic(
   path: string,
-  value: string,
+  value: string | Uint8Array,
   committedError?: (cause: unknown) => unknown
 ): Promise<void> {
   const directory = dirname(path)
@@ -14,7 +14,7 @@ export async function writeAtomic(
   let replaced = false
   try {
     file = await open(tempPath, 'wx', 0o600)
-    await file.writeFile(value, 'utf8')
+    await file.writeFile(value, typeof value === 'string' ? 'utf8' : undefined)
     await file.sync()
     await file.close()
     file = undefined

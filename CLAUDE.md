@@ -7,6 +7,7 @@
 - renderer 只能通过窄 preload IPC 访问主进程；不得直接读文件、spawn、启用 Node integration 或引入任意命令 IPC。
 - 四 Provider 只使用本地 `claude`、`codex exec`、`qodercli`、`opencode run` CLI；不得改用 SDK、app-server 或常驻 server。
 - 外部进程统一使用独立 process group、durable registry 与参数数组；成功以验证后原子提交产物为准，不以退出码 0 为准。
+- B站投稿使用安装包内固定版本和 SHA-256 的 `biliup` sidecar；凭证只由主进程通过 `safeStorage` 保存，投稿状态独立于十阶段流水线，提交结果不可验证时必须进入 `unknown` 防止重复投稿。
 - 工作流产品约束源：`../workflows/youtube-bilingual-subs-app.md`；实施方案：`../docs/rfc/Etch/etch-mvp.md`。
 - 静态 HTML、截图或设计稿里的字段必须先映射到 Etch 的 `task.json` / manifest / IPC，再决定是否渲染。没有真实持久化数据的 speaker、Token、source/final 媒体切换等字段不得照搬成假能力；优先复用校对、任务信息、审计术语和样式等真实入口。
 
@@ -43,3 +44,4 @@ PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH" npm run pack
 - 固定窗口工作台至少检查 `1360×860`、`1360×680`、`1100×900`；低高度下重点核对 recovery banner、展开流水线、固定 tabs/footer 是否挤压 cue 列表，以及主区滚动和 editor 最低高度是否仍成立。
 - 只有上述全部成功才能宣称 Etch MVP 完成；登录态、平台或环境阻塞逐项列残余风险。
 - 本地视频导入是 planned 能力，不属于现行 URL-only L3 合同。
+- B站投稿 L3 必须经用户确认后，分别用真实账号完成一次手动投稿、一次自动投稿和一次上传中断恢复；以取得可验证提交回执为成功，不要求审核通过。

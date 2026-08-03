@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { mkdir, realpath, rename } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerSaveBlocker, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
-import { AppSettingsSchema, BootstrapSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerSaveBlocker, safeStorage, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
+import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
 import { ToolIdSchema, type ToolId } from '../shared/settings-schema'
 import { createTaskManifest, type ProviderId } from '../shared/task-schema'
 import { IndexStore } from './storage/index-store'
@@ -33,6 +33,10 @@ import { PipelinePowerManager } from './runtime/power'
 import { TaskNotifier } from './runtime/task-notifier'
 import { AsyncRunScope } from './runtime/async-run-scope'
 import { isVideoFullscreenEscape } from './video-fullscreen'
+import { BilibiliAuthService } from './bilibili-auth'
+import { BilibiliPublisher } from './bilibili-publisher'
+import { BilibiliAccountStore } from './storage/bilibili-account-store'
+import { writeAtomic } from './storage/atomic-write'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
@@ -54,6 +58,7 @@ let activeRunRegistry: RunRegistry | undefined
 let activeAppRuns: AsyncRunScope | undefined
 let restartPendingTasks: (() => void) | undefined
 let activePowerManager: PipelinePowerManager | undefined
+let activeBilibiliAuth: BilibiliAuthService | undefined
 let runtimeDiagnostics: RuntimeDiagnostics = {
   discoveryErrors: [],
   identityConflicts: []
@@ -222,6 +227,7 @@ app.on('before-quit', (event) => {
       dialog.showErrorBox('Etch 无法安全退出', 'Etch 已保留运行现场并恢复队列领取；请稍后再次退出。')
     },
     clean: () => {
+      activeBilibiliAuth?.disposeQrSessions()
       activePowerManager?.dispose()
       quitting = true
       app.exit(0)
@@ -290,6 +296,17 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   }
   const settingsStore = new SettingsStore(join(support, 'settings.json'), app.getPath('home'))
   const settings = await settingsStore.load()
+  const bilibiliAccountStore = new BilibiliAccountStore(join(support, 'bilibili-account.json'), safeStorage)
+  const bilibiliFetch: typeof fetch = process.env.ETCH_E2E_HERMETIC === '1'
+    ? async (input, init) => String(input).includes('/x/vupre/web/archive/pre')
+      ? new Response(JSON.stringify({ code: 0, data: { typelist: [{ id: 160, name: '生活', children: [{ id: 21, name: '日常' }] }] } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+      : fetch(input, init)
+    : fetch
+  const bilibiliAuth = new BilibiliAuthService(bilibiliAccountStore, bilibiliFetch)
+  activeBilibiliAuth = bilibiliAuth
   const powerManager = new PipelinePowerManager({
     start: (type) => powerSaveBlocker.start(type),
     stop: (id) => powerSaveBlocker.stop(id)
@@ -351,10 +368,35 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     catch (error) { console.error('task notification observer failed', { taskId: manifest.taskId, revision: manifest.revision, error }) }
     if (manifest.pipeline.stages.verify.status === 'completed') {
       void historicalGlossary.sync().catch((error) => console.error('global glossary sync failed', error))
+      if (!recoveryHold) void publisher.considerAuto(taskDirectory).catch((error) => console.error('B站自动投稿排队失败', { taskId: manifest.taskId, error }))
     }
   }
-  const pipeline = new TaskPipeline(taskStore, settings, historicalGlossary, publishManifest, runRegistry, (count) => powerManager.setActiveWorkers(count))
+  let pipelineWorkerCount = 0
+  let publisherActive = false
+  const syncPowerWorkers = (): void => powerManager.setActiveWorkers(pipelineWorkerCount + (publisherActive ? 1 : 0))
+  const pipeline = new TaskPipeline(taskStore, settings, historicalGlossary, publishManifest, runRegistry, (count) => {
+    pipelineWorkerCount = count
+    syncPowerWorkers()
+  })
   activePipeline = pipeline
+  const sidecarPath = app.isPackaged
+    ? join(process.resourcesPath, 'biliup', 'biliup')
+    : join(app.getAppPath(), 'vendor', 'biliup', 'macos-arm64', 'biliup')
+  const publisher = new BilibiliPublisher({
+    store: taskStore,
+    accountStore: bilibiliAccountStore,
+    settings: () => settings,
+    sidecarPath,
+    temporaryRoot: join(support, 'bilibili-publish-tmp'),
+    runRegistry,
+    appRuns,
+    publishManifest,
+    onActiveChange: (active) => {
+      publisherActive = active
+      syncPowerWorkers()
+    }
+  })
+  await publisher.initialize(discovery.tasks.map((task) => task.location))
   void historicalGlossary.sync().catch((error) => console.error('initial global glossary sync failed', error))
   const startPendingTasks = (): void => {
     if (settings.queuePaused || recoveryHold) return
@@ -363,6 +405,12 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
     for (const task of pending) {
       void pipeline.start(task.location).catch((error) => console.error('queued pipeline failed', { taskId: task.taskId, error }))
+    }
+  }
+  const startPendingPublications = (): void => {
+    if (recoveryHold) return
+    for (const task of indexStore!.all()) {
+      void publisher!.considerAuto(task.location).catch((error) => console.error('B站自动投稿排队失败', { taskId: task.taskId, error }))
     }
   }
   restartPendingTasks = startPendingTasks
@@ -491,7 +539,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
         registry,
         taskStore,
         isRunning: (taskDirectory: string) => pipeline.isRunning(taskDirectory),
-        hasActiveProviderRun: (activeTaskId: string) => runRegistry.hasActiveTask(activeTaskId),
+        hasActiveProviderRun: async (activeTaskId: string) => publisher!.hasTask(activeTaskId) || await runRegistry.hasActiveTask(activeTaskId),
         onCleanupWarning: (warning: DeleteCleanupWarning) => console.warn('task deletion cleanup warning', {
           ...warning,
           error: warning.error instanceof Error ? warning.error.message : String(warning.error)
@@ -517,6 +565,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const confirmation = await confirmProviderRecovery(runRegistry, appStateStore!)
     recoveryHold = !confirmation.released
     startPendingTasks()
+    startPendingPublications()
     return RecoveryStateSchema.parse({ hold: recoveryHold, interruptedTasks })
   })
   ipcMain.handle('task:resolve-audit', async (_event, raw) => {
@@ -549,6 +598,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     await mkdir(next.workspaceRoot, { recursive: true })
     await registry.addWorkspaceRoot(next.workspaceRoot)
     startPendingTasks()
+    startPendingPublications()
     return AppSettingsSchema.parse(settings)
   })
   ipcMain.handle('tools:detect', async () => {
@@ -561,6 +611,72 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     }))
     return results.map((health) => ToolHealthSnapshotSchema.parse(health))
   })
+  ipcMain.handle('bilibili:account', async () => BilibiliAccountSchema.parse(await bilibiliAuth.account()))
+  ipcMain.handle('bilibili:qr-start', async () => BilibiliQrStateSchema.parse(await bilibiliAuth.startQrLogin()))
+  ipcMain.handle('bilibili:qr-state', async (_event, raw) => {
+    const { sessionId } = BilibiliQrSessionPayloadSchema.parse(raw)
+    const state = BilibiliQrStateSchema.parse(bilibiliAuth.qrState(sessionId))
+    if (state.status === 'complete') startPendingPublications()
+    return state
+  })
+  ipcMain.handle('bilibili:disconnect', async () => BilibiliAccountSchema.parse(await bilibiliAuth.disconnect()))
+  ipcMain.handle('bilibili:partitions', async () => BilibiliPartitionSchema.array().parse(await bilibiliAuth.partitions()))
+  ipcMain.handle('bilibili:select-cover', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    if (publisher!.hasTask(taskId)) throw new Error('投稿已经开始，不能再更换封面')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    const result = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showOpenDialog(mainWindow, { title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
+      : await dialog.showOpenDialog({ title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
+    if (result.canceled || !result.filePaths[0]) return BilibiliPublicationCoverSchema.parse({ cancelled: true })
+    let image = nativeImage.createFromPath(result.filePaths[0])
+    if (image.isEmpty()) throw new Error('选择的文件不是 Etch 可读取的图片')
+    const size = image.getSize()
+    const scale = Math.min(1, 1920 / size.width, 1080 / size.height)
+    if (scale < 1) image = image.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: 'best' })
+    let bytes = image.toJPEG(90)
+    if (bytes.length > 2_500_000) {
+      const reduced = image.resize({ width: Math.min(1280, image.getSize().width), quality: 'best' })
+      bytes = reduced.toJPEG(82)
+    }
+    if (bytes.length > 2_800_000) throw new Error('封面压缩后仍然过大，请选择尺寸更小的图片')
+    const coverRelativePath = 'publication/cover.jpg'
+    const coverPath = join(indexed.location, coverRelativePath)
+    await mkdir(join(indexed.location, 'publication'), { recursive: true })
+    await writeAtomic(coverPath, bytes)
+    return BilibiliPublicationCoverSchema.parse({
+      cancelled: false,
+      coverRelativePath,
+      dataUrl: `data:image/jpeg;base64,${bytes.toString('base64')}`
+    })
+  })
+  ipcMain.handle('bilibili:publish', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, draft } = BilibiliPublicationStartPayloadSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    await publisher!.start(indexed.location, draft)
+    return detail(taskId)
+  })
+  ipcMain.handle('bilibili:stop', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    await publisher!.stop(indexed.location)
+    return detail(taskId)
+  })
+  ipcMain.handle('bilibili:continue', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    await publisher!.continue(indexed.location)
+    return detail(taskId)
+  })
+  ipcMain.handle('bilibili:open-creator-center', () => shell.openExternal('https://member.bilibili.com/platform/upload-manager/article'))
   ipcMain.handle('video:set-fullscreen', (event, fullscreen) => {
     if (typeof fullscreen !== 'boolean') throw new Error('视频全屏状态无效')
     const owner = BrowserWindow.fromWebContents(event.sender)
@@ -571,7 +687,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   ipcMain.handle('task:create-urls', async (_event, raw) => {
     const payload = CreateUrlsSchema.parse(raw)
     for (const url of payload.urls) {
-      const manifest = createTaskManifest({ kind: 'url', url }, '', payload.provider, payload.styleNote, settings.subtitlePreset)
+      const manifest = createTaskManifest({ kind: 'url', url }, '', payload.provider, payload.styleNote, settings.subtitlePreset, payload.autoPublish)
       const safeTitle = 'pending'
       const taskDirectory = join(settings.workspaceRoot, `${safeTitle}--${manifest.taskId.slice(0, 8)}`)
       await mkdir(taskDirectory, { recursive: true })
@@ -586,6 +702,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   mainWindow = createWindow()
   installApplicationMenu()
   startPendingTasks()
+  startPendingPublications()
   if (focusRequestedWhileInitializing) {
     focusRequestedWhileInitializing = false
     mainWindow.show()

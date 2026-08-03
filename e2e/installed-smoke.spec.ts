@@ -60,11 +60,21 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
   try {
     let window = await application.firstWindow()
     await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
-    expect(await window.evaluate(() => ({
+    expect(await window.evaluate(async () => ({
       createUrls: typeof window.etch?.createUrls,
       queuePage: typeof window.etch?.queuePage,
-      getSettings: typeof window.etch?.getSettings
-    }))).toEqual({ createUrls: 'function', queuePage: 'function', getSettings: 'function' })
+      getSettings: typeof window.etch?.getSettings,
+      bilibiliAccount: typeof window.etch?.bilibiliAccount,
+      publishToBilibili: typeof window.etch?.publishToBilibili,
+      account: await window.etch.bilibiliAccount()
+    }))).toEqual({
+      createUrls: 'function',
+      queuePage: 'function',
+      getSettings: 'function',
+      bilibiliAccount: 'function',
+      publishToBilibili: 'function',
+      account: { status: 'disconnected' }
+    })
     expect(await application.evaluate(({ Menu }) => {
       const settings = Menu.getApplicationMenu()?.getMenuItemById('settings')
       return settings ? { label: settings.label, accelerator: settings.accelerator } : undefined

@@ -56,6 +56,7 @@ Etch 不把这些步骤伪装成一次不可见的“AI 生成”。每个任务
 - **术语一致**：新任务参考历史视频术语表；术语修改可先预览影响 cue，再一次性应用到译文。
 - **Provider 可替换**：支持 Claude、Codex、Qoder、OpenCode 本地 CLI，不绑定单一 SDK 或常驻服务。
 - **人工可控**：逐句中英对照、视频定位、自动保存、审核 checkpoint、重新生成 SRT 与成片。
+- **本地投稿**：完成任务可手动或自动投稿到 B站；账号扫码、凭证加密、上传和提交均由本机完成。
 - **删除语义明确**：可以只隐藏任务记录，也可以把 Etch 管理的任务目录和产物移入 macOS 废纸篓。
 
 ## 最快开始
@@ -84,6 +85,16 @@ Etch 启动后会自动检测 executable、版本、关键能力和登录状态�
 
 在任务队列中输入一个或多个 HTTP(S) 视频 URL，选择 Provider，并按需填写翻译风格。任务创建后自动开始；处理中可以停止，之后从已提交阶段继续。
 
+### 4. 投稿到 B站
+
+先在“设置 → B站投稿”使用普通 B站账号扫码登录，并填写默认分区、标签和简介模板。简介支持 `{title}` 与 `{source_url}` 占位符。之后可以：
+
+- 在新建任务时开启“完成后自动投稿”；账号未登录或模板不完整时不能开启。
+- 在已完成任务的工作台中点击“投稿到 B站”，确认标题、分区、标签、简介、版权类型、来源和封面后提交。
+- 上传中停止，或在应用异常退出后继续投稿。若已进入提交阶段却没有取得可验证回执，Etch 会标记为“结果未知”，要求先到 B站创作中心确认，避免重复投稿。
+
+Etch 不要求 B站开放平台应用，不使用 Cloudflare。V1 不查询审核进度，也不修改或删除已经提交到 B站的稿件。
+
 ## 能力与边界
 
 | 状态 | 能力 | 当前边界 |
@@ -94,6 +105,7 @@ Etch 启动后会自动检测 executable、版本、关键能力和登录状态�
 | Implemented | 翻译质量工作流 | 分批翻译、英文源审计、历史术语提示、全局术语审计、逐句编辑和局部修复。 |
 | Implemented | 双语字幕与硬字幕 | 生成双语 SRT，支持紧凑/标准/大字三档预设，FFmpeg 压制后用 ffprobe 验证。 |
 | Implemented | 可恢复任务状态 | `task.json` 是任务权威；产物提交受 lease、revision 与 fingerprint 约束。 |
+| Implemented | B站本地投稿 | 单账号扫码登录、手动/自动投稿、单并发、停止/恢复和回执防重复；不含审核轮询、定时、多账号或稿件管理。 |
 | Partial | Provider 兼容性 | 自动化测试覆盖四端协议；真实账号、CLI 版本和服务端行为仍需在当前机器验证。 |
 | Partial | 长媒体资源治理 | 已有确定性分段和续跑；尚无静音点切分、全局磁盘预算或自动缓存清理。 |
 | Partial | 公开发行 | 提供 arm64 DMG 与 SHA-256；尚无 Developer ID、公证、自动更新或 CI release gate。 |
@@ -140,7 +152,7 @@ npm run dist:mac
 
 输出：`dist/Etch-0.1.1-arm64.dmg`
 
-DMG 验证会检查卷内 allowlist，并校验 `Etch.app` 的签名、entitlements、arm64 架构、版本和最低系统版本。
+DMG 验证会检查卷内 allowlist，并校验 `Etch.app` 的签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
 
 ## 验证层级
 
@@ -155,10 +167,12 @@ DMG 验证会检查卷内 allowlist，并校验 `Etch.app` 的签名、entitleme
 
 - 媒体、字幕、日志、manifest 和成片保存在设置中的 workspace，默认位置为 `~/Movies/Bilingual Subs`。
 - 设置、位置注册表、运行注册表、隐藏任务记录和全局术语表位于 Electron `userData` 目录。
+- B站 Cookie 和 token 通过 Electron `safeStorage` 加密后独立保存，不写入设置、任务 manifest 或日志；投稿时只短暂解密到权限为 `0600` 的临时文件，sidecar 退出后立即删除。
 - Etch 当前没有自建遥测或 Etch 云端。
 - 翻译、审计与修复会把必要字幕文本、风格说明和术语上下文交给用户选择的 Agent CLI；数据是否离开设备以及保留策略由该 CLI 与其后端决定。
 - 默认只向子进程传递 allowlist 环境变量；诊断日志记录变量名，不记录变量值。
 - “删除全部产物”把已登记任务目录移入 macOS 废纸篓；“仅移除记录”只在 Etch 中隐藏任务，原目录保留。
+- 删除本地任务不会删除已投稿的 B站稿件；已确认成功的稿件不会自动重投。
 
 ## 常见故障
 
@@ -187,6 +201,13 @@ Etch 会先核对 durable run registry，避免旧 Provider 进程与恢复任�
 <summary><strong>Provider 失败</strong></summary>
 
 确认对应 CLI 已登录且版本兼容。Hermetic E2E 无法证明真实账号、网络和服务端当前正常。
+
+</details>
+
+<details>
+<summary><strong>B站投稿结果未知</strong></summary>
+
+先打开 B站创作中心确认稿件是否已经提交。为防止重复投稿，Etch 不会自动重试“结果未知”的记录。
 
 </details>
 
