@@ -14,6 +14,7 @@ import { TaskDeleteDialog, type TaskDeleteRequest } from './TaskDeleteDialog'
 import { WorkbenchView } from './WorkbenchView'
 import { BilibiliPublishDialog } from './BilibiliPublishDialog'
 import { BilibiliSettingsCard } from './BilibiliSettingsCard'
+import { readableRemoteError } from './readable-error'
 import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, subtitleKindLabel, taskStatusText, type SubtitlePreset } from './ui'
 
 const tools: ToolId[] = ['yt-dlp', 'ffmpeg', 'ffprobe', 'python', 'mlx_whisper', 'claude', 'codex', 'qoder', 'opencode']
@@ -597,7 +598,7 @@ export function App(): React.JSX.Element {
     try {
       applyPublicationDetail(await window.etch.stopBilibiliPublication(selected.manifest.taskId))
     } catch (caught) {
-      setTaskActionError(caught instanceof Error ? caught.message : 'B站投稿停止失败')
+      setTaskActionError(readableRemoteError(caught, 'B站投稿停止失败'))
     } finally {
       setPublicationActionBusy(false)
     }
@@ -610,7 +611,7 @@ export function App(): React.JSX.Element {
     try {
       applyPublicationDetail(await window.etch.continueBilibiliPublication(selected.manifest.taskId))
     } catch (caught) {
-      setTaskActionError(caught instanceof Error ? caught.message : 'B站投稿继续失败')
+      setTaskActionError(readableRemoteError(caught, 'B站投稿继续失败'))
     } finally {
       setPublicationActionBusy(false)
     }

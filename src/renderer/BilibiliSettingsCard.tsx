@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BilibiliAccount, BilibiliPartition, BilibiliQrState } from '../shared/bilibili'
 import type { AppSettings } from '../shared/settings-schema'
+import { readableRemoteError } from './readable-error'
 
 interface BilibiliSettingsCardProps {
   account: BilibiliAccount
@@ -12,11 +13,7 @@ interface BilibiliSettingsCardProps {
 }
 
 function readableBilibiliError(caught: unknown, fallback: string): string {
-  if (!(caught instanceof Error)) return fallback
-  const message = caught.message
-    .replace(/^Error invoking remote method '[^']+':\s*/u, '')
-    .replace(/^Error:\s*/u, '')
-    .trim()
+  const message = readableRemoteError(caught, fallback)
   if (!message || /fetch failed/iu.test(message)) return '暂时无法连接 B站登录服务，请检查网络或代理后重试。'
   return message
 }

@@ -117,19 +117,12 @@ export class BilibiliPublisher {
   }
 
   async start(taskDirectory: string, draftInput: BilibiliPublicationDraft): Promise<TaskManifest> {
-    let draft = BilibiliPublicationDraftSchema.parse(draftInput)
+    const draft = BilibiliPublicationDraftSchema.parse(draftInput)
     const manifest = await this.options.store.load(taskDirectory)
     if (this.hasTask(manifest.taskId)) throw new Error('这个任务已经在投稿队列中')
     if (manifest.publication.status === 'submitted') throw new Error('这个任务已经确认投稿成功，不能重复投稿')
     if (manifest.publication.status === 'unknown') throw new Error('提交结果未知，请先在 B站创作中心确认，避免重复投稿')
     if ((await this.options.accountStore.account()).status !== 'connected') throw new Error('请先重新扫码连接 B站账号')
-    if (draft.coverRelativePath && this.options.normalizeCover) {
-      const sourcePath = this.#containedPath(taskDirectory, draft.coverRelativePath, '封面')
-      draft = BilibiliPublicationDraftSchema.parse({
-        ...draft,
-        coverRelativePath: await this.options.normalizeCover(sourcePath, taskDirectory)
-      })
-    }
     await this.#preflight(taskDirectory, manifest, draft)
     const queued = await this.options.store.mutate(taskDirectory, (next) => {
       next.publication.draft = draft
@@ -234,6 +227,23 @@ export class BilibiliPublisher {
     let submitting = false
     try {
       await this.#verifySidecar()
+      if (job.draft.coverRelativePath && this.options.normalizeCover) {
+        const preparing = await this.options.store.mutate(job.taskDirectory, (draft) => {
+          draft.publication.phaseMessage = '正在准备投稿封面'
+          draft.publication.updatedAt = new Date().toISOString()
+        })
+        this.options.publishManifest(job.taskDirectory, preparing)
+        const sourcePath = this.#containedPath(job.taskDirectory, job.draft.coverRelativePath, '封面')
+        job.draft = BilibiliPublicationDraftSchema.parse({
+          ...job.draft,
+          coverRelativePath: await this.options.normalizeCover(sourcePath, job.taskDirectory)
+        })
+        const normalized = await this.options.store.mutate(job.taskDirectory, (draft) => {
+          draft.publication.draft = job.draft
+          draft.publication.updatedAt = new Date().toISOString()
+        })
+        this.options.publishManifest(job.taskDirectory, normalized)
+      }
       const current = await this.options.store.load(job.taskDirectory)
       await this.#preflight(job.taskDirectory, current, job.draft)
       for (let retry = 0; retry < 3; retry += 1) {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { mkdir, realpath, rename } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, rm } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerSaveBlocker, safeStorage, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
 import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
 import { ToolIdSchema, type ToolId } from '../shared/settings-schema'
@@ -89,9 +89,9 @@ function supportedPlatform(): boolean {
   return process.platform === 'darwin' && process.arch === 'arm64' && (major > 13 || (major === 13 && minor >= 5))
 }
 
-function encodeBilibiliCoverJpeg(path: string): Buffer {
+function encodeBilibiliCoverJpeg(path: string): Buffer | undefined {
   let image = nativeImage.createFromPath(path)
-  if (image.isEmpty()) throw new Error('投稿封面不是 Etch 可读取的图片')
+  if (image.isEmpty()) return undefined
   const size = image.getSize()
   const scale = Math.min(1, 1920 / size.width, 1080 / size.height)
   if (scale < 1) image = image.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: 'best' })
@@ -104,10 +104,55 @@ function encodeBilibiliCoverJpeg(path: string): Buffer {
   return bytes
 }
 
-async function normalizeBilibiliCover(sourcePath: string, taskDirectory: string): Promise<string> {
+interface BilibiliCoverFfmpeg {
+  executable: string
+  env: NodeJS.ProcessEnv
+  runExternal(spec: ProcessSpec): Promise<Awaited<ReturnType<typeof runProcess>>>
+}
+
+async function normalizeBilibiliCover(
+  sourcePath: string,
+  taskDirectory: string,
+  resolveFfmpeg: () => Promise<BilibiliCoverFfmpeg>
+): Promise<string> {
   const coverRelativePath = 'publication/cover.jpg'
-  await mkdir(join(taskDirectory, 'publication'), { recursive: true })
-  await writeAtomic(join(taskDirectory, coverRelativePath), encodeBilibiliCoverJpeg(sourcePath))
+  const publicationDirectory = join(taskDirectory, 'publication')
+  await mkdir(publicationDirectory, { recursive: true })
+  let bytes = encodeBilibiliCoverJpeg(sourcePath)
+  if (!bytes) {
+    const ffmpeg = await resolveFfmpeg()
+    const temporaryPath = join(publicationDirectory, `.cover-${randomUUID()}.jpg`)
+    try {
+      const result = await ffmpeg.runExternal({
+        command: ffmpeg.executable,
+        args: [
+          '-hide_banner', '-loglevel', 'error', '-y',
+          '-i', sourcePath,
+          '-frames:v', '1',
+          '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+          '-q:v', '4',
+          temporaryPath
+        ],
+        cwd: taskDirectory,
+        env: ffmpeg.env,
+        timeoutMs: 60_000,
+        captureLimitBytes: 256 * 1024
+      })
+      const diagnostic = `${result.stderr}\n${result.stdout}`.replace(/\s+/gu, ' ').trim().slice(-300)
+      if (result.exitCode !== 0 || result.cancelled || result.timedOut) {
+        throw new Error(`无法把任务缩略图转为 B站 JPEG 封面${diagnostic ? `：${diagnostic}` : ''}`)
+      }
+      bytes = await readFile(temporaryPath)
+      const decoded = nativeImage.createFromBuffer(bytes)
+      if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || decoded.isEmpty()) {
+        throw new Error('任务缩略图转换后不是有效的 JPEG 图片')
+      }
+      if (bytes.length > 2_800_000) throw new Error('投稿封面转换为 JPEG 后仍然过大，请选择尺寸更小的图片')
+    } finally {
+      await rm(temporaryPath, { force: true })
+    }
+  }
+  await writeAtomic(join(taskDirectory, coverRelativePath), bytes)
   return coverRelativePath
 }
 
@@ -416,6 +461,19 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   const sidecarPath = app.isPackaged
     ? join(process.resourcesPath, 'biliup', 'biliup')
     : join(app.getAppPath(), 'vendor', 'biliup', 'macos-arm64', 'biliup')
+  const normalizePublicationCover = (sourcePath: string, taskDirectory: string): Promise<string> => normalizeBilibiliCover(
+    sourcePath,
+    taskDirectory,
+    async () => {
+      const full = await loginShellEnvironment(process.env, runAppScopedExternal)
+      const env = operationalEnvironment(full)
+      const health = await detectTool('ffmpeg', env, settings.toolOverrides.ffmpeg, runAppScopedExternal)
+      if (health.status !== 'ready' || !health.executable) {
+        throw new Error(`Etch 无法读取该封面，且无法启动 ffmpeg 转换：${health.summaryZh}`)
+      }
+      return { executable: health.executable, env, runExternal: runAppScopedExternal }
+    }
+  )
   const publisher = new BilibiliPublisher({
     store: taskStore,
     accountStore: bilibiliAccountStore,
@@ -425,7 +483,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     runRegistry,
     appRuns,
     publishManifest,
-    normalizeCover: normalizeBilibiliCover,
+    normalizeCover: normalizePublicationCover,
     onActiveChange: (active) => {
       publisherActive = active
       syncPowerWorkers()
@@ -666,11 +724,9 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       ? await dialog.showOpenDialog(mainWindow, { title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
       : await dialog.showOpenDialog({ title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
     if (result.canceled || !result.filePaths[0]) return BilibiliPublicationCoverSchema.parse({ cancelled: true })
-    const bytes = encodeBilibiliCoverJpeg(result.filePaths[0])
-    const coverRelativePath = 'publication/cover.jpg'
+    const coverRelativePath = await normalizePublicationCover(result.filePaths[0], indexed.location)
     const coverPath = join(indexed.location, coverRelativePath)
-    await mkdir(join(indexed.location, 'publication'), { recursive: true })
-    await writeAtomic(coverPath, bytes)
+    const bytes = await readFile(coverPath)
     return BilibiliPublicationCoverSchema.parse({
       cancelled: false,
       coverRelativePath,

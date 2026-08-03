@@ -161,6 +161,22 @@ describe('BilibiliPublisher', () => {
     expect((await test.store.load(test.directory)).publication.draft?.coverRelativePath).toBe('publication/cover.jpg')
   })
 
+  it('records a cover conversion failure on the publication instead of rejecting continue', async () => {
+    const test = await fixture('#!/bin/sh\nexit 1\n', undefined, async () => {
+      throw new Error('无法把任务缩略图转为 B站 JPEG 封面')
+    })
+    await writeFile(join(test.directory, 'source.webp'), Buffer.from('webp-cover'))
+
+    await expect(test.publisher.start(test.directory, { ...draft(test.finalSha256), coverRelativePath: 'source.webp' })).resolves.toBeDefined()
+    await test.appRuns.whenIdle()
+
+    const manifest = await test.store.load(test.directory)
+    expect(manifest.publication.status).toBe('failed')
+    expect(manifest.publication.phaseMessage).toBe('投稿失败，可继续投稿')
+    expect(manifest.publication.lastError?.message).toBe('无法把任务缩略图转为 B站 JPEG 封面')
+    expect(manifest.pipeline.stages.verify.status).toBe('completed')
+  })
+
   it('retries transient upload failures three times and commits only a verified receipt', async () => {
     const test = await fixture(`#!/bin/sh
 counter="$PWD/.biliup-attempt"
