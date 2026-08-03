@@ -162,6 +162,9 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .new-task-auto-publish > span { display: grid; gap: 4px; }
 .new-task-auto-publish strong { color: var(--fg-soft); font-size: 12px; font-weight: 580; }
 .new-task-auto-publish small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.inline-setup-button { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--run); font-size: 10px; font-weight: 620; line-height: 1.5; }
+.inline-setup-button:hover { color: var(--blue-ink); text-decoration: underline; text-underline-offset: 2px; }
+.inline-setup-button:disabled { opacity: .45; }
 .new-task-copy { margin: -6px 0 2px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .new-task-field { display: grid; gap: 7px; }
 .new-task-field > span { color: var(--fg-soft); font-size: 13px; font-weight: 600; }
@@ -649,6 +652,10 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .settings-card-heading h2 { margin-bottom: 0; }
 .settings-card-heading p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
 .bilibili-settings-card { gap: 16px; }
+.bilibili-settings-card[data-guided="true"] { border-color: var(--blue-strong); box-shadow: 0 0 0 1px rgb(67 140 245 / 16%); }
+.bilibili-guidance { display: grid; gap: 3px; padding: 10px 11px; border: 1px solid var(--run-line); border-radius: 7px; background: var(--run-bg); }
+.bilibili-guidance strong { color: var(--blue-ink); font-size: 11px; font-weight: 650; }
+.bilibili-guidance span { color: #91a6bf; font-size: 10px; line-height: 1.5; }
 .bilibili-account { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-sunken); }
 .bilibili-avatar { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid #596375; border-radius: 50%; background: linear-gradient(145deg, #30394a, #1c222c); color: #e6e9ee; font-size: 15px; font-weight: 650; }
 .bilibili-avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }

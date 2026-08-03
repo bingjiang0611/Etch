@@ -298,12 +298,23 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   const settings = await settingsStore.load()
   const bilibiliAccountStore = new BilibiliAccountStore(join(support, 'bilibili-account.json'), safeStorage)
   const bilibiliFetch: typeof fetch = process.env.ETCH_E2E_HERMETIC === '1'
-    ? async (input, init) => String(input).includes('/x/vupre/web/archive/pre')
-      ? new Response(JSON.stringify({ code: 0, data: { typelist: [{ id: 160, name: '生活', children: [{ id: 21, name: '日常' }] }] } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
+    ? async (input, init) => {
+      const url = String(input)
+      const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url.includes('/qrcode/auth_code')) return json({ code: 0, data: { url: 'https://example.com/etch-e2e-bilibili', auth_code: 'etch-e2e-auth-code' } })
+      if (url.includes('/qrcode/poll')) return json({
+        code: 0,
+        data: {
+          cookie_info: { cookies: [{ name: 'SESSDATA', value: 'e2e-secret-session' }, { name: 'bili_jct', value: 'e2e-secret-csrf' }] },
+          sso: [],
+          token_info: { access_token: 'e2e-secret-access', expires_in: 3600, mid: 123, refresh_token: 'e2e-secret-refresh' },
+          platform: 'BiliTV'
+        }
       })
-      : fetch(input, init)
+      if (url.includes('/x/space/myinfo')) return json({ code: 0, data: { mid: 123, name: 'Etch E2E' } })
+      if (url.includes('/x/vupre/web/archive/pre')) return json({ code: 0, data: { typelist: [{ id: 160, name: '生活', children: [{ id: 21, name: '日常' }] }] } })
+      return fetch(input, init)
+    }
     : fetch
   const bilibiliAuth = new BilibiliAuthService(bilibiliAccountStore, bilibiliFetch)
   activeBilibiliAuth = bilibiliAuth

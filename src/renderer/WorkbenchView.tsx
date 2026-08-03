@@ -329,7 +329,7 @@ export function WorkbenchView({
         ? '确认 B站投稿结果'
         : publicationCanContinue
           ? publicationActionBusy ? '正在继续投稿…' : '继续 B站投稿'
-          : bilibiliAccount.status === 'connected' ? '投稿到 B站' : '连接 B站后投稿'
+          : bilibiliAccount.status === 'connected' ? '投稿到 B站' : '连接 B站并投稿'
   const activeStage = selected && selectedStage ? getStage(selected, selectedStage) : undefined
   const overallProgress = Math.min(1, (selectedCompletedCount + (activeStage?.status === 'running' ? (activeStage.progress ?? 0) : 0)) / STAGE_ORDER.length)
   const saveStateText = autoSaveBlocked ? '自动保存失败，需处理' : savingCues ? '正在自动保存…' : dirtyCount ? '等待自动保存…' : cueSaveNotice || '已自动保存'
@@ -430,11 +430,12 @@ export function WorkbenchView({
               <button
                 className={publicationRunning ? 'danger-button' : 'secondary-button bilibili-publish-button'}
                 type="button"
-                disabled={publicationActionBusy || (!publicationRunning && !publicationCanContinue && publication?.status !== 'submitted' && publication?.status !== 'unknown' && bilibiliAccount.status !== 'connected')}
+                disabled={publicationActionBusy}
+                title={bilibiliAccount.status === 'connected' ? undefined : '前往设置连接 B站；登录成功后会自动返回并继续投稿'}
                 onClick={() => {
                   if (publicationRunning) void onStopPublication()
                   else if (publication?.status === 'submitted' || publication?.status === 'unknown') void onOpenCreatorCenter()
-                  else if (publicationCanContinue) void onContinuePublication()
+                  else if (publicationCanContinue && bilibiliAccount.status === 'connected') void onContinuePublication()
                   else onPublish()
                 }}
               >

@@ -66,52 +66,31 @@ test('gates, edits and recovers a B站 publication through the Electron UI', asy
 
   const application = await launchHermeticEtch(userData)
   try {
-    let window = await application.firstWindow()
+    const window = await application.firstWindow()
     await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
     await window.getByRole('button', { name: '新建任务', exact: true }).click()
     const newTaskDialog = window.getByRole('dialog', { name: '新建任务' })
     await expect(newTaskDialog.getByRole('switch', { name: '完成后自动投稿到 B站' })).toBeDisabled()
     await expect(newTaskDialog).toContainText('请先在设置中扫码登录')
+    await expect(newTaskDialog.getByRole('button', { name: '连接 B站账号', exact: true })).toBeEnabled()
     await newTaskDialog.getByRole('button', { name: '取消', exact: true }).click()
 
-    await application.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('settings')?.click())
+    await window.locator('.task-row').click()
+    const connectAndPublish = window.getByRole('button', { name: '连接 B站并投稿', exact: true })
+    await expect(connectAndPublish).toBeEnabled()
+    await connectAndPublish.click()
     const accountCard = window.locator('.bilibili-settings-card')
     await expect(accountCard).toContainText('尚未连接 B站')
-    await expect(accountCard.getByRole('button', { name: '扫码登录', exact: true })).toBeVisible()
+    await expect(accountCard).toContainText('扫码成功后 Etch 会自动返回当前任务并打开投稿信息')
+    await expect(accountCard).toHaveAttribute('data-guided', 'true')
+    const loginButton = accountCard.getByRole('button', { name: '扫码登录', exact: true })
+    await expect(loginButton).toBeFocused()
     await expect(accountCard.locator('select')).toBeDisabled()
-
-    const loginInfo = {
-      cookie_info: { cookies: [{ name: 'SESSDATA', value: 'e2e-secret-session' }, { name: 'bili_jct', value: 'e2e-secret-csrf' }] },
-      sso: [],
-      token_info: { access_token: 'e2e-secret-access', expires_in: 3600, mid: 123, refresh_token: 'e2e-secret-refresh' },
-      platform: 'BiliTV'
-    }
-    const encryptedLoginInfo = await application.evaluate(({ safeStorage }, value) => {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error('safeStorage unavailable in E2E')
-      return safeStorage.encryptString(JSON.stringify(value)).toString('base64')
-    }, loginInfo)
-    await writeFile(join(userData, 'bilibili-account.json'), `${JSON.stringify({
-      schemaVersion: 1,
-      encryptedLoginInfo,
-      account: { status: 'connected', mid: '123', name: 'Etch E2E', connectedAt: new Date().toISOString() }
-    }, null, 2)}\n`, { mode: 0o600 })
-    expect(await readFile(join(userData, 'bilibili-account.json'), 'utf8')).not.toContain('e2e-secret-session')
-
-    await window.reload()
-    window = await application.firstWindow()
-    await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
-    await window.getByRole('button', { name: '新建任务', exact: true }).click()
-    const enabledSwitch = window.getByRole('dialog', { name: '新建任务' }).getByRole('switch', { name: '完成后自动投稿到 B站' })
-    await expect(enabledSwitch).toBeEnabled()
-    await enabledSwitch.click()
-    await expect(enabledSwitch).toHaveAttribute('aria-checked', 'true')
-    await window.getByRole('dialog', { name: '新建任务' }).getByRole('button', { name: '取消', exact: true }).click()
-
-    await window.locator('.task-row').click()
-    const publishButton = window.getByRole('button', { name: '投稿到 B站', exact: true })
-    await expect(publishButton).toBeEnabled()
-    await publishButton.click()
+    await loginButton.click()
+    await expect(window.getByRole('dialog', { name: '使用哔哩哔哩 App 扫码' })).toBeVisible()
     const publishDialog = window.getByRole('dialog', { name: '投稿到 B站' })
+    await expect(publishDialog).toBeVisible({ timeout: 15_000 })
+    expect(await readFile(join(userData, 'bilibili-account.json'), 'utf8')).not.toContain('e2e-secret-session')
     await expect(publishDialog.getByLabel(/标题/u)).toHaveValue('B站投稿 UI 验收')
     await expect(publishDialog.getByLabel('分区')).toHaveValue('21')
     await expect(publishDialog.getByLabel(/标签/u)).toHaveValue('双语字幕')
@@ -127,6 +106,15 @@ test('gates, edits and recovers a B站 publication through the Electron UI', asy
     await publishDialog.getByRole('button', { name: '确认投稿', exact: true }).click()
     await expect(publishDialog.getByRole('alert')).toHaveText('请填写投稿标题')
     await publishDialog.getByRole('button', { name: '取消', exact: true }).click()
+
+    await window.getByRole('button', { name: '任务队列', exact: true }).click()
+    await window.getByRole('button', { name: '新建任务', exact: true }).click()
+    const enabledSwitch = window.getByRole('dialog', { name: '新建任务' }).getByRole('switch', { name: '完成后自动投稿到 B站' })
+    await expect(enabledSwitch).toBeEnabled()
+    await enabledSwitch.click()
+    await expect(enabledSwitch).toHaveAttribute('aria-checked', 'true')
+    await window.getByRole('dialog', { name: '新建任务' }).getByRole('button', { name: '取消', exact: true }).click()
+    await window.locator('.task-row').click()
 
     let updated = JSON.parse(await readFile(manifestPath, 'utf8')) as TaskManifest
     updated.revision += 1

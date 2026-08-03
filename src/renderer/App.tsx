@@ -31,6 +31,7 @@ function glossaryMatchesEdits(glossary: TaskReviewPage['glossary'], edits: reado
 }
 
 type View = 'queue' | 'workbench' | 'glossary' | 'settings'
+type BilibiliSettingsIntent = 'publish' | 'auto' | 'template'
 type TaskContextMenuState = { taskId: string; title: string; x: number; y: number; running: boolean }
 type TaskThumbnailState = { sha256: string; dataUrl?: string }
 
@@ -62,6 +63,7 @@ export function App(): React.JSX.Element {
   const [recovery, setRecovery] = useState<RecoveryState>({ hold: true, interruptedTasks: 0 })
   const [settings, setSettings] = useState<AppSettings>(defaultSettings('~'))
   const [bilibiliAccount, setBilibiliAccount] = useState<BilibiliAccount>({ status: 'disconnected' })
+  const [bilibiliSettingsIntent, setBilibiliSettingsIntent] = useState<BilibiliSettingsIntent>()
   const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [settingsError, setSettingsError] = useState('')
@@ -820,11 +822,29 @@ export function App(): React.JSX.Element {
       setOpeningTaskId(undefined)
       setPublishDialogOpen(false)
     }
+    if (next !== 'settings') setBilibiliSettingsIntent(undefined)
     setReviewError('')
     setView(next)
   }
 
   changeViewRef.current = changeView
+
+  const openBilibiliSettings = (intent: BilibiliSettingsIntent): void => {
+    setBilibiliSettingsIntent(intent)
+    changeView('settings')
+  }
+
+  const requestBilibiliPublish = (): void => {
+    if (bilibiliAccount.status === 'connected') setPublishDialogOpen(true)
+    else openBilibiliSettings('publish')
+  }
+
+  useEffect(() => {
+    if (bilibiliSettingsIntent !== 'publish' || bilibiliAccount.status !== 'connected' || !selected) return
+    setBilibiliSettingsIntent(undefined)
+    changeViewRef.current('workbench')
+    setPublishDialogOpen(true)
+  }, [bilibiliSettingsIntent, bilibiliAccount.status, selected?.manifest.taskId])
 
   useEffect(() => window.etch.onOpenSettings(() => changeViewRef.current('settings')), [])
 
@@ -1478,7 +1498,7 @@ export function App(): React.JSX.Element {
             onBack={() => changeView('queue')}
             onStart={startSelected}
             onStop={stopSelected}
-            onPublish={() => setPublishDialogOpen(true)}
+            onPublish={requestBilibiliPublish}
             onStopPublication={stopPublication}
             onContinuePublication={continuePublication}
             onOpenCreatorCenter={() => window.etch.openBilibiliCreatorCenter()}
@@ -1612,6 +1632,7 @@ export function App(): React.JSX.Element {
               account={bilibiliAccount}
               settings={settings}
               disabled={!settingsLoaded || savingSettings || savingPreset}
+              guidance={bilibiliSettingsIntent}
               onAccountChange={setBilibiliAccount}
               onSettingsChange={setSettings}
             />
@@ -1790,6 +1811,16 @@ export function App(): React.JSX.Element {
             <span>
               <strong>完成后自动投稿到 B站</strong>
               <small>{bilibiliAccount.status !== 'connected' ? '请先在设置中扫码登录' : !publicationTemplateReady(settings.bilibiliPublishTemplate) ? '请先补全默认分区和标签' : '使用设置中的投稿模板；默认关闭'}</small>
+              {(bilibiliAccount.status !== 'connected' || !publicationTemplateReady(settings.bilibiliPublishTemplate)) && (
+                <button
+                  className="inline-setup-button"
+                  type="button"
+                  disabled={creatingTask}
+                  onClick={() => openBilibiliSettings(bilibiliAccount.status === 'connected' ? 'template' : 'auto')}
+                >
+                  {bilibiliAccount.status === 'connected' ? '配置投稿模板' : '连接 B站账号'}
+                </button>
+              )}
             </span>
             <SwitchControl
               label="完成后自动投稿到 B站"

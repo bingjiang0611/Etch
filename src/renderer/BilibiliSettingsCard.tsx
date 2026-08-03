@@ -6,17 +6,21 @@ interface BilibiliSettingsCardProps {
   account: BilibiliAccount
   settings: AppSettings
   disabled: boolean
+  guidance?: 'publish' | 'auto' | 'template'
   onAccountChange: (account: BilibiliAccount) => void
   onSettingsChange: (settings: AppSettings) => void
 }
 
-export function BilibiliSettingsCard({ account, settings, disabled, onAccountChange, onSettingsChange }: BilibiliSettingsCardProps): React.JSX.Element {
+export function BilibiliSettingsCard({ account, settings, disabled, guidance, onAccountChange, onSettingsChange }: BilibiliSettingsCardProps): React.JSX.Element {
   const [partitions, setPartitions] = useState<BilibiliPartition[]>([])
   const [partitionsLoading, setPartitionsLoading] = useState(false)
   const [qrState, setQrState] = useState<BilibiliQrState>()
   const [error, setError] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const cardRef = useRef<HTMLElement>(null)
+  const connectButtonRef = useRef<HTMLButtonElement>(null)
+  const partitionRef = useRef<HTMLSelectElement>(null)
   const qrDialogRef = useRef<HTMLDialogElement>(null)
   const template = settings.bilibiliPublishTemplate
 
@@ -47,6 +51,15 @@ export function BilibiliSettingsCard({ account, settings, disabled, onAccountCha
       })
     return () => { cancelled = true }
   }, [account.status, account.mid])
+
+  useEffect(() => {
+    if (!guidance) return
+    cardRef.current?.scrollIntoView({ block: 'center' })
+    window.requestAnimationFrame(() => {
+      if (guidance === 'template' || account.status === 'connected') partitionRef.current?.focus()
+      else connectButtonRef.current?.focus()
+    })
+  }, [guidance, account.status])
 
   useEffect(() => {
     if (!qrState || !['waiting', 'scanned'].includes(qrState.status)) return
@@ -94,7 +107,7 @@ export function BilibiliSettingsCard({ account, settings, disabled, onAccountCha
 
   return (
     <>
-      <section className="panel settings-card bilibili-settings-card">
+      <section className="panel settings-card bilibili-settings-card" data-guided={guidance ? 'true' : undefined} ref={cardRef}>
         <div className="settings-card-heading">
           <div>
             <h2>B站投稿</h2>
@@ -105,11 +118,24 @@ export function BilibiliSettingsCard({ account, settings, disabled, onAccountCha
               {disconnecting ? '正在退出…' : '退出登录'}
             </button>
           ) : (
-            <button className="primary-button" type="button" disabled={disabled || connecting} onClick={() => { void connect() }}>
+            <button className="primary-button" type="button" disabled={disabled || connecting} ref={connectButtonRef} onClick={() => { void connect() }}>
               {connecting ? '正在获取二维码…' : account.status === 'expired' ? '重新扫码' : '扫码登录'}
             </button>
           )}
         </div>
+
+        {guidance && (
+          <div className="bilibili-guidance" role="status">
+            <strong>{guidance === 'publish' ? '先连接账号，随后继续投稿' : guidance === 'auto' ? '先连接账号，再完成自动投稿配置' : '补全自动投稿模板'}</strong>
+            <span>
+              {guidance === 'publish'
+                ? '扫码成功后 Etch 会自动返回当前任务并打开投稿信息。'
+                : guidance === 'auto'
+                  ? '连接后选择默认分区、填写至少一个标签并保存设置。'
+                  : '选择默认分区、填写至少一个标签并保存设置。'}
+            </span>
+          </div>
+        )}
 
         <div className="bilibili-account" data-status={account.status}>
           <span className="bilibili-avatar" aria-hidden="true">
@@ -127,6 +153,7 @@ export function BilibiliSettingsCard({ account, settings, disabled, onAccountCha
             <span>默认分区</span>
             <select
               className="field-select"
+              ref={partitionRef}
               disabled={disabled || account.status !== 'connected' || partitionsLoading}
               value={template.tid ?? ''}
               onChange={(event) => {
