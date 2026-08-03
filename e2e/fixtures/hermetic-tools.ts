@@ -105,7 +105,7 @@ export async function writeHermeticSettings(userData: string, settings: AppSetti
   return fixture
 }
 
-export async function launchHermeticEtch(userData: string, executablePath?: string): Promise<ElectronApplication> {
+export async function launchHermeticEtch(userData: string, executablePath?: string, options: { bilibiliFailure?: boolean; bilibiliNetwork?: boolean } = {}): Promise<ElectronApplication> {
   const fixture = await ensureHermeticTools(userData)
   const home = join(userData, 'home')
   const temporary = join(userData, 'tmp')
@@ -124,6 +124,8 @@ export async function launchHermeticEtch(userData: string, executablePath?: stri
       XDG_CONFIG_HOME: xdg,
       ETCH_USER_DATA_DIR: userData,
       ETCH_E2E_HERMETIC: '1',
+      ETCH_E2E_BILIBILI_FAILURE: options.bilibiliFailure ? '1' : '0',
+      ETCH_E2E_BILIBILI_NETWORK: options.bilibiliNetwork ? '1' : '0',
       ETCH_E2E_ALLOW_MULTIPLE_INSTANCES: '1'
     }
   })

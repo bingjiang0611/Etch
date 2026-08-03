@@ -7,6 +7,8 @@ const BILITV_APP_KEY = '4409e2ce8ffd12b8'
 const BILITV_APP_SECRET = '59b43e04ad6965f34319062b478f83dd'
 const BILIBILI_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36 Etch/0.1'
 const QR_LIFETIME_MS = 5 * 60_000
+const NETWORK_ATTEMPTS = 3
+const TRANSIENT_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 
 interface QrSession {
   state: BilibiliQrState
@@ -179,14 +181,33 @@ export class BilibiliAuthService {
     const form = new URLSearchParams(values)
     const sign = createHash('md5').update(`${form.toString()}${BILITV_APP_SECRET}`).digest('hex')
     form.set('sign', sign)
-    const response = await this.fetcher(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': BILIBILI_USER_AGENT },
-      body: form,
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000)
-    })
+    const response = await this.#fetchLoginWithRetry(url, form, signal)
     if (!response.ok) throw new Error(`B站登录服务不可用（HTTP ${response.status}）`)
     return response.json()
+  }
+
+  async #fetchLoginWithRetry(url: string, form: URLSearchParams, signal?: AbortSignal): Promise<Response> {
+    let lastFailure: unknown
+    for (let attempt = 1; attempt <= NETWORK_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await this.fetcher(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': BILIBILI_USER_AGENT },
+          body: form,
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000)
+        })
+        if (!TRANSIENT_HTTP_STATUSES.has(response.status) || attempt === NETWORK_ATTEMPTS) return response
+        lastFailure = new Error(`HTTP ${response.status}`)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        lastFailure = error
+      }
+      await this.sleep(250 * 2 ** (attempt - 1))
+    }
+    const timeout = lastFailure instanceof Error && (lastFailure.name === 'TimeoutError' || String(lastFailure.cause ?? '').includes('ETIMEDOUT'))
+    throw new Error(timeout
+      ? '连接 B站登录服务超时，已自动重试 3 次。请检查网络或代理后重试。'
+      : '暂时无法连接 B站登录服务，已自动重试 3 次。请检查网络或代理后重试。')
   }
 
   #responseData(payload: unknown): Record<string, unknown> {

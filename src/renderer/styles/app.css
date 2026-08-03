@@ -656,6 +656,7 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .bilibili-guidance { display: grid; gap: 3px; padding: 10px 11px; border: 1px solid var(--run-line); border-radius: 7px; background: var(--run-bg); }
 .bilibili-guidance strong { color: var(--blue-ink); font-size: 11px; font-weight: 650; }
 .bilibili-guidance span { color: #91a6bf; font-size: 10px; line-height: 1.5; }
+.bilibili-connect-error { margin: -5px 0 0; }
 .bilibili-account { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-sunken); }
 .bilibili-avatar { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid #596375; border-radius: 50%; background: linear-gradient(145deg, #30394a, #1c222c); color: #e6e9ee; font-size: 15px; font-weight: 650; }
 .bilibili-avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }

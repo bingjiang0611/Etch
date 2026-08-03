@@ -157,3 +157,32 @@ test('gates, edits and recovers a B站 publication through the Electron UI', asy
     await rm(userData, { recursive: true, force: true })
   }
 })
+
+test('turns a QR network failure into an actionable retry state', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'etch-bilibili-error-e2e-'))
+  const workspaceRoot = join(userData, 'workspace')
+  await mkdir(workspaceRoot)
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  await writeFile(join(userData, 'app-state.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    cleanExit: true,
+    recoveryHold: false,
+    fullDiskAccessOnboardingShown: true,
+    updatedAt: new Date().toISOString()
+  }, null, 2)}\n`, 'utf8')
+
+  const application = await launchHermeticEtch(userData, undefined, { bilibiliFailure: true })
+  try {
+    const window = await application.firstWindow()
+    await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
+    await application.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('settings')?.click())
+    await window.getByRole('button', { name: '扫码登录', exact: true }).click()
+    const alert = window.getByRole('alert')
+    await expect(alert).toHaveText('暂时无法连接 B站登录服务，已自动重试 3 次。请检查网络或代理后重试。')
+    await expect(alert).not.toContainText('Error invoking remote method')
+    await expect(window.getByRole('button', { name: '重试扫码登录', exact: true })).toBeEnabled()
+  } finally {
+    await quit(application)
+    await rm(userData, { recursive: true, force: true })
+  }
+})

@@ -297,10 +297,11 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   const settingsStore = new SettingsStore(join(support, 'settings.json'), app.getPath('home'))
   const settings = await settingsStore.load()
   const bilibiliAccountStore = new BilibiliAccountStore(join(support, 'bilibili-account.json'), safeStorage)
-  const bilibiliFetch: typeof fetch = process.env.ETCH_E2E_HERMETIC === '1'
+  const bilibiliFetch: typeof fetch = process.env.ETCH_E2E_HERMETIC === '1' && process.env.ETCH_E2E_BILIBILI_NETWORK !== '1'
     ? async (input, init) => {
       const url = String(input)
       const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (process.env.ETCH_E2E_BILIBILI_FAILURE === '1' && url.includes('/qrcode/auth_code')) throw new TypeError('fetch failed')
       if (url.includes('/qrcode/auth_code')) return json({ code: 0, data: { url: 'https://example.com/etch-e2e-bilibili', auth_code: 'etch-e2e-auth-code' } })
       if (url.includes('/qrcode/poll')) return json({
         code: 0,

@@ -64,4 +64,41 @@ describe('BilibiliAuthService', () => {
       { tid: 138, name: '搞笑', parentName: '生活' }
     ])
   })
+
+  it('retries transient QR connection failures before returning the login state', async () => {
+    let attempts = 0
+    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpired'> = {
+      account: async () => ({ status: 'disconnected' }),
+      save: async () => undefined,
+      clear: async () => undefined,
+      loginInfo: async () => loginInfo,
+      markExpired: async (message) => ({ status: 'expired', message })
+    }
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      if (!String(input).includes('auth_code')) return json({ code: 86039 })
+      attempts += 1
+      if (attempts < 3) throw new TypeError('fetch failed')
+      return json({ code: 0, data: { url: 'https://example.com/qr', auth_code: 'auth-code' } })
+    })
+    const service = new BilibiliAuthService(store, fetcher, async () => undefined)
+
+    await expect(service.startQrLogin()).resolves.toMatchObject({ status: 'waiting' })
+    expect(attempts).toBe(3)
+    service.disposeQrSessions()
+  })
+
+  it('returns an actionable Chinese error after QR connection retries are exhausted', async () => {
+    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpired'> = {
+      account: async () => ({ status: 'disconnected' }),
+      save: async () => undefined,
+      clear: async () => undefined,
+      loginInfo: async () => loginInfo,
+      markExpired: async (message) => ({ status: 'expired', message })
+    }
+    const fetcher = vi.fn<typeof fetch>(async () => { throw new TypeError('fetch failed') })
+    const service = new BilibiliAuthService(store, fetcher, async () => undefined)
+
+    await expect(service.startQrLogin()).rejects.toThrow('暂时无法连接 B站登录服务，已自动重试 3 次。请检查网络或代理后重试。')
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  })
 })

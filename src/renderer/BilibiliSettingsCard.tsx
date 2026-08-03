@@ -11,6 +11,16 @@ interface BilibiliSettingsCardProps {
   onSettingsChange: (settings: AppSettings) => void
 }
 
+function readableBilibiliError(caught: unknown, fallback: string): string {
+  if (!(caught instanceof Error)) return fallback
+  const message = caught.message
+    .replace(/^Error invoking remote method '[^']+':\s*/u, '')
+    .replace(/^Error:\s*/u, '')
+    .trim()
+  if (!message || /fetch failed/iu.test(message)) return '暂时无法连接 B站登录服务，请检查网络或代理后重试。'
+  return message
+}
+
 export function BilibiliSettingsCard({ account, settings, disabled, guidance, onAccountChange, onSettingsChange }: BilibiliSettingsCardProps): React.JSX.Element {
   const [partitions, setPartitions] = useState<BilibiliPartition[]>([])
   const [partitionsLoading, setPartitionsLoading] = useState(false)
@@ -44,7 +54,7 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
         if (!cancelled) setPartitions(items)
       })
       .catch((caught) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : 'B站分区读取失败')
+        if (!cancelled) setError(readableBilibiliError(caught, 'B站分区读取失败'))
       })
       .finally(() => {
         if (!cancelled) setPartitionsLoading(false)
@@ -69,7 +79,7 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
           setQrState(next)
           if (next.account) onAccountChange(next.account)
         })
-        .catch((caught) => setQrState((current) => current ? { ...current, status: 'failed', message: caught instanceof Error ? caught.message : '扫码状态读取失败' } : current))
+        .catch((caught) => setQrState((current) => current ? { ...current, status: 'failed', message: readableBilibiliError(caught, '扫码状态读取失败') } : current))
     }, 1_000)
     return () => window.clearInterval(timer)
   }, [qrState?.sessionId, qrState?.status, onAccountChange])
@@ -81,7 +91,7 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
     try {
       setQrState(await window.etch.startBilibiliQrLogin())
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '无法获取 B站登录二维码')
+      setError(readableBilibiliError(caught, '无法获取 B站登录二维码'))
     } finally {
       setConnecting(false)
     }
@@ -95,7 +105,7 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
       onAccountChange(await window.etch.disconnectBilibili())
       setQrState(undefined)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'B站账号退出失败')
+      setError(readableBilibiliError(caught, 'B站账号退出失败'))
     } finally {
       setDisconnecting(false)
     }
@@ -119,7 +129,7 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
             </button>
           ) : (
             <button className="primary-button" type="button" disabled={disabled || connecting} ref={connectButtonRef} onClick={() => { void connect() }}>
-              {connecting ? '正在获取二维码…' : account.status === 'expired' ? '重新扫码' : '扫码登录'}
+              {connecting ? '正在获取二维码…' : error ? '重试扫码登录' : account.status === 'expired' ? '重新扫码' : '扫码登录'}
             </button>
           )}
         </div>
@@ -136,6 +146,8 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
             </span>
           </div>
         )}
+
+        {error && <p className="form-error bilibili-connect-error" role="alert">{error}</p>}
 
         <div className="bilibili-account" data-status={account.status}>
           <span className="bilibili-avatar" aria-hidden="true">
@@ -189,7 +201,6 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
             />
           </label>
         </div>
-        {error && <p className="form-error" role="alert">{error}</p>}
       </section>
 
       <dialog
