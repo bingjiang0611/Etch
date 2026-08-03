@@ -3,13 +3,14 @@ import type { QueuePage, ReviewTimelineWindow, TaskDetail, TaskReviewPage } from
 import { POOL_BY_STAGE, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
 import type { ProviderId, StageId } from '../shared/task-schema'
+import { clearPlaybackPosition, loadPlaybackPosition, savePlaybackPosition } from './playback-position'
 import { TimelineWindowCoordinator, type TimelineRequestIdentity } from './timeline-window-coordinator'
 
 export const pools = ['download', 'whisper', 'agent', 'audit', 'ffmpeg'] as const
 
 export type SubtitlePreset = AppSettings['subtitlePreset']
 type StageState = TaskDetail['manifest']['pipeline']['stages'][string]
-type IconName = 'queue' | 'glossary' | 'settings' | 'plus' | 'play' | 'pause' | 'back' | 'link' | 'local' | 'search' | 'chevron' | 'warning' | 'refresh' | 'empty' | 'check' | 'folder' | 'record-remove' | 'trash'
+type IconName = 'queue' | 'glossary' | 'settings' | 'plus' | 'play' | 'pause' | 'back' | 'link' | 'local' | 'search' | 'chevron' | 'warning' | 'refresh' | 'empty' | 'check' | 'folder' | 'record-remove' | 'trash' | 'fullscreen' | 'fullscreen-exit'
 
 export const providerNames: Record<ProviderId, string> = {
   claude: 'Claude Code',
@@ -159,6 +160,18 @@ export function Icon({ name }: { name: IconName }): React.JSX.Element {
         <path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v6M14 10v6" />
       </svg>
     )
+  if (name === 'fullscreen')
+    return (
+      <svg {...common} strokeWidth="1.9">
+        <path d="M9 4H4v5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+      </svg>
+    )
+  if (name === 'fullscreen-exit')
+    return (
+      <svg {...common} strokeWidth="1.9">
+        <path d="M4 9h5V4M20 9h-5V4M15 20v-5h5M9 20v-5H4" />
+      </svg>
+    )
   return (
     <svg {...common}>
       <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
@@ -296,11 +309,15 @@ export function VideoPreview({
 }): React.JSX.Element {
   const [activeCueId, setActiveCueId] = useState<number>()
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [subtitlePreview, setSubtitlePreview] = useState(true)
   const [timelineWindow, setTimelineWindow] = useState<ReviewTimelineWindow>()
+  const stageRef = useRef<HTMLDivElement>(null)
   const currentTimeRef = useRef<HTMLSpanElement>(null)
   const progressRef = useRef<HTMLElement>(null)
   const scrubberRef = useRef<HTMLInputElement>(null)
+  const lastPlaybackPositionRef = useRef<number | undefined>(undefined)
+  const lastPersistedSecondRef = useRef(-1)
   const timelineWindowRef = useRef<ReviewTimelineWindow | undefined>(undefined)
   const detailRef = useRef(detail)
   const syncPlaybackRef = useRef<(video: HTMLVideoElement) => void>(() => undefined)
@@ -391,6 +408,29 @@ export function VideoPreview({
   }, [detail.manifest.taskId])
 
   useEffect(() => {
+    const unsubscribe = window.etch.onVideoFullscreenChanged(setIsFullscreen)
+    return () => {
+      unsubscribe()
+      void window.etch.setVideoFullscreen(false).catch(() => undefined)
+    }
+  }, [])
+
+  useEffect(() => {
+    const taskId = detail.manifest.taskId
+    lastPlaybackPositionRef.current = undefined
+    lastPersistedSecondRef.current = -1
+    return () => {
+      const seconds = lastPlaybackPositionRef.current
+      if (seconds === undefined) return
+      try {
+        savePlaybackPosition(window.localStorage, taskId, seconds)
+      } catch {
+        // Renderer storage is optional; playback remains usable without persistence.
+      }
+    }
+  }, [detail.manifest.taskId])
+
+  useEffect(() => {
     onActiveCueChange?.(activeCueId)
   }, [activeCueId, onActiveCueChange])
 
@@ -404,9 +444,47 @@ export function VideoPreview({
     if (video.paused) void video.play().catch(() => undefined)
     else video.pause()
   }
+  const persistPlayback = (video: HTMLVideoElement, force = false): void => {
+    const seconds = video.currentTime
+    lastPlaybackPositionRef.current = seconds
+    const wholeSecond = Math.floor(seconds)
+    if (!force && wholeSecond === lastPersistedSecondRef.current) return
+    lastPersistedSecondRef.current = wholeSecond
+    try {
+      savePlaybackPosition(window.localStorage, detail.manifest.taskId, seconds)
+    } catch {
+      // Renderer storage is optional; playback remains usable without persistence.
+    }
+  }
+  const restorePlayback = (video: HTMLVideoElement): void => {
+    try {
+      const restored = loadPlaybackPosition(window.localStorage, detail.manifest.taskId, video.duration)
+      if (restored !== undefined) {
+        video.currentTime = restored
+        lastPlaybackPositionRef.current = restored
+        lastPersistedSecondRef.current = Math.floor(restored)
+      }
+    } catch {
+      // Renderer storage is optional; playback remains usable without persistence.
+    }
+    syncPlayback(video)
+  }
+  const clearSavedPlayback = (): void => {
+    lastPlaybackPositionRef.current = undefined
+    lastPersistedSecondRef.current = -1
+    try {
+      clearPlaybackPosition(window.localStorage, detail.manifest.taskId)
+    } catch {
+      // Renderer storage is optional; playback remains usable without persistence.
+    }
+  }
+  const toggleFullscreen = (): void => {
+    if (!stageRef.current) return
+    void window.etch.setVideoFullscreen(!isFullscreen).catch(() => undefined)
+  }
 
   return (
-    <div className="editor-stage" data-preset={preset}>
+    <div className={`editor-stage ${isFullscreen ? 'is-video-fullscreen' : ''}`} data-preset={preset} ref={stageRef}>
       <div className="stage-video">
         <div className="frame-grid" aria-hidden="true" />
         {detail.mediaUrl ? (
@@ -417,12 +495,25 @@ export function VideoPreview({
               preload="metadata"
               src={detail.mediaUrl}
               onClick={togglePlayback}
-              onLoadedMetadata={(event) => syncPlayback(event.currentTarget)}
-              onTimeUpdate={(event) => syncPlayback(event.currentTarget)}
-              onSeeked={(event) => syncPlayback(event.currentTarget)}
+              onLoadedMetadata={(event) => restorePlayback(event.currentTarget)}
+              onTimeUpdate={(event) => {
+                syncPlayback(event.currentTarget)
+                persistPlayback(event.currentTarget)
+              }}
+              onSeeked={(event) => {
+                syncPlayback(event.currentTarget)
+                persistPlayback(event.currentTarget, true)
+              }}
               onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
+              onPause={(event) => {
+                setIsPlaying(false)
+                if (event.currentTarget.ended) clearSavedPlayback()
+                else persistPlayback(event.currentTarget, true)
+              }}
+              onEnded={() => {
+                setIsPlaying(false)
+                clearSavedPlayback()
+              }}
             />
             <button className={`center-play media-play-toggle ${isPlaying ? 'is-playing' : ''}`} type="button" aria-label={isPlaying ? '暂停画面' : '播放画面'} onClick={togglePlayback}>
               <Icon name={isPlaying ? 'pause' : 'play'} />
@@ -489,6 +580,17 @@ export function VideoPreview({
             </button>
           </div>
         )}
+        <button
+          className="stage-fullscreen-button"
+          type="button"
+          disabled={!detail.mediaUrl}
+          aria-label={isFullscreen ? '退出视频全屏' : '视频全屏'}
+          aria-pressed={isFullscreen}
+          title={isFullscreen ? '退出全屏' : '全屏'}
+          onClick={toggleFullscreen}
+        >
+          <Icon name={isFullscreen ? 'fullscreen-exit' : 'fullscreen'} />
+        </button>
       </div>
     </div>
   )

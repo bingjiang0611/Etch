@@ -29,7 +29,13 @@ const api: EtchApi = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (settings) => ipcRenderer.invoke('settings:update', settings),
   detectTools: () => ipcRenderer.invoke('tools:detect'),
+  setVideoFullscreen: (fullscreen) => ipcRenderer.invoke('video:set-fullscreen', fullscreen),
   openFullDiskAccessSettings: () => ipcRenderer.invoke('permissions:open-full-disk-access-settings'),
+  onVideoFullscreenChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, fullscreen: boolean): void => listener(fullscreen)
+    ipcRenderer.on('video:fullscreen-changed', handler)
+    return () => ipcRenderer.removeListener('video:fullscreen-changed', handler)
+  },
   onOpenSettings: (listener) => {
     const handler = (): void => listener()
     ipcRenderer.on('app:open-settings', handler)

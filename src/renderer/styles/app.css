@@ -379,6 +379,7 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 /* Video and transcript editor */
 .editor-shell { display: grid; min-height: 0; flex: 1 1 auto; grid-template-columns: minmax(0, 1.2fr) minmax(420px, .92fr); gap: 10px; }
 .editor-stage { display: flex; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #050607; }
+.editor-stage.is-video-fullscreen { position: fixed; z-index: 1000; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: #050607; }
 .stage-video { position: relative; display: grid; min-height: 0; flex: 1 1 auto; place-items: end center; overflow: hidden; background: radial-gradient(120% 90% at 50% 25%, #10161f, #050607 78%); }
 .stage-video video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #050607; cursor: pointer; }
 .frame-grid { position: absolute; inset: 0; background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 44px 44px; opacity: .1; pointer-events: none; }
@@ -404,6 +405,10 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .stage-play-button { display: grid; width: 31px; height: 31px; flex: none; place-items: center; padding: 0; border: 1px solid var(--blue-strong); border-radius: 6px; background: var(--blue-strong); color: #fff; }
 .stage-play-button:disabled { opacity: .42; }
 .stage-play-button svg { width: 14px; height: 14px; }
+.stage-fullscreen-button { display: grid; width: 31px; height: 31px; flex: none; place-items: center; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-raised); color: var(--fg-soft); transition: transform 130ms var(--ease-out), border-color 130ms ease, background-color 130ms ease, color 130ms ease; }
+.stage-fullscreen-button:active:not(:disabled) { transform: scale(.97); }
+.stage-fullscreen-button:disabled { opacity: .42; }
+.stage-fullscreen-button svg { width: 16px; height: 16px; }
 .stage-time { display: inline-flex; flex: none; align-items: center; color: var(--fg-soft); font-size: 11px; }
 .stage-time .sep { margin: 0 4px; color: var(--faint); }
 .stage-scrub { position: relative; height: 3px; min-width: 60px; flex: 1 1 auto; border-radius: 2px; background: var(--line); }
@@ -715,8 +720,8 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .primary-button, .secondary-button, .text-button, .danger-button, .audit-adopt-button, .task-row, .task-start-button { transition: background-color 100ms ease, border-color 100ms ease; }
-  .primary-button:active, .secondary-button:active, .text-button:active, .danger-button:active, .audit-adopt-button:active, .task-row:has(.task-row-open:active), .task-start-button:active { transform: none; }
+  .primary-button, .secondary-button, .text-button, .danger-button, .audit-adopt-button, .task-row, .task-start-button, .stage-fullscreen-button { transition: background-color 100ms ease, border-color 100ms ease; }
+  .primary-button:active, .secondary-button:active, .text-button:active, .danger-button:active, .audit-adopt-button:active, .task-row:has(.task-row-open:active), .task-start-button:active, .stage-fullscreen-button:active { transform: none; }
   .status-dot[data-status="checking"] { animation: none; }
   .switch::after { transition: none; }
   .pipeline-chevron { transition: none; }

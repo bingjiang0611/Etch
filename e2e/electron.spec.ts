@@ -1081,11 +1081,35 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await expect(window.getByRole('tab', { name: '校对' })).toHaveAttribute('aria-selected', 'true')
     await expect(window.locator('.cue-row')).toHaveCount(100)
     await expect(window.locator('.burn-overlay .zh')).toHaveText('你好。')
+    const fullscreenButton = window.getByRole('button', { name: '视频全屏' })
+    await expect(fullscreenButton).toHaveAttribute('aria-pressed', 'false')
+    await fullscreenButton.click()
+    await expect.poll(() => application.evaluate(({ BrowserWindow }) => {
+      const browserWindow = BrowserWindow.getAllWindows()[0]
+      return { fullScreen: browserWindow?.isFullScreen(), simpleFullScreen: browserWindow?.isSimpleFullScreen() }
+    })).toEqual({ fullScreen: false, simpleFullScreen: true })
+    await expect(window.locator('.editor-stage.is-video-fullscreen')).toBeVisible()
+    await expect(window.getByRole('button', { name: '退出视频全屏' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(window.locator('.editor-stage.is-video-fullscreen .stage-toolbar')).toBeVisible()
+    await expect(window.locator('.editor-stage.is-video-fullscreen .burn-overlay .zh')).toHaveText('你好。')
+    await window.getByRole('button', { name: '退出视频全屏' }).click()
+    await expect(window.locator('.editor-stage.is-video-fullscreen')).toHaveCount(0)
+    await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isSimpleFullScreen())).toBe(false)
+    await expect(fullscreenButton).toHaveAttribute('aria-pressed', 'false')
     await window.getByRole('button', { name: '仅看画面' }).click()
     await expect(window.locator('.burn-overlay')).toHaveCount(0)
     await window.getByRole('button', { name: '字幕预览' }).click()
     await expect(window.locator('.burn-overlay .zh')).toHaveText('你好。')
     await expect.poll(() => video.evaluate((element) => (element.seekable.length ? element.seekable.end(0) : 0))).toBeGreaterThan(10)
+    await video.evaluate((element) => {
+      element.pause()
+      element.currentTime = 3.25
+      element.dispatchEvent(new Event('timeupdate'))
+    })
+    await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
+    await window.locator('.task-row').click()
+    await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeCloseTo(3.25, 1)
+    await expect.poll(() => video.evaluate((element) => element.paused)).toBe(true)
     await video.evaluate((element) => {
       element.currentTime = 5
       element.dispatchEvent(new Event('timeupdate'))
@@ -1114,10 +1138,17 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await expect(window.getByLabel('Cue 2 中文译文')).toHaveValue('世界杯赛事。')
     await window.getByRole('button', { name: '查看审计术语表', exact: true }).click()
     await expect(window.getByLabel('术语 1 统一写法')).toHaveValue('世界杯锦标赛')
+    await video.evaluate((element) => {
+      element.pause()
+      element.currentTime = 8
+      element.dispatchEvent(new Event('timeupdate'))
+    })
     await window.getByLabel('术语 1 原文').fill('FIFA World Cup')
     await window.reload()
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
     await window.locator('.task-row').click()
+    await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeCloseTo(8, 1)
+    await expect.poll(() => video.evaluate((element) => element.paused)).toBe(true)
     await window.getByRole('button', { name: '查看审计术语表', exact: true }).click()
     await expect(window.getByLabel('术语 1 原文')).toHaveValue('FIFA World Cup')
     await expect(window.getByText('已自动保存', { exact: true })).toBeVisible()
@@ -1230,6 +1261,10 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await expect(window.getByLabel('Cue 1 中文译文')).toHaveValue('您好。')
     await expect(window.getByLabel('Cue 201 中文译文')).toHaveCount(0)
 
+    await video.evaluate((element) => element.dispatchEvent(new Event('ended')))
+    await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
+    await window.locator('.task-row').click()
+    await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeLessThan(0.5)
     await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
     await expect(window.locator('.task-row')).toHaveCount(1)
     await application.evaluate(({ ipcMain }) => ipcMain.removeHandler('queue:page'))

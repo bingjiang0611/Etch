@@ -272,7 +272,9 @@ export interface EtchApi {
   getSettings(): Promise<AppSettings>
   updateSettings(settings: AppSettings): Promise<AppSettings>
   detectTools(): Promise<ToolHealthSnapshot[]>
+  setVideoFullscreen(fullscreen: boolean): Promise<void>
   openFullDiskAccessSettings(): Promise<void>
+  onVideoFullscreenChanged(listener: (fullscreen: boolean) => void): () => void
   onOpenSettings(listener: () => void): () => void
 }
 

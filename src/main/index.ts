@@ -32,6 +32,7 @@ import { coordinateShutdown, handleShutdownResult, type ShutdownMode } from './r
 import { PipelinePowerManager } from './runtime/power'
 import { TaskNotifier } from './runtime/task-notifier'
 import { AsyncRunScope } from './runtime/async-run-scope'
+import { isVideoFullscreenEscape } from './video-fullscreen'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
@@ -59,6 +60,7 @@ let runtimeDiagnostics: RuntimeDiagnostics = {
 }
 const taskStore = new TaskStore()
 const deletingTaskIds = new Set<string>()
+const videoFullscreenWindowIds = new Set<number>()
 const taskThumbnails = new TaskThumbnailService()
 
 if (process.env.ETCH_USER_DATA_DIR) app.setPath('userData', process.env.ETCH_USER_DATA_DIR)
@@ -80,6 +82,14 @@ else {
 function supportedPlatform(): boolean {
   const [major, minor] = process.getSystemVersion().split('.').map(Number)
   return process.platform === 'darwin' && process.arch === 'arm64' && (major > 13 || (major === 13 && minor >= 5))
+}
+
+function setVideoFullscreen(window: BrowserWindow, fullscreen: boolean): void {
+  window.setSimpleFullScreen(fullscreen)
+  const active = window.isSimpleFullScreen()
+  if (active) videoFullscreenWindowIds.add(window.id)
+  else videoFullscreenWindowIds.delete(window.id)
+  window.webContents.send('video:fullscreen-changed', active)
 }
 
 async function trashTaskDirectory(taskDirectory: string, support: string): Promise<void> {
@@ -114,6 +124,11 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true
     }
+  })
+  window.webContents.on('before-input-event', (event, input) => {
+    if (!isVideoFullscreenEscape(videoFullscreenWindowIds.has(window.id), input)) return
+    event.preventDefault()
+    setVideoFullscreen(window, false)
   })
 
   window.on('close', (event) => {
@@ -545,6 +560,12 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       return detectTool(tool, env, settings.toolOverrides[tool], runAppScopedExternal)
     }))
     return results.map((health) => ToolHealthSnapshotSchema.parse(health))
+  })
+  ipcMain.handle('video:set-fullscreen', (event, fullscreen) => {
+    if (typeof fullscreen !== 'boolean') throw new Error('视频全屏状态无效')
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (!owner || owner.isDestroyed()) return
+    setVideoFullscreen(owner, fullscreen)
   })
   ipcMain.handle('permissions:open-full-disk-access-settings', () => shell.openExternal('x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles'))
   ipcMain.handle('task:create-urls', async (_event, raw) => {
