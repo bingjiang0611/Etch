@@ -14,16 +14,15 @@ const dmgUrl = `https://github.com/bingjiang0611/Etch/releases/download/v${packa
 describe('documentation capability contract', () => {
   it('keeps the website version and DMG download aligned with package.json', () => {
     expect(website).toContain(`"softwareVersion": "${packageJson.version}"`)
-    expect(website).toContain(`Etch ${packageJson.version}`)
+    expect(website).toContain(`Etch v${packageJson.version}`)
     expect(readme).toContain(`当前版本：\`${packageJson.version}\``)
     expect(website).toContain(dmgUrl)
     expect(readme).toContain(`Etch-${packageJson.version}-arm64.dmg`)
   })
 
   it('keeps the public input and release scope truthful', () => {
-    expect(website).toContain('当前仅支持粘贴 HTTP(S) 视频链接')
+    expect(website).toContain('仅支持 HTTP(S) URL')
     expect(website).not.toContain('选择本地文件')
-    expect(website).toContain('GitHub Release 提供 Apple Silicon DMG')
     expect(readme).toMatch(/当前输入：\*\*仅支持 HTTP\(S\) URL\*\*/)
     expect(readme).toContain('| Implemented |')
     expect(readme).toContain('| Partial |')
@@ -37,6 +36,9 @@ describe('documentation capability contract', () => {
     expect(website).not.toContain('从源码体验 B站投稿')
     expect(website).not.toContain('发行说明')
     expect(website).not.toContain('release-note')
+    expect(website).not.toContain('final-cta')
+    expect(website).not.toContain('先把下一条英文视频')
+    expect(website).not.toContain('在 GitHub 查看源码')
     expect(readme).toContain('公开 DMG 已包含 B站投稿')
     expect(readme).not.toContain('尚不包含 B站投稿')
   })

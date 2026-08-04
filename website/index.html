@@ -263,13 +263,7 @@
   .tool .role{font-size:11.5px;color:var(--faint);margin-top:1px}
   .tool .txt{min-width:0}
 
-  /* ---------- final CTA / footer ---------- */
-  .final-cta{padding:92px 0;background:radial-gradient(70% 110% at 50% 100%,rgba(67,140,245,.14),transparent 66%)}
-  .final-panel{display:grid;grid-template-columns:1fr auto;gap:42px;align-items:end;padding:42px;border:1px solid var(--line-strong);border-radius:18px;background:linear-gradient(135deg,#151e2a,var(--surface-sunken) 68%)}
-  .final-panel h2{max-width:650px;font-family:var(--font-display);font-size:clamp(32px,4.8vw,54px);font-weight:600;letter-spacing:-.04em;line-height:1.04}
-  .final-panel p{max-width:620px;margin-top:15px;color:var(--muted);font-size:15px}
-  .final-actions{display:grid;min-width:244px;gap:10px}
-  .final-actions .btn,.final-actions .ghost{justify-content:center}
+  /* ---------- footer ---------- */
   footer{position:relative;z-index:1;border-top:1px solid var(--line-shell);padding:28px 0 36px;color:var(--faint);font-size:11.5px}
   .footer-inner{display:flex;align-items:center;justify-content:space-between;gap:22px}
   .footer-inner strong{color:var(--fg-soft);font-weight:600}
@@ -289,8 +283,6 @@
     .publish-grid{grid-template-columns:1fr;gap:34px}
     .publish-copy h2,.publish-copy>p{max-width:680px}
     .publish-steps{grid-template-columns:1fr 1fr}
-    .final-panel{grid-template-columns:1fr;align-items:start}
-    .final-actions{width:min(100%,360px)}
   }
   @media (max-width:560px){
     .cards{grid-template-columns:1fr}
@@ -306,7 +298,6 @@
     .publish-steps{grid-template-columns:1fr}
     .publish-boundary{display:grid;gap:4px}
     .publish-shot figcaption{text-align:left}
-    .final-panel{padding:28px 22px}
     .footer-inner{align-items:flex-start;flex-direction:column}
   }
   @media (max-width:360px){
@@ -401,7 +392,7 @@
         </a>
       </div>
       <div class="spec-line mono">
-        <b>Apple Silicon</b><span class="dot"></span><b>macOS 13.5+</b><span class="dot"></span><b>v0.1.2</b>
+        <b>Apple Silicon</b><span class="dot"></span><b>macOS 13.5+</b><span class="dot"></span><b>仅支持 HTTP(S) URL</b><span class="dot"></span><b>v0.1.2</b>
       </div>
     </div>
 
@@ -578,24 +569,6 @@
   </div>
 </section>
 
-<!-- ============ FINAL CTA ============ -->
-<section class="final-cta" id="download">
-  <div class="wrap">
-    <div class="final-panel">
-      <div>
-        <h2>先把下一条英文视频，刻成可信的双语成片。</h2>
-        <p>GitHub Release 提供 Apple Silicon DMG。Etch 0.1.2 当前仅支持粘贴 HTTP(S) 视频链接，可完成术语审计、逐句校对、硬字幕成片与 B站投稿。</p>
-      </div>
-      <div class="final-actions">
-        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg">
-          <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
-          下载 v0.1.2 DMG
-        </a>
-        <a class="ghost" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener">在 GitHub 查看源码</a>
-      </div>
-    </div>
-  </div>
-</section>
 </main>
 
 <footer>
