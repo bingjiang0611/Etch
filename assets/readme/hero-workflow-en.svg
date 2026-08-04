@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="420" viewBox="0 0 1200 420"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Etch — English video to bilingual release to Bilibili</title>
+  <desc id="desc">One connected local workflow: add a video URL, translate and review, verify the bilingual release, then optionally publish it to Bilibili.</desc>
+
+  <defs>
+    <linearGradient id="background" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1200" y2="420">
+      <stop offset="0" stop-color="#11161d"/>
+      <stop offset="0.58" stop-color="#0b0d10"/>
+      <stop offset="1" stop-color="#0d1219"/>
+    </linearGradient>
+    <linearGradient id="logo-accent" gradientUnits="userSpaceOnUse" x1="1030" y1="72" x2="1112" y2="154">
+      <stop offset="0" stop-color="#438cf5"/>
+      <stop offset="1" stop-color="#7fb2ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="420" rx="30" fill="url(#background)"/>
+  <rect x="1" y="1" width="1198" height="418" rx="29" fill="none" stroke="#2b333d" stroke-width="2"/>
+
+  <g transform="translate(62 58)">
+    <text x="0" y="0" fill="#7fb2ff"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" font-weight="650" letter-spacing="2">LOCAL BILINGUAL VIDEO WORKSTATION</text>
+    <text x="0" y="84" fill="#f2f4f7"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+          font-size="82" font-weight="720" letter-spacing="-3">Etch</text>
+    <text x="0" y="132" fill="#c5cad1"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+          font-size="29" font-weight="520">English video → reviewable bilingual release → optional Bilibili</text>
+    <text x="0" y="176" fill="#7f8996"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  LOCAL-FIRST</text>
+  </g>
+
+  <g transform="translate(1026 58)">
+    <rect width="112" height="112" rx="28" fill="#101721" stroke="#344154" stroke-width="2"/>
+    <rect x="27" y="25" width="18" height="62" rx="9" fill="url(#logo-accent)"/>
+    <rect x="27" y="25" width="59" height="18" rx="9" fill="#e8f0ff"/>
+    <rect x="27" y="47" width="43" height="18" rx="9" fill="#6ba6ff"/>
+    <rect x="27" y="69" width="59" height="18" rx="9" fill="#315f9f"/>
+  </g>
+
+  <g>
+    <path d="M148 306 H412" fill="none" stroke="#69a5ff" stroke-width="6" stroke-linecap="round"/>
+    <path d="M452 306 H716" fill="none" stroke="#69a5ff" stroke-width="6" stroke-linecap="round"/>
+    <path d="M756 306 H1036" fill="none" stroke="#6cc79a" stroke-width="6" stroke-linecap="round" stroke-dasharray="12 12"/>
+
+    <text x="896" y="268" fill="#6cc79a" text-anchor="middle"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="17" font-weight="650" letter-spacing="1.4">OPTIONAL PUBLISH</text>
+
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+      <g transform="translate(128 306)">
+        <circle r="24" fill="#0f1b2a" stroke="#7fb2ff" stroke-width="4"/>
+        <text x="0" y="5" fill="#b7d3ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="750">URL</text>
+        <text x="0" y="63" fill="#c5cad1" font-size="21" font-weight="560">VIDEO URL</text>
+      </g>
+      <g transform="translate(432 306)">
+        <circle r="24" fill="#0f1b2a" stroke="#7fb2ff" stroke-width="4"/>
+        <text x="0" y="7" fill="#b7d3ff" font-size="20" font-weight="750">R</text>
+        <text x="0" y="63" fill="#c5cad1" font-size="21" font-weight="560">TRANSLATE + REVIEW</text>
+      </g>
+      <g transform="translate(736 306)">
+        <circle r="24" fill="#0f1b2a" stroke="#7fb2ff" stroke-width="4"/>
+        <text x="0" y="7" fill="#b7d3ff" font-size="20" font-weight="750">V</text>
+        <text x="0" y="63" fill="#c5cad1" font-size="21" font-weight="560">VERIFIED VIDEO</text>
+      </g>
+      <g transform="translate(1056 306)">
+        <circle r="24" fill="#101c16" stroke="#6cc79a" stroke-width="4"/>
+        <text x="0" y="7" fill="#99e5bd" font-size="20" font-weight="750">B</text>
+        <text x="0" y="63" fill="#b8dcc8" font-size="21" font-weight="560">BILIBILI</text>
+      </g>
+    </g>
+  </g>
+</svg>

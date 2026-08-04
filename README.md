@@ -3,64 +3,45 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Etch：从英文视频链接到可校对的双语成片，并可从主分支投稿到 B站">
+  <img src="./assets/readme/hero-workflow.svg" width="100%" alt="Etch 把英文视频 URL、翻译与人工校对、验证双语成片和可选 B站投稿连成一条本地工作流">
 </p>
 
 <p align="center">
-  <strong>URL 进，可校对的双语成片出；验证完成后，还可从本机投稿到 B站。</strong><br>
-  Etch 把字幕获取或本地转写、Agent CLI 翻译、术语审计、人工校对和 FFmpeg 压制组织成一条可恢复的本地流水线；B站投稿作为成片后的可选 sidecar 独立运行。
+  <strong>URL 进，可校对的双语硬字幕成片出；验证通过后，可选择由本机直接投稿到 B站。</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>下载 v0.1.2 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg"><strong>下载 v0.1.2 DMG</strong></a>
   ·
-  <a href="#4-投稿到-b站">B站投稿</a>
+  <a href="#3-步开始">3 步开始</a>
+  ·
+  <a href="#投稿到-b站">B站投稿</a>
   ·
   <a href="#能力与边界">能力与边界</a>
-  ·
-  <a href="#验证层级">验证层级</a>
 </p>
 
 <p align="center">
-  <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch 投稿到 B站确认窗口，包含标题、分区、标签、版权类型、转载来源、简介与封面字段">
+  <sub>v0.1.2 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 输入 · 公开 DMG 已含 B站投稿</sub>
 </p>
 
-> 上图是 Etch v0.1.2 的真实 Electron 界面，使用 hermetic fixture 演示，不含个人账号信息；它证明 UI 合同，不代表真实 B站账号端到端投稿已经通过。
+## 一条可审阅、可恢复的成片流水线
 
-## 当前状态
+<p align="center">
+  <img src="./assets/readme/workbench.png" width="100%" alt="Etch 真实工作台：上方是十阶段处理流水线，下方同时显示双语字幕预览与逐句校对编辑器">
+</p>
 
-- 当前版本：`0.1.2`。公开 DMG 已包含 B站投稿。
-- 当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。
-- 当前发行：GitHub Release 提供 Apple Silicon DMG。
-- 当前平台：Apple Silicon Mac，macOS 13.5 或更高版本。
+<p align="center">
+  <sub>真实 Electron 界面；由 hermetic fixture 生成，不含个人账号或私人文件。</sub>
+</p>
 
-## 从 URL 到成片，再到投稿
+Etch 不把长视频翻译伪装成一次不可见的“AI 生成”。每个任务都保留阶段状态、失败原因、Provider session、候选产物和可恢复 checkpoint：
 
-```text
-视频 URL
-  → 获取视频与英文字幕
-  → 无字幕时使用 mlx_whisper 本地转写
-  → Agent CLI 分批翻译
-  → 历史术语约束与全局术语审计
-  → 人工逐句校对并全局应用术语修改
-  → 生成双语 SRT
-  → FFmpeg 压制并用 ffprobe 验证
-  → [可选] 确认投稿信息 → 本机直连 B站 → 保存可验证回执
-```
+1. 从视频 URL 获取媒体与英文字幕；无字幕时使用 `mlx_whisper` 本地转写。
+2. 通过 Claude、Codex、Qoder 或 OpenCode CLI 分批翻译，再执行英文源审计和全局术语审计。
+3. 在视频旁逐句校对，预览术语修改的影响，然后生成双语 SRT。
+4. 用 FFmpeg 压制硬字幕，经 ffprobe 验证后才视为成片；B站投稿是成片之后的独立可选步骤。
 
-Etch 不把这些步骤伪装成一次不可见的“AI 生成”。每个任务保留十阶段状态、失败原因、Provider session、不可变候选产物和可恢复 checkpoint；人工校对是正式流水线阶段。B站投稿状态独立于十阶段成片流水线，失败不会回滚已经验证的成片。
-
-## 为什么是 Etch
-
-- **Local-first**：下载、转写、文件管理、字幕生成和压制在本机完成；翻译数据是否离开设备取决于所选 Agent CLI。
-- **可恢复**：异常退出后从 `task.json`、durable run registry 和阶段产物恢复，不把退出码 `0` 当作成功证明。
-- **术语一致**：新任务参考历史视频术语表；术语修改可先预览影响 cue，再一次性应用到译文。
-- **Provider 可替换**：支持 Claude、Codex、Qoder、OpenCode 本地 CLI，不绑定单一 SDK 或常驻服务。
-- **人工可控**：逐句中英对照、视频定位、自动保存、审核 checkpoint、重新生成 SRT 与成片。
-- **B站直连投稿**：完成任务可手动或按模板自动投稿；凭据本地加密，上传由本机直连 B站，不经过 Etch 自建云端。
-- **删除语义明确**：可以只隐藏任务记录，也可以把 Etch 管理的任务目录和产物移入 macOS 废纸篓。
-
-## 最快开始
+## 3 步开始
 
 ### 1. 安装
 
@@ -68,11 +49,11 @@ Etch 不把这些步骤伪装成一次不可见的“AI 生成”。每个任务
 2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
 3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
 
-当前 DMG 未经 Apple 公证，使用 ad-hoc 签名，尚未使用 Apple Developer ID。DMG 只是安装容器，不会绕过 Gatekeeper。
+> 当前 DMG 未经 Apple 公证，使用 ad-hoc 签名，尚未使用 Apple Developer ID。DMG 只是安装容器，不会绕过 Gatekeeper。
 
 ### 2. 检查本地工具
 
-Etch 启动后会自动检测 executable、版本、关键能力和登录状态。开始任务前至少需要：
+Etch 启动后会自动检测可执行文件、版本、关键能力和登录状态。开始任务前至少需要：
 
 - Apple Silicon Mac，macOS 13.5+
 - `yt-dlp`
@@ -84,35 +65,47 @@ Etch 启动后会自动检测 executable、版本、关键能力和登录状态�
 
 ### 3. 创建任务
 
-在任务队列中输入一个或多个 HTTP(S) 视频 URL，选择 Provider，并按需填写翻译风格。任务创建后自动开始；处理中可以停止，之后从已提交阶段继续。
+在任务队列粘贴 1–50 个 HTTP(S) 视频 URL，选择 Provider，并按需填写翻译风格。任务可以停止，之后从最后已提交阶段继续。
 
-### 4. 投稿到 B站
+当前版本：`0.1.2`。当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。GitHub Release 提供 Apple Silicon DMG。
 
-先在“设置 → B站投稿”使用具备投稿权限的 B站账号扫码登录，并填写默认分区、标签和简介模板。简介支持 `{title}` 与 `{source_url}` 占位符。之后可以：
+## 投稿到 B站
 
-- 在新建任务时开启“完成后自动投稿”；账号未登录或模板不完整时不能开启。
-- 在已完成任务的工作台中点击“投稿到 B站”，确认标题、分区、标签、简介、版权类型、来源和封面后提交。成功加入本地投稿队列后，Etch 会记住本次分区、标签和版权类型，供下一次手动投稿自动回填；不会改动自动投稿模板。
-- 上传阶段可以停止，之后从 Etch 重新发起投稿。若已进入提交阶段却没有取得可验证回执，Etch 会标记为“结果未知”，要求先到 B站创作中心确认，避免重复投稿。
+<p align="center">
+  <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch 投稿到 B站确认窗口，包含标题、分区、标签、版权类型、转载来源、简介和封面字段">
+</p>
 
-Etch 不要求配置 B站开放平台应用；投稿链路不经过 Etch 自建云端或中转服务。V1 仅支持单账号、单投稿并发，不支持定时、多账号、审核轮询，也不修改或删除已经提交的稿件。
+<p align="center">
+  <sub>v0.1.2 真实投稿确认界面；使用 hermetic fixture，不代表真实 B站账号端到端投稿已通过。</sub>
+</p>
+
+先在“设置 → B站投稿”使用具备投稿权限的账号扫码登录，并填写默认分区、标签和简介模板。完成后可以：
+
+- 在新建任务时开启“完成后自动投稿”。
+- 在已完成任务的工作台手动确认标题、分区、标签、简介、版权类型、来源和封面后提交。
+- 在上传阶段停止后重新发起。若已进入提交阶段却没有可验证回执，Etch 会标记为“结果未知”，要求先到 B站创作中心确认，避免重复投稿。
+
+投稿链路不需要 B站开放平台应用，不经过 Etch 自建云端或中转服务。V1 仅支持单账号、单投稿并发，不支持定时、多账号、审核轮询或稿件管理。
+
+## 为什么是 Etch
+
+- **人工审阅是正式阶段**：逐句中英对照、视频定位、自动保存、术语影响预览，而不是压制前的一个抽象勾选框。
+- **可恢复，不猜成功**：从 `task.json`、durable run registry 和已提交阶段产物恢复；不把进程退出码 `0` 当作唯一成功证明。
+- **Local-first**：下载、转写、文件管理、字幕生成和压制在本机完成；翻译数据是否离开设备取决于所选 Agent CLI。
+- **Provider 可替换**：支持 Claude、Codex、Qoder、OpenCode 本地 CLI，不绑定单一 SDK 或常驻服务。
 
 ## 能力与边界
 
 | 状态 | 能力 | 当前边界 |
 | --- | --- | --- |
-| Implemented | URL 任务队列 | 一次创建 1–50 个 URL 任务；支持暂停队列、停止、恢复和阶段并发。 |
-| Implemented | 字幕获取与本地转写 | 优先获取英文字幕；失败时回退到 `mlx_whisper`，长媒体按窗口分段缓存和合并。 |
-| Implemented | 四个 Agent CLI | Claude、Codex、Qoder、OpenCode 的检测、翻译、session resume 与结构化输出校验。 |
-| Implemented | 翻译质量工作流 | 分批翻译、英文源审计、历史术语提示、全局术语审计、逐句编辑和局部修复。 |
-| Implemented | 双语字幕与硬字幕 | 生成双语 SRT，支持紧凑/标准/大字三档预设，FFmpeg 压制后用 ffprobe 验证。 |
-| Implemented | 可恢复任务状态 | `task.json` 是任务权威；产物提交受 lease、revision 与 fingerprint 约束。 |
-| Implemented | B站直连投稿 | v0.1.2 DMG 已包含单账号扫码登录、手动/自动投稿、单并发、上传阶段停止后重新发起与可验证回执；真实账号 L3 投稿尚未验证，不含审核轮询、定时、多账号或稿件管理。 |
-| Partial | Provider 兼容性 | 自动化测试覆盖四端协议；真实账号、CLI 版本和服务端行为仍需在当前机器验证。 |
-| Partial | 长媒体资源治理 | 已有确定性分段和续跑；尚无静音点切分、全局磁盘预算或自动缓存清理。 |
-| Partial | 公开发行 | v0.1.2 提供包含 B站投稿的 arm64 DMG 与 SHA-256；尚无 Developer ID、公证、自动更新或 CI release gate。 |
-| Planned | 本地文件导入 | schema 已预留，但 UI、APFS clone/copy、空间检查和恢复链路尚未实现。当前仅支持 URL。 |
+| Implemented | URL 到双语硬字幕成片 | 字幕获取/本地转写、四个 Agent CLI、术语审计、逐句校对、双语 SRT、FFmpeg 压制与 ffprobe 验证。 |
+| Implemented | 可恢复任务 | `task.json` 是权威状态；产物提交受 lease、revision 与 fingerprint 约束。 |
+| Implemented | B站直连投稿 | 公开 DMG 已包含 B站投稿：v0.1.2 支持单账号扫码登录、手动/自动投稿、单并发和可验证回执；真实账号 L3 投稿尚未验证。 |
+| Partial | Provider、长媒体与公开发行 | 四端协议有自动化覆盖，但真实账号/服务端仍需当机验证；尚无全局磁盘预算、Developer ID、公证或自动更新。 |
+| Planned | 本地文件导入 | Schema 已预留，但 UI、APFS clone/copy、空间检查和恢复链路尚未实现。 |
 
-## 从源码运行
+<details>
+<summary><strong>从源码运行与打包</strong></summary>
 
 验证环境使用 Node.js `22.22.1`：
 
@@ -124,79 +117,38 @@ npm ci
 npm run dev
 ```
 
-构建并验证 Apple Silicon `.app`：
+`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.1.2-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
 
-```bash
-npm run pack
-```
+</details>
 
-输出：`dist/mac-arm64/Etch.app`
-
-构建、挂载并验证 DMG：
-
-```bash
-npm run dist:mac
-```
-
-输出：`dist/Etch-0.1.2-arm64.dmg`
-
-DMG 验证会检查卷内 allowlist，并校验 `Etch.app` 的签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
-
-## 验证层级
+<details>
+<summary><strong>验证层级</strong></summary>
 
 | 层级 | 命令或路径 | 能证明什么 |
 | --- | --- | --- |
 | L1 | `npm run verify:l1`、`npm run pack`、`git diff --check` | 类型、lint、Vitest、renderer/main build 与目录包结构。 |
-| 开发 E2E | `npm run e2e:hermetic` | 使用隔离 HOME/PATH 与固定 fake tools 验证 UI、任务状态和进程合同；不证明真实 Provider/网络可用。 |
-| B站 UI E2E | `npm run build && npx playwright test e2e/bilibili.spec.ts` | 扫码引导、投稿表单、自动投稿开关、停止/重新发起和回执状态；使用 hermetic fixture，不证明真实平台投稿成功。 |
+| 开发 E2E | `npm run e2e:hermetic` | 隔离 HOME/PATH 下的 UI、任务状态和进程合同；不证明真实 Provider/网络可用。 |
+| B站 UI E2E | `npm run build && npx playwright test e2e/bilibili.spec.ts` | 扫码引导、投稿表单、自动投稿门禁、停止/重新发起和回执状态；不证明真实平台投稿成功。 |
 | L2 | 安装 `/Applications/Etch.app` 后运行 `npm run smoke:installed` | 安装包 preload、菜单、durable IPC、任务恢复和受影响的真实工具路径。 |
-| L3 | 真实 URL、真实媒体、四个已登录 Provider；B站需真实账号取得提交回执 | 完整用户路径。未逐项执行时不得宣称 MVP 或真实投稿全路径通过。 |
+| L3 | 真实 URL/媒体/已登录 Provider；B站需真实账号回执 | 完整用户路径；未逐项执行时不宣称端到端通过。 |
+
+</details>
 
 ## 数据与隐私
 
-- 媒体、字幕、日志、manifest 和成片保存在设置中的 workspace，默认位置为 `~/Movies/Bilingual Subs`。
-- 设置、位置注册表、运行注册表、隐藏任务记录和全局术语表位于 Electron `userData` 目录。
-- B站 Cookie 和 token 通过 Electron `safeStorage` 加密后独立保存，不写入设置、任务 manifest 或日志；投稿时只短暂解密到权限为 `0600` 的临时文件，sidecar 退出后立即删除。
-- Etch 当前没有自建遥测或 Etch 云端。
-- 翻译、审计与修复会把必要字幕文本、风格说明和术语上下文交给用户选择的 Agent CLI；数据是否离开设备以及保留策略由该 CLI 与其后端决定。
-- 默认只向子进程传递 allowlist 环境变量；诊断日志记录变量名，不记录变量值。
-- “删除全部产物”把已登记任务目录移入 macOS 废纸篓；“仅移除记录”只在 Etch 中隐藏任务，原目录保留。
-- 删除本地任务不会删除已投稿的 B站稿件；已确认成功的稿件不会自动重投。
-
-## 常见故障
+- 媒体、字幕、日志、manifest 和成片保存在本地 workspace，默认为 `~/Movies/Bilingual Subs`。
+- B站 Cookie 和 token 通过 Electron `safeStorage` 加密，不写入设置、任务 manifest 或日志；临时解密文件使用 `0600` 权限并在 sidecar 退出后删除。
+- Etch 当前没有自建遥测或 Etch 云端；翻译数据是否离开设备及保留策略由所选 Agent CLI 及其后端决定。
+- “删除全部产物”会把已登记任务目录移入 macOS 废纸篓；“仅移除记录”只在 Etch 中隐藏任务。删除本地任务不会删除已投稿稿件。
 
 <details>
-<summary><strong>工具显示不健康</strong></summary>
+<summary><strong>常见故障</strong></summary>
 
-先查看设置页显示的 executable、版本、登录状态或 `libass` 诊断，再修正 `PATH` 或配置绝对路径 override。
-
-</details>
-
-<details>
-<summary><strong>异常退出后任务暂停</strong></summary>
-
-Etch 会先核对 durable run registry，避免旧 Provider 进程与恢复任务并发写入。确认恢复摘要后再继续。
-
-</details>
-
-<details>
-<summary><strong>任务没有出现在队列</strong></summary>
-
-检查启动诊断中的无效 manifest 或重复 task ID。队列索引会在每次启动时从可读取的 `task.json` 重建。
-
-</details>
-
-<details>
-<summary><strong>Provider 失败</strong></summary>
-
-确认对应 CLI 已登录且版本兼容。Hermetic E2E 无法证明真实账号、网络和服务端当前正常。
-
-</details>
-
-<details>
-<summary><strong>B站投稿结果未知</strong></summary>
-
-先打开 B站创作中心确认稿件是否已经提交。为防止重复投稿，Etch 不会自动重试“结果未知”的记录。
+- **工具不健康**：根据设置页的 executable、版本、登录状态或 `libass` 诊断，修正 `PATH` 或配置绝对路径 override。
+- **异常退出后任务暂停**：先核对 durable run registry 和恢复摘要，避免旧 Provider 进程与恢复任务并发写入。
+- **任务未出现在队列**：查看启动诊断中的无效 manifest 或重复 task ID。
+- **Provider 失败**：确认对应 CLI 已登录且版本兼容；hermetic E2E 不能证明真实账号、网络和服务端当前可用。
+- **B站投稿结果未知**：先到 B站创作中心确认是否已提交；Etch 不会自动重试“结果未知”记录。
 
 </details>
 
