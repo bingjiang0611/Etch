@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Etch app icon — 刻蚀 E × 双语字幕轨。macOS 网格:图案缩进 824 安全区,四周 100px 透明边。 -->
+  <defs>
+    <radialGradient id="ei-base" cx="50%" cy="32%" r="82%">
+      <stop offset="0" stop-color="#161c25" /><stop offset="0.55" stop-color="#0c0f14" /><stop offset="1" stop-color="#060709" />
+    </radialGradient>
+    <radialGradient id="ei-glow" cx="46%" cy="50%" r="46%">
+      <stop offset="0" stop-color="#438cf5" stop-opacity="0.5" /><stop offset="1" stop-color="#438cf5" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="ei-spine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8f0ff" /><stop offset="0.5" stop-color="#6aa7ff" /><stop offset="1" stop-color="#2b5aab" />
+    </linearGradient>
+    <linearGradient id="ei-en" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" /><stop offset="1" stop-color="#dbe8ff" />
+    </linearGradient>
+    <linearGradient id="ei-mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6aa7ff" /><stop offset="1" stop-color="#3f82ec" />
+    </linearGradient>
+    <linearGradient id="ei-zh" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a6fc4" /><stop offset="1" stop-color="#234e94" />
+    </linearGradient>
+    <linearGradient id="ei-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10" /><stop offset="0.5" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <!-- 824×824 safe area centered in 1024 canvas (≈100px transparent margin) -->
+  <g transform="translate(100,100) scale(0.804688)">
+    <rect x="0" y="0" width="1024" height="1024" rx="229" fill="url(#ei-base)" />
+    <ellipse cx="512" cy="512" rx="320" ry="300" fill="url(#ei-glow)" />
+    <rect x="0" y="0" width="1024" height="1024" rx="229" fill="url(#ei-sheen)" />
+    <!-- spine -->
+    <rect x="332" y="300" width="86" height="424" rx="43" fill="url(#ei-spine)" />
+    <!-- top caption line (EN, white) -->
+    <rect x="332" y="300" width="360" height="86" rx="43" fill="url(#ei-en)" />
+    <!-- middle line (shortest) -->
+    <rect x="332" y="469" width="238" height="86" rx="43" fill="url(#ei-mid)" />
+    <!-- bottom caption line (中, dark blue) -->
+    <rect x="332" y="638" width="360" height="86" rx="43" fill="url(#ei-zh)" />
+    <!-- etched highlight lip on the EN line -->
+    <rect x="332" y="300" width="360" height="5" rx="2.5" fill="#ffffff" fill-opacity="0.7" />
+  </g>
+</svg>
