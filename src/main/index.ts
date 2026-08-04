@@ -380,7 +380,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
         }
       })
       if (url.includes('/x/space/myinfo')) return json({ code: 0, data: { mid: 123, name: 'Etch E2E' } })
-      if (url.includes('/x/vupre/web/archive/pre')) return json({ code: 0, data: { typelist: [{ id: 160, name: '生活', children: [{ id: 21, name: '日常' }] }] } })
+      if (url.includes('/x/vupre/web/archive/pre')) return json({ code: 0, data: { typelist: [{ id: 160, name: '生活', children: [{ id: 21, name: '日常' }, { id: 138, name: '搞笑' }] }] } })
       return fetch(input, init)
     }
     : fetch

@@ -18,7 +18,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "npm run e2e:hermetic",
-    "e2e:hermetic": "npm run build && playwright test e2e/electron.spec.ts",
+    "e2e:hermetic": "npm run build && playwright test e2e/electron.spec.ts e2e/bilibili.spec.ts",
     "smoke:installed": "npm run pack && playwright test e2e/installed-smoke.spec.ts",
     "test:watch": "vitest",
     "pack": "npm run build && electron-builder --dir --arm64 && npm run verify:pack",

@@ -105,6 +105,33 @@ test('gates, edits and recovers a B站 publication through the Electron UI', asy
     await publishDialog.getByLabel(/标题/u).fill('')
     await publishDialog.getByRole('button', { name: '确认投稿', exact: true }).click()
     await expect(publishDialog.getByRole('alert')).toHaveText('请填写投稿标题')
+    await publishDialog.getByLabel(/标题/u).fill('B站投稿 UI 验收')
+    await publishDialog.getByLabel('分区').selectOption('138')
+    await publishDialog.getByLabel(/标签/u).fill('最近标签, 双语字幕')
+    await publishDialog.getByLabel('版权类型').selectOption('original')
+
+    await application.evaluate(({ ipcMain }, detail) => {
+      ipcMain.removeHandler('bilibili:publish')
+      ipcMain.handle('bilibili:publish', (_event, raw) => {
+        const payload = raw as { taskId?: unknown; draft?: { tid?: unknown; tags?: unknown; copyright?: unknown } }
+        if (payload.taskId !== detail.manifest.taskId
+          || payload.draft?.tid !== 138
+          || JSON.stringify(payload.draft.tags) !== JSON.stringify(['最近标签', '双语字幕'])
+          || payload.draft.copyright !== 'original') throw new Error('投稿表单没有传递已确认的最近选择')
+        return detail
+      })
+    }, { taskDirectory, manifest })
+    await publishDialog.getByRole('button', { name: '确认投稿', exact: true }).click()
+    await expect(publishDialog).not.toBeVisible()
+
+    await window.reload()
+    await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
+    await window.locator('.task-row').click()
+    await window.getByRole('button', { name: '投稿到 B站', exact: true }).click()
+    await expect(publishDialog.getByLabel(/标题/u)).toHaveValue('B站投稿 UI 验收')
+    await expect(publishDialog.getByLabel('分区')).toHaveValue('138')
+    await expect(publishDialog.getByLabel(/标签/u)).toHaveValue('最近标签, 双语字幕')
+    await expect(publishDialog.getByLabel('版权类型')).toHaveValue('original')
     await publishDialog.getByRole('button', { name: '取消', exact: true }).click()
 
     await window.getByRole('button', { name: '任务队列', exact: true }).click()

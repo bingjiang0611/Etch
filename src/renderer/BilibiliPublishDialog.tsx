@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { renderBilibiliDescription, truncateBilibiliTitle, type BilibiliAccount, type BilibiliCopyright, type BilibiliPartition } from '../shared/bilibili'
+import type { BilibiliAccount, BilibiliCopyright, BilibiliPartition } from '../shared/bilibili'
 import type { TaskDetail } from '../shared/ipc'
 import type { AppSettings } from '../shared/settings-schema'
+import { initialBilibiliPublishForm, publishBilibiliDraftAndRemember, reconcileBilibiliPartitionTid, type BilibiliPublishFormState } from './bilibili-publish-form'
+import { loadBilibiliPublishPreferences } from './bilibili-publish-preferences'
 
 interface BilibiliPublishDialogProps {
   task: TaskDetail | undefined
@@ -12,46 +14,9 @@ interface BilibiliPublishDialogProps {
   onUpdated: (detail: TaskDetail) => void
 }
 
-interface FormState {
-  title: string
-  tid: string
-  tags: string
-  description: string
-  copyright: BilibiliCopyright
-  source: string
-  coverRelativePath?: string
-  coverDataUrl?: string
-}
-
-function initialForm(task: TaskDetail, settings: AppSettings): FormState {
-  const existing = task.manifest.publication.draft
-  if (existing) {
-    return {
-      title: existing.title,
-      tid: String(existing.tid),
-      tags: existing.tags.join(', '),
-      description: existing.description,
-      copyright: existing.copyright,
-      source: existing.source,
-      coverRelativePath: existing.coverRelativePath
-    }
-  }
-  const source = task.manifest.input.kind === 'url' ? task.manifest.input.url : ''
-  const template = settings.bilibiliPublishTemplate
-  return {
-    title: truncateBilibiliTitle(task.manifest.title),
-    tid: template.tid ? String(template.tid) : '',
-    tags: template.tags.join(', '),
-    description: renderBilibiliDescription(template.descriptionTemplate, task.manifest.title, source),
-    copyright: task.manifest.input.kind === 'url' ? 'repost' : 'original',
-    source,
-    coverRelativePath: task.manifest.artifacts.thumbnail?.valid ? task.manifest.artifacts.thumbnail.relativePath : undefined
-  }
-}
-
 export function BilibiliPublishDialog({ task, settings, account, open, onClose, onUpdated }: BilibiliPublishDialogProps): React.JSX.Element {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [form, setForm] = useState<FormState>()
+  const [form, setForm] = useState<BilibiliPublishFormState>()
   const [partitions, setPartitions] = useState<BilibiliPartition[]>([])
   const [loadingPartitions, setLoadingPartitions] = useState(false)
   const [choosingCover, setChoosingCover] = useState(false)
@@ -67,7 +32,7 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
 
   useEffect(() => {
     if (!open || !task) return
-    setForm(initialForm(task, settings))
+    setForm(initialBilibiliPublishForm(task, settings, loadBilibiliPublishPreferences(() => window.localStorage)))
     setError('')
     const thumbnail = task.manifest.artifacts.thumbnail
     if (thumbnail?.valid) {
@@ -80,21 +45,35 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
   useEffect(() => {
     if (!open || account.status !== 'connected') return
     let cancelled = false
+    setPartitions([])
     setLoadingPartitions(true)
     void window.etch.bilibiliPartitions()
       .then((items) => {
         if (cancelled) return
         setPartitions(items)
-        setForm((current) => current && !current.tid && items.length ? { ...current, tid: String(items[0].tid) } : current)
+        setForm((current) => {
+          if (!current) return current
+          const tid = reconcileBilibiliPartitionTid(
+            current.tid,
+            items,
+            settings.bilibiliPublishTemplate.tid,
+            Boolean(task?.manifest.publication.draft)
+          )
+          return tid === current.tid ? current : { ...current, tid }
+        })
       })
       .catch((caught) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : 'B站分区读取失败')
+        if (!cancelled) {
+          setPartitions([])
+          setForm((current) => current ? { ...current, tid: '' } : current)
+          setError(caught instanceof Error ? caught.message : 'B站分区读取失败')
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingPartitions(false)
       })
     return () => { cancelled = true }
-  }, [open, account.status, account.mid])
+  }, [open, account.status, account.mid, settings.bilibiliPublishTemplate.tid, task?.manifest.taskId, task?.manifest.publication.draft?.tid])
 
   const close = (): void => {
     if (submitting || choosingCover) return
@@ -126,6 +105,7 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
     const tags = form.tags.split(/[,，]/u).map((tag) => tag.trim()).filter(Boolean)
     if (!form.title.trim()) return setError('请填写投稿标题')
     if (!form.tid) return setError('请选择投稿分区')
+    if (!partitions.some((partition) => partition.tid === Number(form.tid))) return setError('请选择有效的投稿分区')
     if (!tags.length) return setError('至少填写一个投稿标签')
     if (form.copyright === 'repost' && !form.source.trim()) return setError('转载稿件必须填写来源')
     const final = task.manifest.artifacts.final
@@ -134,7 +114,7 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
     setError('')
     try {
       const partition = partitions.find((item) => item.tid === Number(form.tid))
-      const detail = await window.etch.publishToBilibili(task.manifest.taskId, {
+      const draft = {
         title: form.title.trim(),
         tid: Number(form.tid),
         partitionName: partition ? `${partition.parentName ? `${partition.parentName} · ` : ''}${partition.name}` : settings.bilibiliPublishTemplate.partitionName,
@@ -144,7 +124,13 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
         source: form.copyright === 'repost' ? form.source.trim() : '',
         coverRelativePath: form.coverRelativePath,
         finalSha256: final.sha256
-      })
+      }
+      const detail = await publishBilibiliDraftAndRemember(
+        (taskId, publicationDraft) => window.etch.publishToBilibili(taskId, publicationDraft),
+        () => window.localStorage,
+        task.manifest.taskId,
+        draft
+      )
       onUpdated(detail)
       onClose()
     } catch (caught) {
