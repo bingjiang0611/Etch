@@ -43,6 +43,21 @@ describe('documentation capability contract', () => {
     expect(readme).not.toContain('尚不包含 B站投稿')
   })
 
+  it('keeps social-card metadata safe for chunked preview crawlers', () => {
+    const metadataValues = [
+      website.match(/<title>([^<]*)<\/title>/)?.[1],
+      website.match(/<meta name="description" content="([^"]*)"/)?.[1],
+      ...[...website.matchAll(/<meta property="og:(?:title|description|image:alt)" content="([^"]*)"/g)]
+        .map((match) => match[1]),
+    ]
+    expect(metadataValues).toHaveLength(5)
+    for (const value of metadataValues) {
+      expect(value).toBeDefined()
+      expect([...(value ?? '')].every((character) => (character.codePointAt(0) ?? 0) <= 0x7f)).toBe(true)
+    }
+    expect(website).toContain('property="og:locale" content="zh_CN"')
+  })
+
   it('keeps localized READMEs discoverable and aligned with the release contract', () => {
     expect(readme).toContain('./README_EN.md')
     expect(readme).toContain('./README_JA.md')
