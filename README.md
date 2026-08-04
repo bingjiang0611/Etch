@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>下载 v0.1.1 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>下载 v0.1.2 DMG</strong></a>
   ·
   <a href="#4-投稿到-b站">B站投稿</a>
   ·
@@ -25,12 +25,11 @@
   <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch 投稿到 B站确认窗口，包含标题、分区、标签、版权类型、转载来源、简介与封面字段">
 </p>
 
-> 上图是当前 `main` 的真实 Electron 界面，使用 hermetic fixture 演示，不含个人账号信息；它证明 UI 合同，不代表真实 B站账号端到端投稿已经通过。
+> 上图是 Etch v0.1.2 的真实 Electron 界面，使用 hermetic fixture 演示，不含个人账号信息；它证明 UI 合同，不代表真实 B站账号端到端投稿已经通过。
 
 ## 当前状态
 
-- 当前版本：`0.1.1`。公开 DMG **尚不包含 B站投稿**。
-- 主分支：B站投稿已实现，可从源码体验；将在下一版本 DMG 提供。
+- 当前版本：`0.1.2`。公开 DMG 已包含 B站投稿。
 - 当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。
 - 当前发行：GitHub Release 提供 Apple Silicon DMG。
 - 当前平台：Apple Silicon Mac，macOS 13.5 或更高版本。
@@ -58,20 +57,18 @@ Etch 不把这些步骤伪装成一次不可见的“AI 生成”。每个任务
 - **术语一致**：新任务参考历史视频术语表；术语修改可先预览影响 cue，再一次性应用到译文。
 - **Provider 可替换**：支持 Claude、Codex、Qoder、OpenCode 本地 CLI，不绑定单一 SDK 或常驻服务。
 - **人工可控**：逐句中英对照、视频定位、自动保存、审核 checkpoint、重新生成 SRT 与成片。
-- **B站直连投稿（`main`）**：完成任务可手动或按模板自动投稿；凭据本地加密，上传由本机直连 B站，不经过 Etch 自建云端。
+- **B站直连投稿**：完成任务可手动或按模板自动投稿；凭据本地加密，上传由本机直连 B站，不经过 Etch 自建云端。
 - **删除语义明确**：可以只隐藏任务记录，也可以把 Etch 管理的任务目录和产物移入 macOS 废纸篓。
 
 ## 最快开始
 
 ### 1. 安装
 
-1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.1-arm64.dmg`。
+1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.2-arm64.dmg`。
 2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
 3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
 
 当前 DMG 未经 Apple 公证，使用 ad-hoc 签名，尚未使用 Apple Developer ID。DMG 只是安装容器，不会绕过 Gatekeeper。
-
-> `v0.1.1` 发布早于 B站投稿功能。如需体验投稿，请从当前 `main` 源码运行；不要把公开 DMG 与主分支能力混为一谈。
 
 ### 2. 检查本地工具
 
@@ -91,7 +88,7 @@ Etch 启动后会自动检测 executable、版本、关键能力和登录状态�
 
 ### 4. 投稿到 B站
 
-该功能当前仅在 `main`。先在“设置 → B站投稿”使用具备投稿权限的 B站账号扫码登录，并填写默认分区、标签和简介模板。简介支持 `{title}` 与 `{source_url}` 占位符。之后可以：
+先在“设置 → B站投稿”使用具备投稿权限的 B站账号扫码登录，并填写默认分区、标签和简介模板。简介支持 `{title}` 与 `{source_url}` 占位符。之后可以：
 
 - 在新建任务时开启“完成后自动投稿”；账号未登录或模板不完整时不能开启。
 - 在已完成任务的工作台中点击“投稿到 B站”，确认标题、分区、标签、简介、版权类型、来源和封面后提交。成功加入本地投稿队列后，Etch 会记住本次分区、标签和版权类型，供下一次手动投稿自动回填；不会改动自动投稿模板。
@@ -109,10 +106,10 @@ Etch 不要求配置 B站开放平台应用；投稿链路不经过 Etch 自建�
 | Implemented | 翻译质量工作流 | 分批翻译、英文源审计、历史术语提示、全局术语审计、逐句编辑和局部修复。 |
 | Implemented | 双语字幕与硬字幕 | 生成双语 SRT，支持紧凑/标准/大字三档预设，FFmpeg 压制后用 ffprobe 验证。 |
 | Implemented | 可恢复任务状态 | `task.json` 是任务权威；产物提交受 lease、revision 与 fingerprint 约束。 |
-| Implemented on `main` | B站直连投稿 | 单账号扫码登录、手动/自动投稿、单并发、上传阶段停止后重新发起与可验证回执；不含审核轮询、定时、多账号或稿件管理。尚未进入 v0.1.1 DMG。 |
+| Implemented | B站直连投稿 | v0.1.2 DMG 已包含单账号扫码登录、手动/自动投稿、单并发、上传阶段停止后重新发起与可验证回执；真实账号 L3 投稿尚未验证，不含审核轮询、定时、多账号或稿件管理。 |
 | Partial | Provider 兼容性 | 自动化测试覆盖四端协议；真实账号、CLI 版本和服务端行为仍需在当前机器验证。 |
 | Partial | 长媒体资源治理 | 已有确定性分段和续跑；尚无静音点切分、全局磁盘预算或自动缓存清理。 |
-| Partial | 公开发行 | v0.1.1 提供 arm64 DMG 与 SHA-256，但不含 B站投稿；尚无 Developer ID、公证、自动更新或 CI release gate。 |
+| Partial | 公开发行 | v0.1.2 提供包含 B站投稿的 arm64 DMG 与 SHA-256；尚无 Developer ID、公证、自动更新或 CI release gate。 |
 | Planned | 本地文件导入 | schema 已预留，但 UI、APFS clone/copy、空间检查和恢复链路尚未实现。当前仅支持 URL。 |
 
 ## 从源码运行
@@ -141,7 +138,7 @@ npm run pack
 npm run dist:mac
 ```
 
-输出：`dist/Etch-0.1.1-arm64.dmg`
+输出：`dist/Etch-0.1.2-arm64.dmg`
 
 DMG 验证会检查卷内 allowlist，并校验 `Etch.app` 的签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
 

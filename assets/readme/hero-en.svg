@@ -2,7 +2,7 @@
      width="1200" height="420" viewBox="0 0 1200 420"
      role="img" aria-labelledby="title desc">
   <title id="title">Etch — From English video to bilingual release to Bilibili</title>
-  <desc id="desc">Etch turns a video URL into a reviewable bilingual hard-subtitle release; the current main branch can optionally publish it directly from the Mac to Bilibili.</desc>
+  <desc id="desc">Etch turns a video URL into a reviewable bilingual hard-subtitle release and can optionally publish it directly from the Mac to Bilibili.</desc>
 
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
@@ -31,7 +31,7 @@
           font-size="29" font-weight="520">English video → reviewable bilingual release → optional Bilibili</text>
     <text x="0" y="180" fill="#7f8996"
           font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  MAIN</text>
+          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  PUBLIC DMG</text>
   </g>
 
   <g transform="translate(1002 54)">
@@ -63,7 +63,7 @@
         <text x="0" y="82" fill="#c5cad1">VERIFIED VIDEO</text>
       </g>
       <g transform="translate(1038 0)">
-        <text x="0" y="-5" fill="#6cc79a" font-size="16" letter-spacing="1">MAIN · OPTIONAL</text>
+        <text x="0" y="-5" fill="#6cc79a" font-size="16" letter-spacing="1">DMG · OPTIONAL</text>
         <circle cx="0" cy="31" r="15" fill="#101c16" stroke="#6cc79a" stroke-width="3"/>
         <text x="0" y="38" fill="#8ee0b5" font-size="18" font-weight="700">B</text>
         <text x="0" y="82" fill="#b8dcc8">BILIBILI</text>

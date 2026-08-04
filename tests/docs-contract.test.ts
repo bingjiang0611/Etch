@@ -32,6 +32,15 @@ describe('documentation capability contract', () => {
     expect(readme).toContain('当前 DMG 未经 Apple 公证')
   })
 
+  it('presents Bilibili publishing as a shipped DMG capability', () => {
+    expect(website).toContain(`下载 v${packageJson.version} · DMG`)
+    expect(website).not.toContain('从源码体验 B站投稿')
+    expect(website).not.toContain('发行说明')
+    expect(website).not.toContain('release-note')
+    expect(readme).toContain('公开 DMG 已包含 B站投稿')
+    expect(readme).not.toContain('尚不包含 B站投稿')
+  })
+
   it('keeps localized READMEs discoverable and aligned with the release contract', () => {
     expect(readme).toContain('./README_EN.md')
     expect(readme).toContain('./README_JA.md')

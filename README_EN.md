@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero-en.svg" width="100%" alt="Etch turns English video URLs into reviewable bilingual releases, with optional Bilibili publishing from main">
+  <img src="./assets/readme/hero-en.svg" width="100%" alt="Etch turns English video URLs into reviewable bilingual releases, with optional Bilibili publishing">
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>Download the v0.1.1 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>Download the v0.1.2 DMG</strong></a>
   ·
   <a href="#4-publish-to-bilibili">Bilibili publishing</a>
   ·
@@ -25,14 +25,13 @@
   <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch Bilibili publication dialog with title, category, tags, copyright, source, description, and cover fields">
 </p>
 
-> The image above shows the real Electron UI from the current `main` branch using a hermetic fixture and no personal account data. It proves the UI contract; it does not claim that a real-account, end-to-end Bilibili publication has passed.
+> The image above shows the real Electron UI included in v0.1.2 using a hermetic fixture and no personal account data. It proves the UI contract; it does not claim that a real-account, end-to-end Bilibili publication has passed.
 
 ## Current status
 
-- Current version: `0.1.1`. The public DMG **does not include Bilibili publishing**.
-- Main branch: Bilibili publishing is implemented and can be tried from source. It will ship in the next DMG release.
+- Current version: `0.1.2`. The public DMG **includes Bilibili publishing**.
 - Current input: **HTTP(S) URLs only**; local file import is still planned.
-- Current distribution: an Apple Silicon DMG is available from GitHub Releases.
+- Current distribution: the public v0.1.2 Apple Silicon DMG, including Bilibili publishing, is available from GitHub Releases.
 - Current platform: Apple Silicon Mac running macOS 13.5 or later.
 
 ## From URL to final video, then publication
@@ -58,20 +57,18 @@ Etch does not hide these steps behind an opaque “AI generation” button. Ever
 - **Terminology-aware**: new tasks use historical video glossaries; term edits can be previewed against affected cues and applied to the translation in one operation.
 - **Provider-flexible**: Claude, Codex, Qoder, and OpenCode local CLIs are supported without requiring one fixed SDK or resident server.
 - **Human-controlled**: side-by-side English and Chinese cues, video seeking, autosave, review checkpoints, and SRT/video regeneration.
-- **Direct Bilibili publishing (`main`)**: completed tasks can be published manually or automatically from a template. Credentials are encrypted locally, and the Mac connects directly to Bilibili without an Etch-hosted cloud service.
+- **Direct Bilibili publishing**: completed tasks can be published manually or automatically from a template. Credentials are encrypted locally, and the Mac connects directly to Bilibili without an Etch-hosted cloud service.
 - **Explicit deletion semantics**: hide only the task record, or move the Etch-managed task directory and artifacts to the macOS Trash.
 
 ## Quick start
 
 ### 1. Install
 
-1. Download `Etch-0.1.1-arm64.dmg` from [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest).
+1. Download `Etch-0.1.2-arm64.dmg` from [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest).
 2. Open the DMG and drag `Etch.app` into `Applications`.
 3. If Gatekeeper blocks the first launch, right-click Etch in Finder and choose **Open**. If it is still blocked, use **System Settings → Privacy & Security → Open Anyway**.
 
 The current DMG is not notarized by Apple. It uses an ad-hoc signature rather than an Apple Developer ID. A DMG is only an installation container and does not bypass Gatekeeper.
-
-> `v0.1.1` predates Bilibili publishing. To try publication, run the current `main` branch from source; do not confuse public-DMG capabilities with main-branch capabilities.
 
 ### 2. Check local tools
 
@@ -91,7 +88,7 @@ Enter one or more HTTP(S) video URLs in the task queue, choose a Provider, and o
 
 ### 4. Publish to Bilibili
 
-This capability is currently available only on `main`. First, open **Settings → Bilibili publishing**, scan the QR code with a Bilibili account that has publication access, and configure the default category, tags, and description template. The description supports `{title}` and `{source_url}` placeholders. You can then:
+This capability is included in the public v0.1.2 DMG. First, open **Settings → Bilibili publishing**, scan the QR code with a Bilibili account that has publication access, and configure the default category, tags, and description template. The description supports `{title}` and `{source_url}` placeholders. You can then:
 
 - Enable **Publish to Bilibili when complete** while creating a task. The option remains disabled until an account is connected and the template is complete.
 - Click **Publish to Bilibili** from the Workbench for a completed task, then confirm the title, category, tags, description, copyright type, source, and cover. After the task is successfully added to the local publication queue, Etch remembers the category, tags, and copyright type for the next manual publication without modifying the automatic-publication template.
@@ -109,10 +106,10 @@ Etch does not require you to configure a Bilibili Open Platform application. The
 | Implemented | Translation quality workflow | Batch translation, English source audit, historical terminology prompts, global terminology audit, cue editing, and targeted repair. |
 | Implemented | Bilingual subtitles and hard-subtitle output | Generate bilingual SRT files, apply compact/standard/large presets, render with FFmpeg, and verify with ffprobe. |
 | Implemented | Recoverable task state | `task.json` is authoritative; artifact commits are guarded by lease, revision, and fingerprint checks. |
-| Implemented on `main` | Direct Bilibili publishing | Single-account QR login, manual/automatic publication, one concurrent publication, restarting after a stopped upload, and verifiable receipts. No review polling, scheduling, multiple accounts, or post management. Not included in the v0.1.1 DMG. |
+| Implemented | Direct Bilibili publishing | Single-account QR login, manual/automatic publication, one concurrent publication, restarting after a stopped upload, and verifiable receipts. Included in the public v0.1.2 DMG; real-account L3 publication remains unverified. No review polling, scheduling, multiple accounts, or post management. |
 | Partial | Provider compatibility | Automated tests cover all four adapter protocols; real accounts, CLI versions, and current server behavior still require verification on each machine. |
 | Partial | Long-media resource management | Deterministic segmentation and resume are implemented; silence-aware splitting, a global disk budget, and automatic cache cleanup are not. |
-| Partial | Public distribution | v0.1.1 provides an arm64 DMG and SHA-256 but does not include Bilibili publishing. Developer ID signing, notarization, auto-update, and a CI release gate are not available. |
+| Partial | Public distribution | v0.1.2 provides an arm64 DMG and SHA-256, including Bilibili publishing. Developer ID signing, notarization, auto-update, and a CI release gate are not available. |
 | Planned | Local file import | The schema reserves this input type, but the UI, APFS clone/copy, space checks, and recovery path are not implemented. URLs only for now. |
 
 ## Run from source
@@ -141,7 +138,7 @@ Build, mount, and verify the DMG:
 npm run dist:mac
 ```
 
-Output: `dist/Etch-0.1.1-arm64.dmg`
+Output: `dist/Etch-0.1.2-arm64.dmg`
 
 DMG verification checks the mounted-volume allowlist and validates the bundled app signature, entitlements, arm64 architecture, version, minimum macOS version, and the pinned `biliup` sidecar's architecture, version, executable permissions, and SHA-256.
 

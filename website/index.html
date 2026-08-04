@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Etch — 从英文视频到双语成片，再到 B站投稿</title>
-<meta name="description" content="Etch 是 Apple Silicon Mac 上的本地双语译制工作站：从视频 URL 到可校对的双语硬字幕成片；main 分支新增由本机直连 B站的手动与自动投稿。" />
+<meta name="description" content="Etch 是 Apple Silicon Mac 上的本地双语译制工作站：从视频 URL 到可校对的双语硬字幕成片；v0.1.2 支持由本机直连 B站的手动与自动投稿。" />
 <meta name="theme-color" content="#0b0d10" />
 <link rel="canonical" href="https://etch-d0q.pages.dev/" />
 <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
@@ -13,7 +13,7 @@
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://etch-d0q.pages.dev/" />
 <meta property="og:image" content="https://etch-d0q.pages.dev/assets/bilibili-publish.png" />
-<meta property="og:image:alt" content="Etch 当前 main 分支的 B站投稿确认界面" />
+<meta property="og:image:alt" content="Etch v0.1.2 的 B站投稿确认界面" />
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -21,8 +21,8 @@
   "name": "Etch",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "macOS 13.5 or later, Apple Silicon",
-  "softwareVersion": "0.1.1",
-  "downloadUrl": "https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg",
+  "softwareVersion": "0.1.2",
+  "downloadUrl": "https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg",
   "description": "本地英中双语硬字幕工作站"
 }
 </script>
@@ -143,12 +143,9 @@
   .hero .lede b{color:var(--fg);font-weight:560}
   .hero-cta{display:flex;gap:13px;margin-top:30px;flex-wrap:wrap}
   .hero-cta .btn{padding:12px 22px;font-size:15.5px}
-  .hero-cta .ghost{padding:12px 18px;font-size:15px}
   .spec-line{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:24px;color:var(--faint);font-size:12.5px}
   .spec-line .dot{width:3px;height:3px;border-radius:50%;background:var(--line-strong)}
   .spec-line b{color:var(--muted);font-weight:500}
-  .release-note{max-width:540px;margin-top:18px;padding:11px 13px;border:1px solid rgba(224,184,114,.28);border-radius:9px;background:rgba(224,184,114,.06);color:var(--muted);font-size:12.5px;line-height:1.6}
-  .release-note strong{color:var(--warn);font-weight:600}
 
   /* signature: burned bilingual frame */
   .frame{
@@ -379,9 +376,9 @@
         <svg viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
         <span>GitHub</span>
       </a>
-      <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg" data-od-id="nav-download">
+      <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg" data-od-id="nav-download">
         <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
-        下载 v0.1.1
+        下载 v0.1.2
       </a>
     </div>
   </div>
@@ -394,22 +391,17 @@
 <section class="hero" data-od-id="hero">
   <div class="wrap hero-grid">
     <div>
-      <span class="eyebrow">本地优先 · 人工可控 · main 新增 B站投稿</span>
+      <span class="eyebrow">本地优先 · 人工可控 · v0.1.2 支持 B站投稿</span>
       <h1>把英文视频，<br><span class="etch">刻</span>成可校对的双语成片。</h1>
-      <p class="lede">一个 URL 进，<b>可校对的双语硬字幕成片</b>出。Etch 把视频获取、本地转写、Agent CLI 翻译、术语审计、人工校对与 FFmpeg 压制组织成一条<b>可恢复的十阶段流水线</b>；验证完成后，主分支还能由本机直连 B站，手动确认或按模板自动投稿。</p>
+      <p class="lede">一个 URL 进，<b>可校对的双语硬字幕成片</b>出。Etch 把视频获取、本地转写、Agent CLI 翻译、术语审计、人工校对与 FFmpeg 压制组织成一条<b>可恢复的十阶段流水线</b>；验证完成后，还能由本机直连 B站，手动确认或按模板自动投稿。</p>
       <div class="hero-cta">
-        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg" aria-describedby="release-note" data-od-id="hero-download">
+        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg" data-od-id="hero-download">
           <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
-          下载 v0.1.1 · DMG
-        </a>
-        <a class="ghost" href="https://github.com/bingjiang0611/Etch#4-投稿到-b站" target="_blank" rel="noopener" data-od-id="hero-source">
-          <svg viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-          从源码体验 B站投稿
+          下载 v0.1.2 · DMG
         </a>
       </div>
-      <p class="release-note" id="release-note"><strong>发行说明</strong> B站投稿已在 <code>main</code> 实现；公开的 v0.1.1 DMG 暂不包含，将随下一版本提供。</p>
       <div class="spec-line mono">
-        <b>Apple Silicon</b><span class="dot"></span><b>115 MB DMG</b><span class="dot"></span><b>macOS 13.5+</b><span class="dot"></span><b>v0.1.1</b>
+        <b>Apple Silicon</b><span class="dot"></span><b>macOS 13.5+</b><span class="dot"></span><b>v0.1.2</b>
       </div>
     </div>
 
@@ -491,7 +483,7 @@
       <article class="card" data-od-id="value-bilibili">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M7 5 4 2M17 5l3-3M5 7h14a2 2 0 0 1 2 2v10H3V9a2 2 0 0 1 2-2Z"/><path d="M8 13h.01M16 13h.01"/></svg></div>
         <h3>验证后投稿</h3>
-        <p>主分支可手动或按模板自动投稿到 B站。凭据由 macOS 安全存储加密，上传由本机直连平台。</p>
+        <p>Etch v0.1.2 可手动或按模板自动投稿到 B站。凭据由 macOS 安全存储加密，上传由本机直连平台。</p>
       </article>
     </div>
   </div>
@@ -543,13 +535,12 @@
           <div class="publish-fact"><span class="num">02</span><div><strong>凭据由 macOS 安全存储加密</strong><span>投稿时由本机内置 biliup 直连 B站，不经过 Etch 自建云端或中转服务。</span></div></div>
           <div class="publish-fact"><span class="num">03</span><div><strong>只有可验证回执才标记成功</strong><span>若提交结果无法确认，Etch 会要求先到创作中心核对，再决定后续动作。</span></div></div>
         </div>
-        <p class="release-note"><strong>当前状态</strong> 功能已在 <code>main</code> 实现；公开的 v0.1.1 DMG 尚未包含。</p>
       </div>
       <figure class="publish-shot">
         <div class="publish-shot-frame">
           <img src="./assets/bilibili-publish.png" width="1360" height="860" alt="Etch 投稿到 B站确认窗口，包含标题、分区、标签、版权类型、转载来源、简介与封面字段">
         </div>
-        <figcaption>当前 <code>main</code> 的真实 Electron 界面，使用 hermetic fixture 演示；它证明 UI 合同，不代表真实账号投稿已完成。</figcaption>
+        <figcaption>Etch v0.1.2 的真实 Electron 界面，使用 hermetic fixture 演示；它证明 UI 合同，尚未进行真实 B站账号的 L3 投稿验证。</figcaption>
       </figure>
     </div>
     <div class="publish-steps" aria-label="B站投稿流程">
@@ -593,12 +584,12 @@
     <div class="final-panel">
       <div>
         <h2>先把下一条英文视频，刻成可信的双语成片。</h2>
-        <p>GitHub Release 提供 Apple Silicon DMG。Etch 0.1.1 当前仅支持粘贴 HTTP(S) 视频链接，可完成术语审计、逐句校对和硬字幕成片；B站投稿位于 <code>main</code>，将在下一版本 DMG 提供。</p>
+        <p>GitHub Release 提供 Apple Silicon DMG。Etch 0.1.2 当前仅支持粘贴 HTTP(S) 视频链接，可完成术语审计、逐句校对、硬字幕成片与 B站投稿。</p>
       </div>
       <div class="final-actions">
-        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.1/Etch-0.1.1-arm64.dmg">
+        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg">
           <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
-          下载 v0.1.1 DMG
+          下载 v0.1.2 DMG
         </a>
         <a class="ghost" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener">在 GitHub 查看源码</a>
       </div>

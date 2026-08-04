@@ -2,7 +2,7 @@
      width="1200" height="420" viewBox="0 0 1200 420"
      role="img" aria-labelledby="title desc">
   <title id="title">Etch — 英語動画から英中バイリンガル動画、Bilibili 投稿まで</title>
-  <desc id="desc">Etch は動画 URL を校正可能な英中バイリンガル字幕付き動画に変換します。現在の main ブランチでは、Mac から Bilibili への直接投稿も選択できます。</desc>
+  <desc id="desc">Etch は動画 URL を校正可能な英中バイリンガル字幕付き動画に変換し、Mac から Bilibili への直接投稿も選択できます。</desc>
 
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
@@ -31,7 +31,7 @@
           font-size="29" font-weight="520">英語動画 → 校正可能な英中動画 → Bilibili 投稿（任意）</text>
     <text x="0" y="180" fill="#7f8996"
           font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  MAIN</text>
+          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  PUBLIC DMG</text>
   </g>
 
   <g transform="translate(1002 54)">
@@ -63,7 +63,7 @@
         <text x="0" y="82" fill="#c5cad1">完成動画検証</text>
       </g>
       <g transform="translate(1038 0)">
-        <text x="0" y="-5" fill="#6cc79a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="1">MAIN · OPTIONAL</text>
+        <text x="0" y="-5" fill="#6cc79a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="1">DMG · OPTIONAL</text>
         <circle cx="0" cy="31" r="15" fill="#101c16" stroke="#6cc79a" stroke-width="3"/>
         <text x="0" y="38" fill="#8ee0b5" font-size="18" font-weight="700">投</text>
         <text x="0" y="82" fill="#b8dcc8">Bilibili 投稿</text>

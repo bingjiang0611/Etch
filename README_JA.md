@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero-ja.svg" width="100%" alt="Etch：英語動画の URL から校正可能な英中バイリンガル動画を作成し、main ブランチでは Bilibili 投稿にも対応">
+  <img src="./assets/readme/hero-ja.svg" width="100%" alt="Etch：英語動画の URL から校正可能な英中バイリンガル動画を作成し、Bilibili 投稿にも対応">
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>v0.1.1 DMG をダウンロード</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/latest"><strong>v0.1.2 DMG をダウンロード</strong></a>
   ·
   <a href="#4-bilibili-に投稿">Bilibili 投稿</a>
   ·
@@ -25,14 +25,13 @@
   <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch の Bilibili 投稿確認ダイアログ。タイトル、カテゴリ、タグ、著作権区分、転載元、説明文、カバー画像を表示">
 </p>
 
-> 上の画像は現在の `main` ブランチで動作する実際の Electron UI です。個人アカウント情報を含まない hermetic fixture を使用しています。UI 契約を示すものであり、実際の Bilibili アカウントによるエンドツーエンド投稿の成功を示すものではありません。
+> 上の画像は v0.1.2 に収録されている実際の Electron UI です。個人アカウント情報を含まない hermetic fixture を使用しています。UI 契約を示すものであり、実際の Bilibili アカウントによるエンドツーエンド投稿の成功を示すものではありません。
 
 ## 現在の状態
 
-- 現在のバージョン：`0.1.1`。公開 DMG には **Bilibili 投稿機能が含まれていません**。
-- `main` ブランチ：Bilibili 投稿を実装済みで、ソースから試せます。次のバージョンの DMG に収録予定です。
+- 現在のバージョン：`0.1.2`。公開 DMG に **Bilibili 投稿機能が含まれています**。
 - 現在の入力：**HTTP(S) URL のみ**。ローカルファイル取り込みは計画段階です。
-- 現在の配布：GitHub Releases で Apple Silicon 用 DMG を提供しています。
+- 現在の配布：Bilibili 投稿機能を含む公開 v0.1.2 Apple Silicon 用 DMG を GitHub Releases で提供しています。
 - 対応環境：macOS 13.5 以降を搭載した Apple Silicon Mac。
 
 ## URL から完成動画、さらに投稿まで
@@ -58,20 +57,18 @@ Etch は、これらの工程を不透明な「AI 生成」ボタンに隠しま
 - **用語の一貫性**：新しいタスクでは過去動画の用語集を参照します。用語変更が影響する cue を事前確認し、訳文へ一括適用できます。
 - **Provider を選択可能**：Claude、Codex、Qoder、OpenCode のローカル CLI に対応し、単一 SDK や常駐サーバーに固定されません。
 - **人が制御可能**：英中 cue の並列表示、動画シーク、自動保存、校正 checkpoint、SRT と完成動画の再生成を備えます。
-- **Bilibili への直接投稿（`main`）**：完成したタスクを手動またはテンプレートに基づいて自動投稿できます。認証情報はローカルで暗号化され、Etch 独自のクラウドを経由せず、Mac から Bilibili へ直接アップロードします。
+- **Bilibili への直接投稿**：完成したタスクを手動またはテンプレートに基づいて自動投稿できます。認証情報はローカルで暗号化され、Etch 独自のクラウドを経由せず、Mac から Bilibili へ直接アップロードします。
 - **削除の意味が明確**：タスク記録だけを非表示にするか、Etch が管理するタスクディレクトリと成果物を macOS のゴミ箱へ移動するかを選べます。
 
 ## クイックスタート
 
 ### 1. インストール
 
-1. [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) から `Etch-0.1.1-arm64.dmg` をダウンロードします。
+1. [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) から `Etch-0.1.2-arm64.dmg` をダウンロードします。
 2. DMG を開き、`Etch.app` を `Applications` にドラッグします。
 3. 初回起動時に Gatekeeper でブロックされた場合は、Finder で Etch を右クリックして **開く** を選択します。それでもブロックされる場合は、**システム設定 → プライバシーとセキュリティ → このまま開く** を使用します。
 
 現在の DMG は Apple の公証を受けていません。Apple Developer ID ではなく ad-hoc 署名を使用しています。DMG はインストール用コンテナにすぎず、Gatekeeper を回避するものではありません。
-
-> `v0.1.1` は Bilibili 投稿機能より前にリリースされています。投稿を試す場合は現在の `main` ブランチをソースから実行してください。公開 DMG と `main` ブランチの機能を混同しないでください。
 
 ### 2. ローカルツールを確認
 
@@ -91,7 +88,7 @@ Etch は起動時に executable、バージョン、必要な機能、ログイ�
 
 ### 4. Bilibili に投稿
 
-この機能は現在 `main` ブランチでのみ利用できます。まず「設定 → B站投稿」で投稿権限のある Bilibili アカウントを QR コードで接続し、既定のカテゴリ、タグ、説明文テンプレートを入力します。説明文では `{title}` と `{source_url}` のプレースホルダーを使用できます。その後、次の操作が可能です。
+この機能は公開 v0.1.2 DMG に含まれています。まず「設定 → B站投稿」で投稿権限のある Bilibili アカウントを QR コードで接続し、既定のカテゴリ、タグ、説明文テンプレートを入力します。説明文では `{title}` と `{source_url}` のプレースホルダーを使用できます。その後、次の操作が可能です。
 
 - 新規タスクで「完成後に Bilibili へ自動投稿」を有効化できます。アカウントが未接続、またはテンプレートが不完全な場合は有効化できません。
 - 完了したタスクの Workbench で「B站に投稿」をクリックし、タイトル、カテゴリ、タグ、説明文、著作権区分、転載元、カバー画像を確認して投稿します。ローカル投稿キューへの追加に成功すると、Etch は今回のカテゴリ、タグ、著作権区分を記憶し、次回の手動投稿に自動入力します。自動投稿テンプレートは変更しません。
@@ -109,10 +106,10 @@ Etch では Bilibili オープンプラットフォームのアプリ設定は�
 | Implemented | 翻訳品質ワークフロー | 分割翻訳、英語原文監査、過去用語プロンプト、全体用語監査、cue 編集、部分修復に対応。 |
 | Implemented | バイリンガル字幕と焼き込み動画 | 英中 SRT を生成し、コンパクト・標準・大字プリセットを適用。FFmpeg で焼き込み、ffprobe で検証。 |
 | Implemented | 再開可能なタスク状態 | `task.json` を正本とし、成果物の確定を lease、revision、fingerprint で保護。 |
-| Implemented on `main` | Bilibili への直接投稿 | 1 アカウントの QR コード接続、手動・自動投稿、投稿 1 件ずつの実行、アップロード停止後の再実行、検証可能なレシートに対応。審査ポーリング、予約投稿、複数アカウント、投稿管理には未対応。v0.1.1 DMG には未収録。 |
+| Implemented | Bilibili への直接投稿 | 1 アカウントの QR コード接続、手動・自動投稿、投稿 1 件ずつの実行、アップロード停止後の再実行、検証可能なレシートに対応。公開 v0.1.2 DMG に収録済みですが、実アカウントによる L3 投稿は未検証です。審査ポーリング、予約投稿、複数アカウント、投稿管理には未対応。 |
 | Partial | Provider 互換性 | 自動テストで 4 種類の adapter protocol を検証。実アカウント、CLI バージョン、現在のサーバー挙動は各端末での確認が必要。 |
 | Partial | 長時間メディアのリソース管理 | 決定論的な分割と再開は実装済み。無音区間ベースの分割、全体ディスク予算、自動キャッシュ削除は未実装。 |
-| Partial | 一般配布 | v0.1.1 では arm64 DMG と SHA-256 を提供していますが、Bilibili 投稿機能は含まれていません。Developer ID 署名、公証、自動更新、CI release gate は未実装。 |
+| Partial | 一般配布 | v0.1.2 では Bilibili 投稿機能を含む arm64 DMG と SHA-256 を提供しています。Developer ID 署名、公証、自動更新、CI release gate は未実装。 |
 | Planned | ローカルファイル取り込み | schema には予約されていますが、UI、APFS clone/copy、容量確認、復旧経路は未実装です。現在は URL のみ。 |
 
 ## ソースから実行
@@ -141,7 +138,7 @@ DMG を構築、マウント、検証します。
 npm run dist:mac
 ```
 
-出力：`dist/Etch-0.1.1-arm64.dmg`
+出力：`dist/Etch-0.1.2-arm64.dmg`
 
 DMG 検証では、マウントされたボリュームの allowlist を確認し、`Etch.app` の署名、entitlements、arm64 architecture、バージョン、最低 macOS バージョンに加え、固定版 `biliup` sidecar の architecture、バージョン、実行権限、SHA-256 を検証します。
 

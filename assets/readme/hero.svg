@@ -2,7 +2,7 @@
      width="1200" height="420" viewBox="0 0 1200 420"
      role="img" aria-labelledby="title desc">
   <title id="title">Etch — 从英文视频到双语成片，再到 B站投稿</title>
-  <desc id="desc">Etch 把视频 URL 转换成可校对的双语硬字幕成片；当前主分支还可选择由本机直连 B站投稿。</desc>
+  <desc id="desc">Etch 把视频 URL 转换成可校对的双语硬字幕成片，并可选择由本机直连 B站投稿。</desc>
 
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
@@ -31,7 +31,7 @@
           font-size="29" font-weight="520">英文视频 → 可校对双语成片 → 可选 B站投稿</text>
     <text x="0" y="180" fill="#7f8996"
           font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  MAIN</text>
+          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  PUBLIC DMG</text>
   </g>
 
   <g transform="translate(1002 54)">
@@ -63,7 +63,7 @@
         <text x="0" y="82" fill="#c5cad1">验证成片</text>
       </g>
       <g transform="translate(1038 0)">
-        <text x="0" y="-5" fill="#6cc79a" font-size="16" letter-spacing="1">MAIN · OPTIONAL</text>
+        <text x="0" y="-5" fill="#6cc79a" font-size="16" letter-spacing="1">DMG · OPTIONAL</text>
         <circle cx="0" cy="31" r="15" fill="#101c16" stroke="#6cc79a" stroke-width="3"/>
         <text x="0" y="38" fill="#8ee0b5" font-size="18" font-weight="700">投</text>
         <text x="0" y="82" fill="#b8dcc8">B站投稿</text>
