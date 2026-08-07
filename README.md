@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.24/Etch-0.1.24-arm64.dmg"><strong>下载 v0.1.24 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.26/Etch-0.1.26-arm64.dmg"><strong>下载 v0.1.26 DMG</strong></a>
   ·
   <a href="#3-步开始">3 步开始</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.24 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 输入 · 公开 DMG 已含 B站投稿</sub>
+  <sub>v0.1.26 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 输入 · 公开 DMG 已含 B站投稿</sub>
 </p>
 
 ## 一条可审阅、可恢复的成片流水线
@@ -45,7 +45,7 @@ Etch 不把长视频翻译伪装成一次不可见的“AI 生成”。每个任
 
 ### 1. 安装
 
-1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.24-arm64.dmg`。
+1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.26-arm64.dmg`。
 2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
 3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
 
@@ -67,7 +67,7 @@ Etch 启动后会自动检测可执行文件、版本、关键能力和登录状
 
 在任务队列粘贴 1–50 个 HTTP(S) 视频 URL，选择 Provider，并按需填写翻译风格。任务可以停止，之后从最后已提交阶段继续。
 
-当前版本：`0.1.24`。当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。GitHub Release 提供 Apple Silicon DMG。
+当前版本：`0.1.26`。当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。GitHub Release 提供 Apple Silicon DMG。
 
 ## 投稿到 B站
 
@@ -117,7 +117,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.1.24-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
+`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.1.26-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
 
 </details>
 
