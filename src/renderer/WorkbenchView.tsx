@@ -826,6 +826,10 @@ export function WorkbenchView({
                     <dd>{taskSource}</dd>
                   </div>
                   <div>
+                    <dt>发布时间</dt>
+                    <dd>{selected.manifest.runtime.uploadDate ?? '—'}</dd>
+                  </div>
+                  <div>
                     <dt>画面</dt>
                     <dd>
                       {selected.manifest.runtime.width ?? '—'} × {selected.manifest.runtime.height ?? '—'}

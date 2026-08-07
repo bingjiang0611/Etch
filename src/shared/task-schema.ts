@@ -146,6 +146,7 @@ const TaskManifestV2Schema = z.object({
     currentMessage: z.string().default('等待开始'),
     userPaused: z.boolean().default(false),
     videoId: z.string().optional(),
+    uploadDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     durationSeconds: z.number().nonnegative().optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),

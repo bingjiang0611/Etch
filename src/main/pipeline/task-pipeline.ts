@@ -117,6 +117,11 @@ const STAGE_MESSAGES: Record<StageId, string> = {
   verify: '正在验证成品'
 }
 
+export function uploadDateFromInfoJson(uploadDate: unknown): string | undefined {
+  const parts = typeof uploadDate === 'string' ? /^(\d{4})(\d{2})(\d{2})$/u.exec(uploadDate) : null
+  return parts ? `${parts[1]}-${parts[2]}-${parts[3]}` : undefined
+}
+
 function validateAuditDecisions(
   decisions: readonly { cueId: number; translation: string }[],
   expected: ReadonlySet<number>,
@@ -640,6 +645,7 @@ export class TaskPipeline {
       apply: (draft) => {
         draft.title = typeof info.title === 'string' ? info.title : draft.title
         draft.runtime.videoId = typeof info.id === 'string' ? info.id : undefined
+        draft.runtime.uploadDate = uploadDateFromInfoJson(info.upload_date)
         draft.runtime.durationSeconds = typeof info.duration === 'number' ? info.duration : undefined
         draft.runtime.subtitleKind = subtitleKind
       }

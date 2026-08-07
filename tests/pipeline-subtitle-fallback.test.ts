@@ -20,7 +20,7 @@ vi.mock('../src/main/runtime/tool-detector', () => ({
 vi.mock('../src/main/media/browser-cookies', () => ({ chromeCookieState: chromeCookieStateMock }))
 
 import { HistoricalGlossaryService } from '../src/main/historical-glossary'
-import { TaskPipeline } from '../src/main/pipeline/task-pipeline'
+import { TaskPipeline, uploadDateFromInfoJson } from '../src/main/pipeline/task-pipeline'
 import { TaskStore } from '../src/main/storage/task-store'
 import { defaultSettings } from '../src/shared/settings-schema'
 import { createTaskManifest, STAGE_IDS } from '../src/shared/task-schema'
@@ -98,7 +98,7 @@ async function runSource(
         return result(1, 'ERROR: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies')
       }
       await writeFile(join(spec.cwd, 'source.mp4'), 'video')
-      await writeFile(join(spec.cwd, 'source.info.json'), JSON.stringify({ id: 'test', title: 'Test', duration: 3 }))
+      await writeFile(join(spec.cwd, 'source.info.json'), JSON.stringify({ id: 'test', title: 'Test', duration: 3, upload_date: '20260731' }))
       return result()
     }
     if (spec.command === '/mock/yt-dlp' && spec.args.includes('--skip-download')) {
@@ -125,10 +125,18 @@ async function runSource(
 }
 
 describe('TaskPipeline independent subtitle fallback', () => {
+  it('keeps the video upload date optional when yt-dlp reports nothing usable', () => {
+    expect(uploadDateFromInfoJson('20260731')).toBe('2026-07-31')
+    expect(uploadDateFromInfoJson(undefined)).toBeUndefined()
+    expect(uploadDateFromInfoJson('2026-07-31')).toBeUndefined()
+    expect(uploadDateFromInfoJson(20260731)).toBeUndefined()
+  })
+
   it('publishes and classifies a manual subtitle using fallback metadata', async () => {
     const { directory, manifest } = await runSource({ en: [{}] })
 
     expect(manifest.runtime.subtitleKind).toBe('manual')
+    expect(manifest.runtime.uploadDate).toBe('2026-07-31')
     expect(manifest.artifacts.english).toMatchObject({
       relativePath: expect.stringMatching(/^\.etch-artifacts\/source\/[^/]+\/english\.srt$/u),
       producer: 'yt-dlp'
