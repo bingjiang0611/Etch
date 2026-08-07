@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeToolHealth } from '../src/renderer/tool-health'
+import { mergeToolHealth, recoveredToolForStageFailure } from '../src/renderer/tool-health'
 import type { ToolHealthSnapshot } from '../src/shared/ipc'
 
 const ready = (tool: ToolHealthSnapshot['tool']): ToolHealthSnapshot => ({
@@ -36,5 +36,23 @@ describe('运行期工具健康合并', () => {
   it('lets a recovered tool turn the row green again', () => {
     const current = [{ tool: 'ffmpeg' as const, status: 'missing' as const, summaryZh: '未找到 ffmpeg' }]
     expect(mergeToolHealth(current, ready('ffmpeg'))[0].status).toBe('ready')
+  })
+})
+
+describe('阶段失败对应的工具是否已恢复', () => {
+  it('reports the provider that just passed a login re-detection', () => {
+    const health = [ready('ffmpeg'), { tool: 'qoder' as const, status: 'ready' as const, summaryZh: 'qoder CLI 已登录' }]
+    expect(recoveredToolForStageFailure('qoder 未登录，请先运行 qodercli login', health)?.tool).toBe('qoder')
+  })
+
+  it('matches a missing-tool failure too', () => {
+    expect(recoveredToolForStageFailure('未找到 ffmpeg', [ready('ffmpeg')])?.tool).toBe('ffmpeg')
+  })
+
+  it('stays silent while the tool is still broken or the stage never failed on a tool', () => {
+    const brokenQoder = [{ tool: 'qoder' as const, status: 'invalid' as const, summaryZh: 'qoder 未登录，请先运行 qodercli login' }]
+    expect(recoveredToolForStageFailure('qoder 未登录，请先运行 qodercli login', brokenQoder)).toBeUndefined()
+    expect(recoveredToolForStageFailure(undefined, [ready('qoder')])).toBeUndefined()
+    expect(recoveredToolForStageFailure('翻译批次校验失败', [ready('qoder')])).toBeUndefined()
   })
 })

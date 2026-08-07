@@ -1567,6 +1567,7 @@ export function App(): React.JSX.Element {
             bilibiliAccount={bilibiliAccount}
             needsRebuild={needsRebuild}
             chromeCookieAccess={chromeCookieAccess}
+            toolHealth={toolHealth}
             videoRef={videoRef}
             onBack={() => changeView('queue')}
             onStart={startSelected}

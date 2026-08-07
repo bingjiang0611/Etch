@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { BilibiliAccount } from '../shared/bilibili'
-import type { GlossaryApplyResult, GlossaryImpactPreview, ChromeCookieAccess, PipelineActivity, TaskDetail, TaskReviewPage } from '../shared/ipc'
+import type { GlossaryApplyResult, GlossaryImpactPreview, ChromeCookieAccess, PipelineActivity, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
 import { POOL_BY_STAGE, POOL_LABELS, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
 import { taskInputName, type StageId } from '../shared/task-schema'
 import { AuditGlossary, type GlossaryEdit } from './AuditGlossary'
+import { recoveredToolForStageFailure } from './tool-health'
 import {
   Icon,
   PresetDemo,
@@ -67,6 +68,7 @@ interface WorkbenchViewProps {
   bilibiliAccount: BilibiliAccount
   needsRebuild: boolean
   chromeCookieAccess: ChromeCookieAccess
+  toolHealth: readonly ToolHealthSnapshot[]
   videoRef: RefObject<HTMLVideoElement | null>
   onBack: () => void
   onStart: () => Promise<void>
@@ -283,6 +285,7 @@ export function WorkbenchView({
   bilibiliAccount,
   needsRebuild,
   chromeCookieAccess,
+  toolHealth,
   videoRef,
   onBack,
   onStart,
@@ -413,6 +416,9 @@ export function WorkbenchView({
 
   const taskSource = taskInputName(selected.manifest.input)
   const taskId = selected.manifest.taskId
+  const failedStage = STAGE_ORDER.find((id) => getStage(selected, id).status === 'failed')
+  const failedErrorCode = failedStage ? getStage(selected, failedStage).errorCode : undefined
+  const recoveredTool = selectedIsRunning || selectedWaitingStage ? undefined : recoveredToolForStageFailure(failedErrorCode, toolHealth)
   const glossaryCount = reviewPage?.glossaryState === 'ready' ? reviewPage.glossary.length : undefined
   const tabs: Array<{ id: WorkspaceTab; label: string; count?: number }> = [
     { id: 'review', label: '校对', count: reviewPage?.total },
@@ -507,6 +513,27 @@ export function WorkbenchView({
               </span>
             </div>
             <button className="secondary-button" type="button" onClick={onOpenPermissionGuide}>解决办法</button>
+          </div>
+        )}
+        {recoveredTool && failedStage && (
+          <div className="permission-banner" role="status">
+            <Icon name="refresh" />
+            <div>
+              <strong>环境已恢复，可以重试「{stageLabels[failedStage]}」</strong>
+              <span>
+                上次失败原因：{failedErrorCode}。最新检测显示{recoveredTool.summaryZh}，重试会从这个阶段继续。
+              </span>
+            </div>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={primaryActionDisabled}
+              onClick={() => {
+                void onStart()
+              }}
+            >
+              重试
+            </button>
           </div>
         )}
         {publication && (publication.autoPublish || publication.status !== 'idle') && (

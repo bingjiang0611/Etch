@@ -10,3 +10,16 @@ export function mergeToolHealth(
   if (!current.some((item) => item.tool === health.tool)) return [...current, health]
   return current.map((item) => item.tool === health.tool ? health : item)
 }
+
+// A tool failure writes the detector's own `summaryZh` into the stage `errorCode`, so matching that
+// wording identifies which tool blocked the stage. A ready snapshot for it means the failure is
+// stale: the pipeline always pushes its own failed snapshot, so only a fresh detection turns it
+// green again.
+export function recoveredToolForStageFailure(
+  errorCode: string | undefined,
+  health: readonly ToolHealthSnapshot[]
+): ToolHealthSnapshot | undefined {
+  if (!errorCode) return undefined
+  return health.find((item) => item.status === 'ready'
+    && (errorCode === `未找到 ${item.tool}` || errorCode.startsWith(`${item.tool} `)))
+}
