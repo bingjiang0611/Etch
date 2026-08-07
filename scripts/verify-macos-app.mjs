@@ -51,8 +51,13 @@ const requiredEntitlements = [
 
 for (const target of signedTargets) {
   const details = run('codesign', ['-d', '--verbose=4', target])
-  assertIncludes(details, '(adhoc,runtime)', `${target} 签名 flags`)
-  assertIncludes(details, 'TeamIdentifier=not set', `${target} TeamIdentifier`)
+  assertIncludes(details, 'runtime', `${target} 签名 flags`)
+  assertIncludes(details, 'Authority=Apple Development: baobingjiang@icloud.com (8Y6KR78CP7)', `${target} 签名证书`)
+  assertIncludes(details, 'TeamIdentifier=7USHN8Q8JL', `${target} TeamIdentifier`)
+  const requirement = run('codesign', ['-d', '-r-', target])
+  assertIncludes(requirement, 'anchor apple generic', `${target} designated requirement`)
+  assertIncludes(requirement, 'certificate leaf[subject.CN] = "Apple Development: baobingjiang@icloud.com (8Y6KR78CP7)"', `${target} designated requirement`)
+  if (requirement.includes('cdhash')) throw new Error(`${target} designated requirement 不能绑定一次性 CDHash`)
   const entitlements = run('codesign', ['-d', '--entitlements', '-', target])
   for (const entitlement of requiredEntitlements) assertIncludes(entitlements, entitlement, `${target} entitlements`)
 }
@@ -94,4 +99,4 @@ assertIncludes(biliupSignature, 'Identifier=com.baobingjiang.etch.biliup', 'bili
 assertIncludes(biliupSignature, '(adhoc,runtime)', 'biliup 签名 flags')
 if (!readFileSync(join(appPath, 'Contents/Resources/biliup/LICENSE'), 'utf8').includes('MIT License')) throw new Error('安装包缺少 biliup MIT 许可证')
 
-console.log(`Etch macOS 包验证通过：${machOFiles.length} 个 Mach-O，arm64，v${appVersion}，biliup ${biliupMetadata.version}，macOS ${minimumSystemVersion}+，ad-hoc hardened runtime`)
+console.log(`Etch macOS 包验证通过：${machOFiles.length} 个 Mach-O，arm64，v${appVersion}，biliup ${biliupMetadata.version}，macOS ${minimumSystemVersion}+，Apple Development hardened runtime`)

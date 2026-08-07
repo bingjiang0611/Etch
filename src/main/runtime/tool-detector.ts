@@ -44,6 +44,9 @@ export interface ToolHealth {
   version?: string
   summaryZh: string
   checkedAt: string
+  // True when a probe was killed mid-flight, which makes this failure untrustworthy: stopping a
+  // task terminates the probe and looks identical to a genuinely broken executable.
+  probeCancelled?: boolean
 }
 
 export function toolCacheKey(tool: ToolId, override?: string): string {
@@ -94,6 +97,12 @@ export async function detectTool(
   runner: (spec: ProcessSpec) => Promise<ProcessResult> = runProcess
 ): Promise<ToolHealth> {
   const checkedAt = new Date().toISOString()
+  let probeCancelled = false
+  const runProbe = async (spec: ProcessSpec): Promise<ProcessResult> => {
+    const result = await runner(spec)
+    if (result.cancelled) probeCancelled = true
+    return result
+  }
   const candidates: string[] = []
   if (override) {
     if (!isAbsolute(override)) return { tool, status: 'invalid', summaryZh: '手动路径必须是绝对路径', checkedAt }
@@ -122,7 +131,7 @@ export async function detectTool(
       const path = await realpath(candidate)
       const file = await stat(path)
       const providerProbe = ['claude', 'codex', 'qoder', 'opencode'].includes(tool)
-      const probe = await runner({ command: path, args: COMMANDS[tool].versionArgs, cwd: process.cwd(), env, timeoutMs: providerProbe ? 60_000 : 30_000 })
+      const probe = await runProbe({ command: path, args: COMMANDS[tool].versionArgs, cwd: process.cwd(), env, timeoutMs: providerProbe ? 60_000 : 30_000 })
       if (probe.timedOut) {
         failure = { tool, status: 'timeout', executable: path, summaryZh: `${tool} 版本探测超时`, checkedAt }
         continue
@@ -136,7 +145,7 @@ export async function detectTool(
         continue
       }
       if (tool === 'ffmpeg') {
-        const filters = await runner({
+        const filters = await runProbe({
           command: path,
           args: ['-hide_banner', '-filters'],
           cwd: process.cwd(),
@@ -159,7 +168,7 @@ export async function detectTool(
       }
       const authArgs = PROVIDER_AUTH_PROBES[tool]
       if (authArgs) {
-        const auth = await runner({ command: path, args: authArgs, cwd: process.cwd(), env, timeoutMs: 15_000 })
+        const auth = await runProbe({ command: path, args: authArgs, cwd: process.cwd(), env, timeoutMs: 15_000 })
         if (auth.timedOut) {
           failure = { tool, status: 'timeout', executable: path, summaryZh: `${tool} 登录状态探测超时`, checkedAt }
           continue
@@ -199,7 +208,8 @@ export async function detectTool(
       failure = { tool, status: 'invalid', executable: candidate, summaryZh: `${tool} 路径不可执行`, checkedAt }
     }
   }
-  return failure ?? { tool, status: 'missing', summaryZh: `未找到 ${tool}`, checkedAt }
+  if (failure) return probeCancelled ? { ...failure, probeCancelled: true } : failure
+  return { tool, status: 'missing', summaryZh: `未找到 ${tool}`, checkedAt }
 }
 
 export async function identityStillMatches(health: ToolHealth): Promise<boolean> {

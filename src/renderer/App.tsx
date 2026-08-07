@@ -1,28 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { publicationTemplateReady, type BilibiliAccount } from '../shared/bilibili'
-import type { Bootstrap, DeleteTaskMode, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
+import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, InstallableTool, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
+import { IDLE_PIPELINE_ACTIVITY, InstallableToolSchema } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
-import { defaultSettings, type AppSettings, type ToolId } from '../shared/settings-schema'
+import { defaultSettings, type AppSettings, type ThemePreference, type ToolId } from '../shared/settings-schema'
 import type { ProviderId, StageId } from '../shared/task-schema'
 import type { GlossaryEdit } from './AuditGlossary'
 import { glossaryImpactCounts } from './glossary-impact'
 import { GlossaryCatalog } from './GlossaryCatalog'
 import { DEFAULT_PROVIDER, PROVIDER_IDS, providerAvailability, providerOrDefault } from './provider-availability'
 import { detectInitialToolsWithRetry } from './tool-detection'
+import { mergeToolHealth } from './tool-health'
 import { parseTaskUrls } from './task-input'
 import { TaskDeleteDialog, type TaskDeleteRequest } from './TaskDeleteDialog'
 import { WorkbenchView } from './WorkbenchView'
 import { BilibiliPublishDialog } from './BilibiliPublishDialog'
 import { BilibiliSettingsCard } from './BilibiliSettingsCard'
 import { readableRemoteError } from './readable-error'
-import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, subtitleKindLabel, taskStatusText, type SubtitlePreset } from './ui'
+import { permissionGuideCopy } from './permission-guide'
+import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, stageLabels, subtitleKindLabel, taskStatusText, type SubtitlePreset } from './ui'
 
 const tools: ToolId[] = ['yt-dlp', 'ffmpeg', 'ffprobe', 'python', 'mlx_whisper', 'claude', 'codex', 'qoder', 'opencode']
+const INSTALLABLE_TOOLS = new Set<string>(InstallableToolSchema.options)
 const REVIEW_PAGE_SIZE = 100
 const GLOSSARY_CATALOG_PAGE_SIZE = 50
 const CUE_AUTO_SAVE_DELAY_MS = 800
 const QUEUE_DETAIL_RETRY_MS = 3_000
 const MANUAL_GLOSSARY_NAV_MESSAGE = '术语草稿尚未处理，请先预览并应用，或重置修改后再离开。'
+const THEME_OPTIONS: readonly (readonly [ThemePreference, string])[] = [
+  ['system', '跟随系统'],
+  ['light', '浅色'],
+  ['dark', '深色']
+]
 
 function glossaryMatchesEdits(glossary: TaskReviewPage['glossary'], edits: readonly GlossaryEdit[]): boolean {
   return edits.every((edit) => {
@@ -40,13 +49,13 @@ export function App(): React.JSX.Element {
   const [view, setView] = useState<View>('queue')
   const [bootstrap, setBootstrap] = useState<Bootstrap>()
   const [diagnosticsDismissed, setDiagnosticsDismissed] = useState(false)
-  const [queue, setQueue] = useState<QueuePage>({ items: [], total: 0 })
+  const [queue, setQueue] = useState<QueuePage>({ items: [], total: 0, activity: IDLE_PIPELINE_ACTIVITY })
   const [queueError, setQueueError] = useState('')
   const [queueDetails, setQueueDetails] = useState<Record<string, TaskDetail>>({})
   const [queueDetailFailures, setQueueDetailFailures] = useState<Record<string, true>>({})
   const [queueDetailRetry, setQueueDetailRetry] = useState(0)
   const [openingTaskId, setOpeningTaskId] = useState<string>()
-  const [startingTaskIds, setStartingTaskIds] = useState<Record<string, number>>({})
+  const [startingTaskIds, setStartingTaskIds] = useState<Record<string, true>>({})
   const [url, setUrl] = useState('')
   const [styleNote, setStyleNote] = useState('')
   const [autoPublish, setAutoPublish] = useState(false)
@@ -58,6 +67,8 @@ export function App(): React.JSX.Element {
   const [fullDiskAccessGuideOpen, setFullDiskAccessGuideOpen] = useState(false)
   const [openingFullDiskAccessSettings, setOpeningFullDiskAccessSettings] = useState(false)
   const [fullDiskAccessGuideError, setFullDiskAccessGuideError] = useState('')
+  const [chromeCookieAccess, setChromeCookieAccess] = useState<ChromeCookieAccess>('granted')
+  const [relaunchingApp, setRelaunchingApp] = useState(false)
   const [taskThumbnails, setTaskThumbnails] = useState<Record<string, TaskThumbnailState>>({})
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<TaskDetail>()
@@ -71,6 +82,8 @@ export function App(): React.JSX.Element {
   const [toolHealth, setToolHealth] = useState<ToolHealthSnapshot[]>([])
   const [detectingTools, setDetectingTools] = useState(false)
   const [toolDetectError, setToolDetectError] = useState('')
+  const [installingTool, setInstallingTool] = useState<InstallableTool>()
+  const [installNote, setInstallNote] = useState('')
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
   const [taskContextMenu, setTaskContextMenu] = useState<TaskContextMenuState>()
@@ -145,6 +158,14 @@ export function App(): React.JSX.Element {
       rendererMountedRef.current = false
     }
   }, [])
+
+  // 主题只靠翻 documentElement 上的 data-theme；system 即不写该属性，
+  // 交回给 app.css 里的 color-scheme: light dark 跟随系统。
+  useEffect(() => {
+    const root = document.documentElement
+    if (settings.theme === 'system') root.removeAttribute('data-theme')
+    else root.dataset.theme = settings.theme
+  }, [settings.theme])
 
   const ensureRecoveryReleased = useCallback(async (): Promise<void> => {
     if (!recoveryRef.current.hold) return
@@ -247,9 +268,14 @@ export function App(): React.JSX.Element {
       })
   }, [])
 
+  const refreshChromeCookieAccess = useCallback((): Promise<void> => {
+    return window.etch.chromeCookieAccess().then(setChromeCookieAccess).catch(() => undefined)
+  }, [])
+
   useEffect(() => {
     void window.etch.bootstrap().then((next) => {
       setBootstrap(next)
+      setChromeCookieAccess(next.chromeCookieAccess)
       setFullDiskAccessGuideOpen(next.showFullDiskAccessOnboarding)
     })
     refreshQueue()
@@ -332,26 +358,6 @@ export function App(): React.JSX.Element {
       if (retryTimer) window.clearTimeout(retryTimer)
     }
   }, [queueDetailKey, queueDetailRetry])
-
-  useEffect(() => {
-    setStartingTaskIds((current) => {
-      let changed = false
-      const next = { ...current }
-      for (const taskId of Object.keys(current)) {
-        const summary = queue.items.find((item) => item.taskId === taskId)
-        const detail = queueDetailsRef.current[taskId]
-        const observedRunning = summary?.status === 'running' || Boolean(detail && Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'running'))
-        const observedSettled = Boolean(detail && detail.manifest.revision > current[taskId] && (
-          Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'failed' || stage.status === 'checkpoint')
-          || getStage(detail, 'verify').status === 'completed'
-        ))
-        if (summary && !observedRunning && !observedSettled) continue
-        delete next[taskId]
-        changed = true
-      }
-      return changed ? next : current
-    })
-  }, [queueDetailKey, queueDetails])
 
   useEffect(() => {
     if (!selected || view !== 'workbench') return
@@ -544,26 +550,23 @@ export function App(): React.JSX.Element {
   const startQueuedTask = async (taskId: string): Promise<void> => {
     if (queueStartsInFlightRef.current.has(taskId)) return
     queueStartsInFlightRef.current.add(taskId)
-    setStartingTaskIds((current) => ({ ...current, [taskId]: queueDetailsRef.current[taskId]?.manifest.revision ?? -1 }))
-    let started = false
+    setStartingTaskIds((current) => ({ ...current, [taskId]: true }))
     try {
       setTaskActionError('')
       await ensureRecoveryReleased()
       const detail = await window.etch.startTask(taskId)
-      started = true
       rememberDetail(detail)
       setSelected((current) => (current?.manifest.taskId === taskId && current.manifest.revision <= detail.manifest.revision ? detail : current))
-      refreshQueue()
+      await window.etch.queuePage().then(commitQueuePage).catch(() => undefined)
     } catch (caught) {
       setTaskActionError(caught instanceof Error ? caught.message : '任务启动失败')
     } finally {
       queueStartsInFlightRef.current.delete(taskId)
-      if (!started)
-        setStartingTaskIds((current) => {
-          const next = { ...current }
-          delete next[taskId]
-          return next
-        })
+      setStartingTaskIds((current) => {
+        const next = { ...current }
+        delete next[taskId]
+        return next
+      })
     }
   }
 
@@ -800,6 +803,22 @@ export function App(): React.JSX.Element {
     }
   }
 
+  async function runToolInstall(tool: InstallableTool): Promise<void> {
+    if (installingTool) return
+    setInstallingTool(tool)
+    setInstallNote('')
+    try {
+      const result = await window.etch.installTool(tool)
+      setInstallNote(result.outcome === 'homebrew-missing'
+        ? '未检测到 Homebrew，已打开 brew.sh。装好 Homebrew 后再点安装。'
+        : `已在终端开始安装 ${tool}，完成后回到这里点“重新检测”。`)
+    } catch {
+      setInstallNote(`无法启动 ${tool} 安装，请手动在终端执行 brew install。`)
+    } finally {
+      setInstallingTool(undefined)
+    }
+  }
+
   const dirtyCount = Object.keys(cueDrafts).length
   const selectedReviewPage = reviewPage?.taskId === selected?.manifest.taskId ? reviewPage : undefined
   const changeView = (next: View): void => {
@@ -849,6 +868,10 @@ export function App(): React.JSX.Element {
 
   useEffect(() => window.etch.onOpenSettings(() => changeViewRef.current('settings')), [])
 
+  useEffect(() => window.etch.onToolHealthChanged((health) => {
+    setToolHealth((current) => mergeToolHealth(current, health))
+  }), [])
+
   useEffect(() => {
     const dialog = newTaskDialogRef.current
     if (!dialog) return
@@ -866,6 +889,24 @@ export function App(): React.JSX.Element {
     if (!fullDiskAccessGuideOpen && dialog.open) dialog.close()
   }, [fullDiskAccessGuideOpen])
 
+  // 用户去系统设置授完权回到 Etch 时重探；引导弹窗开着时额外轮询，
+  // 让“已授权”在两个窗口并排时也能即时反映。
+  useEffect(() => {
+    const onFocus = (): void => {
+      void refreshChromeCookieAccess()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshChromeCookieAccess])
+
+  useEffect(() => {
+    if (!fullDiskAccessGuideOpen) return
+    const timer = window.setInterval(() => {
+      void refreshChromeCookieAccess()
+    }, 1_500)
+    return () => window.clearInterval(timer)
+  }, [fullDiskAccessGuideOpen, refreshChromeCookieAccess])
+
   const openNewTask = (): void => {
     setError('')
     setNewTaskOpen(true)
@@ -878,21 +919,41 @@ export function App(): React.JSX.Element {
   }
 
   const closeFullDiskAccessGuide = (): void => {
-    if (openingFullDiskAccessSettings) return
+    if (openingFullDiskAccessSettings || relaunchingApp) return
     setFullDiskAccessGuideOpen(false)
+    // 只有仍未授权时才算“主动跳过”，避免下次启动继续打扰。
+    if (chromeCookieAccess === 'denied') void window.etch.dismissFullDiskAccessGuide().catch(() => undefined)
   }
 
-  const openFullDiskAccessGuideSettings = async (): Promise<void> => {
+  const openFullDiskAccessGuide = (): void => {
+    setFullDiskAccessGuideError('')
+    setFullDiskAccessGuideOpen(true)
+    void refreshChromeCookieAccess()
+  }
+
+  const requestChromeAccess = async (): Promise<void> => {
     if (openingFullDiskAccessSettings) return
     setOpeningFullDiskAccessSettings(true)
     setFullDiskAccessGuideError('')
     try {
-      await window.etch.openFullDiskAccessSettings()
-      setFullDiskAccessGuideOpen(false)
+      const completed = await window.etch.requestChromeCookieAccess()
+      if (completed) setFullDiskAccessGuideOpen(false)
     } catch {
       setFullDiskAccessGuideError('无法打开系统设置，请手动前往“隐私与安全性 → 完全磁盘访问”。')
     } finally {
       setOpeningFullDiskAccessSettings(false)
+    }
+  }
+
+  const relaunchEtch = async (): Promise<void> => {
+    if (relaunchingApp) return
+    setRelaunchingApp(true)
+    setFullDiskAccessGuideError('')
+    try {
+      await window.etch.relaunchApp()
+    } catch {
+      setFullDiskAccessGuideError('自动重启失败，请手动完全退出并重新打开 Etch。')
+      setRelaunchingApp(false)
     }
   }
 
@@ -1145,8 +1206,13 @@ export function App(): React.JSX.Element {
   const defaultProviderAvailability = providerAvailability(defaultProvider, toolHealth)
   const selectedProviderAvailability = providerAvailability(provider, toolHealth)
   const selectedIsRunning = selected ? Object.values(selected.manifest.pipeline.stages).some((stage) => stage.status === 'running') : false
+  const selectedSummary = queue.items.find((item) => item.taskId === selected?.manifest.taskId)
+  const selectedWaitingStage = selectedSummary?.schedule === 'waiting' ? selectedSummary.waitingStage : undefined
+  const runningTaskCount = queue.items.filter((item) => item.status === 'running').length
+  const waitingSlotCount = queue.items.filter((item) => item.schedule === 'waiting').length
   const selectedIsPaused = Boolean(selected?.manifest.runtime.userPaused)
   const needsRebuild = selected ? (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(selected, id).status === 'stale') : false
+  const permissionGuide = permissionGuideCopy(chromeCookieAccess)
   const enteredUrlCount = new Set(url.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)).size
 
   useEffect(() => {
@@ -1277,7 +1343,7 @@ export function App(): React.JSX.Element {
                   <span className="count-badge">{queue.total}</span>
                 </div>
                 <p className="sub">
-                  每阶段并发 {settings.stageConcurrency} · {queue.items.filter((item) => item.status === 'running').length ? `${queue.items.filter((item) => item.status === 'running').length} 个运行中` : settings.queuePaused ? '队列已暂停' : '队列空闲'}
+                  每阶段并发 {settings.stageConcurrency} · {runningTaskCount ? `${runningTaskCount} 个运行中` : settings.queuePaused ? '队列已暂停' : '队列空闲'}{waitingSlotCount ? ` · ${waitingSlotCount} 个排队等槽位` : ''}
                 </p>
               </div>
               {queueError && (
@@ -1309,6 +1375,7 @@ export function App(): React.JSX.Element {
                     const sourceName = detail ? (detail.manifest.input.kind === 'url' ? detail.manifest.input.url : detail.manifest.input.sourcePath) : ''
                     const updatedAt = new Date(task.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
                     const taskIsStarting = task.taskId in startingTaskIds
+                    const taskIsWaitingSlot = task.schedule === 'waiting'
                     const taskIsRunning = task.status === 'running' || Boolean(detail && Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'running'))
                     const taskHasCheckpoint = status === 'checkpoint' || Boolean(detail && Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'checkpoint'))
                     const taskNeedsRebuild = Boolean(detail && (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(detail, id).status === 'stale'))
@@ -1317,15 +1384,17 @@ export function App(): React.JSX.Element {
                       ? '处理中'
                       : taskIsStarting
                         ? '正在启动…'
-                        : taskHasCheckpoint
-                          ? '需要确认'
-                          : taskIsComplete
-                            ? '已完成'
-                            : detail?.manifest.runtime.userPaused
-                              ? '继续处理'
-                              : taskNeedsRebuild
-                                ? '重新生成'
-                                : '开始处理'
+                        : taskIsWaitingSlot
+                          ? `排队等${task.waitingStage ? stageLabels[task.waitingStage] : ''}槽位`
+                          : taskHasCheckpoint
+                            ? '需要确认'
+                            : taskIsComplete
+                              ? '已完成'
+                              : detail?.manifest.runtime.userPaused
+                                ? '继续处理'
+                                : taskNeedsRebuild
+                                  ? '重新生成'
+                                  : '开始处理'
                     return (
                       <article
                         className={`task-row row-hover ${selected?.manifest.taskId === task.taskId ? 'is-selected' : ''} ${openingTaskId === task.taskId ? 'is-opening' : ''} ${taskContextMenu?.taskId === task.taskId ? 'is-context' : ''}`}
@@ -1353,7 +1422,7 @@ export function App(): React.JSX.Element {
                               title: task.title,
                               x: Math.max(edge, Math.min(event.clientX, window.innerWidth - menuWidth - edge)),
                               y: Math.max(edge, Math.min(event.clientY, window.innerHeight - menuHeight - edge)),
-                              running: taskIsRunning
+                              running: taskIsRunning || taskIsWaitingSlot
                             })
                           }}
                           onKeyDown={(event) => {
@@ -1366,7 +1435,7 @@ export function App(): React.JSX.Element {
                               title: task.title,
                               x: Math.min(bounds.left + 28, window.innerWidth - 278),
                               y: Math.min(bounds.top + 28, window.innerHeight - 138),
-                              running: taskIsRunning
+                              running: taskIsRunning || taskIsWaitingSlot
                             })
                           }}
                         />
@@ -1391,8 +1460,8 @@ export function App(): React.JSX.Element {
                               <small>等待视频封面</small>
                             </span>
                           )}
-                          <span className="pill task-cover-status" data-status={status}>
-                            {taskStatusText(detail, task.status)}
+                          <span className="pill task-cover-status" data-status={taskIsWaitingSlot ? 'queued' : status}>
+                            {taskStatusText(detail, task.status, taskIsWaitingSlot)}
                           </span>
                           <span className="dur mono">{durationLabel(detail?.manifest.runtime.durationSeconds)}</span>
                         </span>
@@ -1436,7 +1505,7 @@ export function App(): React.JSX.Element {
                               className="task-start-button"
                               type="button"
                               aria-label={`${queueActionLabel}：${task.title}`}
-                              disabled={!detail || taskIsStarting || taskIsRunning || taskHasCheckpoint || taskIsComplete}
+                              disabled={!detail || taskIsStarting || taskIsWaitingSlot || taskIsRunning || taskHasCheckpoint || taskIsComplete}
                               onClick={() => {
                                 void startQueuedTask(task.taskId)
                               }}
@@ -1490,15 +1559,19 @@ export function App(): React.JSX.Element {
             savingPreset={savingPreset || savingSettings}
             glossaryBusy={glossaryBusy}
             selectedIsRunning={selectedIsRunning}
+            selectedWaitingStage={selectedWaitingStage}
+            activity={queue.activity}
             selectedIsPaused={selectedIsPaused}
             stoppingTask={stoppingTask}
             publicationActionBusy={publicationActionBusy}
             bilibiliAccount={bilibiliAccount}
             needsRebuild={needsRebuild}
+            chromeCookieAccess={chromeCookieAccess}
             videoRef={videoRef}
             onBack={() => changeView('queue')}
             onStart={startSelected}
             onStop={stopSelected}
+            onOpenPermissionGuide={openFullDiskAccessGuide}
             onPublish={requestBilibiliPublish}
             onStopPublication={stopPublication}
             onContinuePublication={continuePublication}
@@ -1595,6 +1668,23 @@ export function App(): React.JSX.Element {
             </section>
 
             <section className="panel settings-card">
+              <h2>外观</h2>
+              <div className="setting-row">
+                <span className="label">
+                  <strong>主题</strong>
+                  <small>跟随系统时随 macOS 外观切换；硬字幕预览与封面不受主题影响</small>
+                </span>
+                <span className="seg" role="group" aria-label="主题">
+                  {THEME_OPTIONS.map(([value, label]) => (
+                    <button className={settings.theme === value ? 'is-active' : ''} type="button" disabled={!settingsLoaded} aria-pressed={settings.theme === value} onClick={() => setSettings({ ...settings, theme: value })} key={value}>
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              </div>
+            </section>
+
+            <section className="panel settings-card">
               <h2>系统通知</h2>
               {(
                 [
@@ -1660,11 +1750,17 @@ export function App(): React.JSX.Element {
                   {toolDetectError}
                 </p>
               )}
+              {installNote && (
+                <p className="tools-install-note" role="status">
+                  {installNote}
+                </p>
+              )}
               <div className="tools-list">
                 {tools.map((tool) => {
                   const health = toolHealth.find((item) => item.tool === tool)
                   const override = settings.toolOverrides[tool] ?? ''
                   const detectedPath = health?.executable
+                  const canInstall = INSTALLABLE_TOOLS.has(tool) && Boolean(health) && health?.status !== 'ready'
                   return (
                     <label className="tool-row" key={tool}>
                       <span className="tname">
@@ -1672,7 +1768,20 @@ export function App(): React.JSX.Element {
                         <small data-status={health?.status}>{health?.summaryZh ?? '尚未检测'}</small>
                       </span>
                       <input className="path" disabled={!settingsLoaded} value={override} placeholder={detectedPath ? `自动 · ${detectedPath}` : '自动'} data-auto-path={!override && detectedPath ? 'true' : undefined} title={!override && detectedPath ? `自动检测路径：${detectedPath}` : undefined} aria-label={`${tool} executable 路径`} onChange={(event) => updateToolOverride(tool, event.target.value)} />
-                      <span className="tool-mini-dot" data-status={health?.status ?? 'pending'} aria-hidden="true" />
+                      <span className="tool-row-end">
+                        {canInstall && (
+                          <button
+                            className="tool-install-button"
+                            type="button"
+                            disabled={Boolean(installingTool)}
+                            aria-label={`安装 ${tool}`}
+                            onClick={(event) => { event.preventDefault(); void runToolInstall(tool as InstallableTool) }}
+                          >
+                            {installingTool === tool ? '打开终端…' : '安装'}
+                          </button>
+                        )}
+                        <span className="tool-mini-dot" data-status={health?.status ?? 'pending'} aria-hidden="true" />
+                      </span>
                     </label>
                   )
                 })}
@@ -1696,6 +1805,7 @@ export function App(): React.JSX.Element {
       </main>
       <dialog
         className="permission-dialog"
+        data-access={chromeCookieAccess}
         ref={fullDiskAccessDialogRef}
         aria-labelledby="full-disk-access-title"
         aria-describedby="full-disk-access-description"
@@ -1709,30 +1819,43 @@ export function App(): React.JSX.Element {
       >
         <section className="permission-guide">
           <div className="permission-guide-icon" aria-hidden="true">
-            <Icon name="settings" />
+            <Icon name={chromeCookieAccess === 'granted' ? 'check' : 'settings'} />
           </div>
           <div className="permission-guide-heading">
-            <p className="eyebrow">首次使用设置</p>
-            <h2 id="full-disk-access-title">允许 Etch 读取 Chrome 登录状态</h2>
+            <p className="eyebrow">{permissionGuide.eyebrow}</p>
+            <h2 id="full-disk-access-title">{permissionGuide.title}</h2>
           </div>
           <p className="permission-guide-copy" id="full-disk-access-description">
-            部分 YouTube 视频需要登录后才能下载。macOS 要求先为 Etch 开启“完全磁盘访问”，Etch 才能在本机调用 yt-dlp 读取 Chrome Cookie。
+            {permissionGuide.body}
           </p>
-          <ol className="permission-guide-steps">
-            <li><span>1</span><p>点击下方按钮，打开“系统设置 → 隐私与安全性 → 完全磁盘访问”。</p></li>
-            <li><span>2</span><p>点击加号添加 Etch，并打开右侧开关。</p></li>
-            <li><span>3</span><p>完全退出 Etch，然后重新打开应用。</p></li>
-          </ol>
+          {permissionGuide.steps.length > 0 && (
+            <ol className="permission-guide-steps">
+              {permissionGuide.steps.map((step, index) => (
+                <li key={step}><span>{index + 1}</span><p>{step}</p></li>
+              ))}
+            </ol>
+          )}
           <p className="permission-guide-privacy">
-            Chrome Cookie 只在本机用于视频下载，不会由 Etch 上传。
+            Chrome 登录状态只在本机用于视频下载，不会由 Etch 上传。
           </p>
           {fullDiskAccessGuideError && <p className="permission-guide-error" role="alert">{fullDiskAccessGuideError}</p>}
           <footer className="permission-guide-actions">
-            <button className="secondary-button" type="button" disabled={openingFullDiskAccessSettings} onClick={closeFullDiskAccessGuide}>稍后设置</button>
-            <button className="primary-button" type="button" autoFocus disabled={openingFullDiskAccessSettings} onClick={() => { void openFullDiskAccessGuideSettings() }}>
-              <Icon name="settings" />
-              {openingFullDiskAccessSettings ? '正在打开…' : '打开系统设置'}
+            <button className="secondary-button" type="button" disabled={openingFullDiskAccessSettings || relaunchingApp} onClick={closeFullDiskAccessGuide}>
+              {permissionGuide.secondary}
             </button>
+            {chromeCookieAccess === 'granted' ? (
+              <button className="primary-button" type="button" autoFocus disabled={relaunchingApp} onClick={() => { void relaunchEtch() }}>
+                <Icon name="refresh" />
+                {relaunchingApp ? '正在重启…' : '重启 Etch'}
+              </button>
+            ) : chromeCookieAccess === 'denied' ? (
+              <button className="primary-button" type="button" autoFocus disabled={openingFullDiskAccessSettings} onClick={() => { void requestChromeAccess() }}>
+                <Icon name="settings" />
+                {openingFullDiskAccessSettings ? '正在打开…' : '打开系统设置'}
+              </button>
+            ) : (
+              <button className="primary-button" type="button" autoFocus onClick={closeFullDiskAccessGuide}>知道了</button>
+            )}
           </footer>
         </section>
       </dialog>

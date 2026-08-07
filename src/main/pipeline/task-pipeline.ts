@@ -4,6 +4,8 @@ import { access, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile
 import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { AppSettings, ToolId } from '../../shared/settings-schema'
+import type { PipelineActivity, TaskSchedule } from '../../shared/ipc'
+import { POOL_BY_STAGE, POOL_LABELS } from '../../shared/pipeline'
 import { STAGE_IDS, type ProviderId, type StageId, type TaskManifest } from '../../shared/task-schema'
 import {
   AUDIT_MAX_ATTEMPTS,
@@ -56,7 +58,7 @@ import {
   PROVIDER_SESSION_UNAVAILABLE_PREFIX,
   providerSessionIsUnavailable
 } from '../providers/session-errors'
-import { chromeCookieBrowser } from '../media/browser-cookies'
+import { chromeCookieState } from '../media/browser-cookies'
 import { browserCookiesUnavailable, burnArgs, normalizeDownloadedMediaArgs, sourceDownloadArgs, sourceDownloadFallbackArgs, thumbnailFrameArgs, WHISPER_MODEL, whisperArgs, youtubeAuthenticationRequired, youtubeMediaFormatsUnavailable, youtubeSubtitleArgs } from '../media/commands'
 import { transcribeSegmentedWhisper } from '../media/whisper-segments'
 import {
@@ -137,6 +139,7 @@ export class TaskPipeline {
   readonly #taskControllers = new Map<string, AbortController>()
   readonly #aliasQueues = new Map<string, Promise<void>>()
   readonly #stopRequestedTaskIds = new Set<string>()
+  readonly #slotWaits = new Map<string, StageId>()
   readonly #toolCache = new Map<string, ToolHealth>()
   readonly #pools: StagePools
   #acquisitionController = new AbortController()
@@ -150,7 +153,8 @@ export class TaskPipeline {
     readonly historicalGlossary: HistoricalGlossaryService,
     readonly onManifest: (taskDirectory: string, manifest: TaskManifest) => void,
     readonly runRegistry?: RunRegistry,
-    readonly onWorkerCountChange?: (count: number) => void
+    readonly onWorkerCountChange?: (count: number) => void,
+    readonly onToolHealth?: (health: ToolHealth) => void
   ) {
     this.#pools = new StagePools(settings.stageConcurrency)
     this.#acquisitionPaused = settings.queuePaused
@@ -166,6 +170,7 @@ export class TaskPipeline {
     const running = this.#run(taskDirectory, taskController).finally(() => {
       this.#running.delete(taskDirectory)
       this.#runningTaskIds.delete(taskDirectory)
+      this.#slotWaits.delete(taskDirectory)
       if (this.#taskControllers.get(taskDirectory) === taskController) this.#taskControllers.delete(taskDirectory)
     })
     this.#running.set(taskDirectory, running)
@@ -173,7 +178,17 @@ export class TaskPipeline {
   }
 
   isRunning(taskDirectory: string): boolean { return this.#running.has(taskDirectory) }
-  get runningCount(): number { return this.#running.size }
+  get activeStageCount(): number { return this.#activeWorkerCount }
+
+  taskSchedule(taskDirectory: string): { schedule: TaskSchedule; waitingStage?: StageId } {
+    if (!this.#running.has(taskDirectory)) return { schedule: 'idle' }
+    const waitingStage = this.#slotWaits.get(taskDirectory)
+    return waitingStage ? { schedule: 'waiting', waitingStage } : { schedule: 'active' }
+  }
+
+  activity(): PipelineActivity {
+    return { limit: this.settings.stageConcurrency, pools: this.#pools.occupancy() }
+  }
 
   setQueuePaused(paused: boolean): void {
     if (this.#acquisitionPaused === paused) return
@@ -222,6 +237,7 @@ export class TaskPipeline {
   async resume(taskDirectory: string): Promise<void> {
     if (!this.#mayAcquire()) throw new Error('队列已暂停，解除暂停后才能开始新阶段')
     const manifest = await this.store.load(taskDirectory)
+    this.#assertSlotAvailable(manifest)
     this.#stopRequestedTaskIds.delete(manifest.taskId)
     if (manifest.runtime.userPaused) {
       const resumed = await this.store.resumePaused(taskDirectory)
@@ -298,11 +314,13 @@ export class TaskPipeline {
         this.#publishManifest(taskDirectory, manifest)
       }
       const signal = AbortSignal.any([taskController.signal, this.#acquisitionController.signal])
+      this.#slotWaits.set(taskDirectory, stage)
       try {
         if (!await this.#pools.runStage(
           stage,
           this.settings.stageConcurrency,
           async () => {
+            this.#slotWaits.delete(taskDirectory)
             this.#setActiveWorkerCount(this.#activeWorkerCount + 1)
             try {
               return await this.#executeStage(taskDirectory, stage, signal)
@@ -315,6 +333,8 @@ export class TaskPipeline {
       } catch (error) {
         if (error instanceof PoolCancelledError || signal.aborted) return
         throw error
+      } finally {
+        this.#slotWaits.delete(taskDirectory)
       }
     }
   }
@@ -479,7 +499,9 @@ export class TaskPipeline {
       await writeFile(failureLogPath, diagnostic, 'utf8').catch(() => undefined)
       throw error
     }
-    let browserCookie: string | false = await chromeCookieBrowser()
+    const cookies = await chromeCookieState()
+    // Etch 与 yt-dlp 可能命中不同的企业安全策略，预检失败不能替下载器做决定。
+    let browserCookie: string | false = cookies.browser || 'chrome'
     let browserCookieFailure = false
     let run = await this.#runExternal(manifest.taskId, 'source', {
       command: ytDlp,
@@ -525,10 +547,14 @@ export class TaskPipeline {
         return fail(new Error(withFailureLog('视频下载连续 10 分钟没有进度，已停止；下载进度已保留，重试将继续')))
       }
       if (youtubeAuthenticationRequired(run.stderr)) {
-        const cookieHelp = browserCookieFailure
-          ? 'Etch 无法读取 Chrome Cookies。请在“系统设置 → 隐私与安全性 → 完全磁盘访问”中允许 Etch，完全退出并重新打开应用后重试'
-          : '请先在当前 Chrome 资料中登录 YouTube，再完全退出并重新打开 Etch 后重试'
-        return fail(new Error(withFailureLog(`视频下载失败：YouTube 要求登录验证；${cookieHelp}`)))
+        const cookieHelp = cookies.access === 'denied'
+          ? '，且 Etch 未获授权读取 Chrome 登录状态'
+          : cookies.access === 'missing'
+            ? '，但本机未找到 Chrome 登录资料'
+            : browserCookieFailure
+              ? '，且 Chrome 登录状态读取失败'
+              : '；请先在 Chrome 中登录 YouTube 后重试'
+        return fail(new Error(withFailureLog(`视频下载失败：YouTube 要求登录验证${cookieHelp}`)))
       }
       return fail(new Error(withFailureLog(this.#commandFailure('视频下载失败', run.stderr))))
     }
@@ -1919,6 +1945,9 @@ export class TaskPipeline {
     const cached = this.#toolCache.get(key)
     if (cached?.executable && await identityStillMatches(cached)) return cached
     const health = await detectTool(tool, env, this.settings.toolOverrides[tool], (spec) => this.#runExternal(taskId, stage, spec))
+    // Stopping a task kills the probes, which is indistinguishable from a broken executable, so a
+    // cancelled detection must not repaint the footer.
+    if (!health.probeCancelled && !this.#stopRequestedTaskIds.has(taskId)) this.onToolHealth?.(health)
     if (health.status !== 'ready' || !health.executable) throw new Error(health.summaryZh)
     this.#toolCache.set(key, health)
     return health
@@ -1959,6 +1988,15 @@ export class TaskPipeline {
 
   #mayAcquire(): boolean {
     return !this.#acquisitionPaused && !this.#acquisitionFrozen
+  }
+
+  #assertSlotAvailable(manifest: TaskManifest): void {
+    const nextStage = STAGE_IDS.find((stage) => !['completed', 'skipped'].includes(manifest.pipeline.stages[stage]?.status))
+    const kind = nextStage ? POOL_BY_STAGE[nextStage] : undefined
+    if (!nextStage || !kind || this.#pools.hasFreeSlot(nextStage, this.settings.stageConcurrency)) return
+    const { active, waiting } = this.#pools.occupancy()[kind]
+    const queued = waiting ? `，另有 ${waiting} 个任务在排队` : ''
+    throw new Error(`${POOL_LABELS[kind]}并发已满（${active}/${this.settings.stageConcurrency} 运行中${queued}），请等其他任务释放槽位或先停止一个任务`)
   }
 
   #abortAcquisition(): void {

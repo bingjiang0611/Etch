@@ -17,7 +17,7 @@ extraResources:
 mac:
   icon: build/icon.icns
   category: public.app-category.video
-  identity: '-'
+  identity: 'Apple Development: baobingjiang@icloud.com (8Y6KR78CP7)'
   signIgnore:
     - '\.(pak|dat)$'
     - 'Contents/Resources/biliup/biliup$'

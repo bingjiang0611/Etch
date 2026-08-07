@@ -15,7 +15,7 @@ const AppStateSchema = z.object({
   schemaVersion: z.literal(1),
   cleanExit: z.boolean(),
   recoveryHold: z.boolean(),
-  fullDiskAccessOnboardingShown: z.boolean().default(false),
+  fullDiskAccessGuideDismissed: z.boolean().default(false),
   updatedAt: z.string().datetime({ offset: true })
 })
 export type AppState = z.infer<typeof AppStateSchema>
@@ -26,7 +26,7 @@ export class AppStateStore {
     try { return AppStateSchema.parse(JSON.parse(await readFile(this.path, 'utf8'))) }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      return { schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: false, updatedAt: new Date().toISOString() }
+      return { schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessGuideDismissed: false, updatedAt: new Date().toISOString() }
     }
   }
   async beginLaunch(): Promise<AppState> {
@@ -47,10 +47,13 @@ export class AppStateStore {
     const current = await this.load()
     await writeJsonAtomic(this.path, { ...current, recoveryHold: true, updatedAt: new Date().toISOString() })
   }
-  async claimFullDiskAccessOnboarding(): Promise<boolean> {
+  /**
+   * 只记录“用户主动跳过”，不记录“弹过一次”；授权真的到位后立即复位，
+   * 这样用户日后撤销权限还能重新被引导。
+   */
+  async setFullDiskAccessGuideDismissed(dismissed: boolean): Promise<void> {
     const current = await this.load()
-    if (current.fullDiskAccessOnboardingShown) return false
-    await writeAppStateAllowCommitted(this.path, { ...current, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() })
-    return true
+    if (current.fullDiskAccessGuideDismissed === dismissed) return
+    await writeAppStateAllowCommitted(this.path, { ...current, fullDiskAccessGuideDismissed: dismissed, updatedAt: new Date().toISOString() })
   }
 }

@@ -29,6 +29,7 @@ const api: EtchApi = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (settings) => ipcRenderer.invoke('settings:update', settings),
   detectTools: () => ipcRenderer.invoke('tools:detect'),
+  installTool: (tool) => ipcRenderer.invoke('tools:install', { tool }),
   bilibiliAccount: () => ipcRenderer.invoke('bilibili:account'),
   startBilibiliQrLogin: () => ipcRenderer.invoke('bilibili:qr-start'),
   pollBilibiliQrLogin: (sessionId) => ipcRenderer.invoke('bilibili:qr-state', { sessionId }),
@@ -40,11 +41,19 @@ const api: EtchApi = {
   continueBilibiliPublication: (taskId) => ipcRenderer.invoke('bilibili:continue', { taskId }),
   openBilibiliCreatorCenter: () => ipcRenderer.invoke('bilibili:open-creator-center'),
   setVideoFullscreen: (fullscreen) => ipcRenderer.invoke('video:set-fullscreen', fullscreen),
-  openFullDiskAccessSettings: () => ipcRenderer.invoke('permissions:open-full-disk-access-settings'),
+  requestChromeCookieAccess: () => ipcRenderer.invoke('permissions:request-chrome-cookie-access'),
+  chromeCookieAccess: () => ipcRenderer.invoke('permissions:chrome-cookie-access'),
+  dismissFullDiskAccessGuide: () => ipcRenderer.invoke('permissions:dismiss-full-disk-access-guide'),
+  relaunchApp: () => ipcRenderer.invoke('permissions:relaunch-app'),
   onVideoFullscreenChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, fullscreen: boolean): void => listener(fullscreen)
     ipcRenderer.on('video:fullscreen-changed', handler)
     return () => ipcRenderer.removeListener('video:fullscreen-changed', handler)
+  },
+  onToolHealthChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, health: Parameters<typeof listener>[0]): void => listener(health)
+    ipcRenderer.on('tools:health-changed', handler)
+    return () => ipcRenderer.removeListener('tools:health-changed', handler)
   },
   onOpenSettings: (listener) => {
     const handler = (): void => listener()

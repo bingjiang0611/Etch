@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { runProcessMock } = vi.hoisted(() => ({ runProcessMock: vi.fn() }))
+const { runProcessMock, chromeCookieStateMock } = vi.hoisted(() => ({ runProcessMock: vi.fn(), chromeCookieStateMock: vi.fn() }))
 
 vi.mock('../src/main/runtime/process-runner', () => ({ runProcess: runProcessMock }))
 vi.mock('../src/main/runtime/shell-env', () => ({
@@ -17,7 +17,7 @@ vi.mock('../src/main/runtime/tool-detector', () => ({
   identityStillMatches: async () => true,
   toolCacheKey: (tool: string, override?: string) => `${tool}:${override ?? ''}`
 }))
-vi.mock('../src/main/media/browser-cookies', () => ({ chromeCookieBrowser: async () => 'chrome:Profile 2' }))
+vi.mock('../src/main/media/browser-cookies', () => ({ chromeCookieState: chromeCookieStateMock }))
 
 import { HistoricalGlossaryService } from '../src/main/historical-glossary'
 import { TaskPipeline } from '../src/main/pipeline/task-pipeline'
@@ -28,8 +28,13 @@ import { createTaskManifest, STAGE_IDS } from '../src/shared/task-schema'
 const directories: string[] = []
 const srt = '1\n00:00:00,000 --> 00:00:01,000\nHello.\n\n2\n00:00:01,000 --> 00:00:02,000\nHello again.\n\n3\n00:00:02,000 --> 00:00:03,000\nDone.\n'
 
+beforeEach(() => {
+  chromeCookieStateMock.mockResolvedValue({ access: 'granted', browser: 'chrome:Profile 2' })
+})
+
 afterEach(async () => {
   runProcessMock.mockReset()
+  chromeCookieStateMock.mockReset()
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
@@ -155,11 +160,23 @@ describe('TaskPipeline independent subtitle fallback', () => {
     expect(manifest.pipeline.stages.source.status).toBe('completed')
   })
 
-  it('reports the macOS permission fix when YouTube still requires authentication', async () => {
+  it('names the failed Chrome login read when the probe saw an accessible profile', async () => {
     const { failure, manifest } = await runSource({ en: [{}] }, 0, true, true)
     expect(failure).toBeInstanceOf(Error)
-    expect((failure as Error).message).toContain('完全磁盘访问')
-    expect(manifest.pipeline.stages.source.errorCode).toContain('完全磁盘访问')
+    expect((failure as Error).message).toContain('Chrome 登录状态读取失败')
+    expect(manifest.pipeline.stages.source.errorCode).not.toContain('完全磁盘访问')
+  })
+
+  it('lets yt-dlp try Chrome cookies when the Etch preflight is denied', async () => {
+    chromeCookieStateMock.mockResolvedValue({ access: 'denied', browser: false })
+    const { manifest } = await runSource({ en: [{}] })
+    const sourceCalls = runProcessMock.mock.calls
+      .map(([spec]) => spec as { command: string; args: string[] })
+      .filter((spec) => spec.command === '/mock/yt-dlp' && !spec.args.includes('--skip-download'))
+    expect(sourceCalls).toHaveLength(1)
+    expect(sourceCalls[0].args).toContain('--cookies-from-browser')
+    expect(sourceCalls[0].args).toContain('chrome')
+    expect(manifest.pipeline.stages.source.status).toBe('completed')
   })
 
   it('retries challenge failures with default clients and broader formats', async () => {

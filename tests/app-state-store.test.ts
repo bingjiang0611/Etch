@@ -15,25 +15,27 @@ describe('AppStateStore', () => {
     expect((await store.load()).cleanExit).toBe(true)
   })
 
-  it('claims the full disk access onboarding only once', async () => {
+  it('records only a deliberate skip and lets a granted permission clear it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'etch-state-'))
     const store = new AppStateStore(join(root, 'app-state.json'))
-    expect(await store.claimFullDiskAccessOnboarding()).toBe(true)
-    expect(await store.claimFullDiskAccessOnboarding()).toBe(false)
-    expect((await store.load()).fullDiskAccessOnboardingShown).toBe(true)
+    expect((await store.load()).fullDiskAccessGuideDismissed).toBe(false)
+    await store.setFullDiskAccessGuideDismissed(true)
+    expect((await store.load()).fullDiskAccessGuideDismissed).toBe(true)
+    await store.setFullDiskAccessGuideDismissed(false)
+    expect((await store.load()).fullDiskAccessGuideDismissed).toBe(false)
   })
 
-  it('treats app state written by older Etch versions as not onboarded', async () => {
+  it('re-guides users whose older app state only recorded that the dialog was shown', async () => {
     const root = await mkdtemp(join(tmpdir(), 'etch-state-'))
     const path = join(root, 'app-state.json')
     await writeFile(path, JSON.stringify({
       schemaVersion: 1,
       cleanExit: true,
       recoveryHold: false,
+      fullDiskAccessOnboardingShown: true,
       updatedAt: new Date().toISOString()
     }))
     const store = new AppStateStore(path)
-    expect((await store.load()).fullDiskAccessOnboardingShown).toBe(false)
-    expect(await store.claimFullDiskAccessOnboarding()).toBe(true)
+    expect((await store.load()).fullDiskAccessGuideDismissed).toBe(false)
   })
 })

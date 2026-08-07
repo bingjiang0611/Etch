@@ -216,7 +216,7 @@ export function activeStageId(detail: TaskDetail): StageId | undefined {
   return STAGE_ORDER.find((id) => ['running', 'checkpoint', 'failed', 'paused', 'stale'].includes(getStage(detail, id).status))
 }
 
-export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePage['items'][number]['status']): string {
+export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePage['items'][number]['status'], waitingSlot = false): string {
   const fallbackLabels: Record<QueuePage['items'][number]['status'], string> = {
     pending: '等待中',
     ready: '可处理',
@@ -228,8 +228,9 @@ export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePa
     skipped: '已跳过',
     stale: '待重建',
   }
-  if (!detail) return fallbackLabels[fallback]
+  if (!detail) return waitingSlot ? '排队中' : fallbackLabels[fallback]
   if (detail.manifest.translation.auditCheckpoint) return '待裁决'
+  if (waitingSlot) return '排队中'
   const active = activeStageId(detail)
   if (active) return stageLabels[active]
   return getStage(detail, 'verify').status === 'completed' ? '已完成' : fallbackLabels[fallback]

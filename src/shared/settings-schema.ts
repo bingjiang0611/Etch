@@ -6,6 +6,10 @@ export const ToolIdSchema = z.enum(['yt-dlp', 'ffmpeg', 'ffprobe', 'python', 'ml
 export type ToolId = z.infer<typeof ToolIdSchema>
 export { SubtitlePresetSchema, type SubtitlePreset }
 
+// system = 跟随 macOS 外观（prefers-color-scheme）；light / dark = 手动钉住。
+export const ThemePreferenceSchema = z.enum(['system', 'light', 'dark'])
+export type ThemePreference = z.infer<typeof ThemePreferenceSchema>
+
 export const AppSettingsSchema = z.object({
   schemaVersion: z.literal(2),
   workspaceRoot: z.string().min(1),
@@ -17,6 +21,7 @@ export const AppSettingsSchema = z.object({
   defaultModelByProvider: z.partialRecord(ProviderIdSchema, ModelSelectionSchema),
   toolOverrides: z.partialRecord(ToolIdSchema, z.string().min(1)),
   subtitlePreset: SubtitlePresetSchema,
+  theme: ThemePreferenceSchema.default('system'),
   globalGlossary: z.record(z.string(), z.string()).default({}),
   bilibiliPublishTemplate: BilibiliPublishTemplateSchema
 })
@@ -46,6 +51,7 @@ export function defaultSettings(homeDirectory: string): AppSettings {
     defaultModelByProvider: {},
     toolOverrides: {},
     subtitlePreset: 'standard',
+    theme: 'system',
     globalGlossary: {},
     bilibiliPublishTemplate: {}
   })

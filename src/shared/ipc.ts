@@ -1,12 +1,17 @@
 import { z } from 'zod'
 import { BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationDraftSchema, BilibiliQrStateSchema, type BilibiliAccount, type BilibiliPartition, type BilibiliPublicationDraft, type BilibiliQrState } from './bilibili'
-import { ProviderIdSchema, StageStatusSchema, SubtitlePresetSchema, TaskManifestSchema } from './task-schema'
+import { ProviderIdSchema, StageIdSchema, StageStatusSchema, SubtitlePresetSchema, TaskManifestSchema } from './task-schema'
 import { AppSettingsSchema, ToolIdSchema, type AppSettings } from './settings-schema'
+import { POOL_KINDS } from './pipeline'
+
+export const ChromeCookieAccessSchema = z.enum(['granted', 'denied', 'missing'])
+export type ChromeCookieAccess = z.infer<typeof ChromeCookieAccessSchema>
 
 export const BootstrapSchema = z.object({
   version: z.string(),
   arch: z.string(),
   showFullDiskAccessOnboarding: z.boolean(),
+  chromeCookieAccess: ChromeCookieAccessSchema,
   startupDiagnostics: z.object({
     discoveryErrors: z.array(z.object({
       location: z.string().min(1).max(4096),
@@ -22,17 +27,37 @@ export const BootstrapSchema = z.object({
 export type Bootstrap = z.infer<typeof BootstrapSchema>
 export type RuntimeDiagnostics = Bootstrap['startupDiagnostics']
 
+export const TaskScheduleSchema = z.enum(['idle', 'waiting', 'active'])
+export type TaskSchedule = z.infer<typeof TaskScheduleSchema>
+
 export const TaskSummarySchema = z.object({
   taskId: z.string().uuid(),
   title: z.string(),
   status: StageStatusSchema,
   revision: z.number().int().nonnegative(),
-  updatedAt: z.string().datetime({ offset: true })
+  updatedAt: z.string().datetime({ offset: true }),
+  schedule: TaskScheduleSchema.default('idle'),
+  waitingStage: StageIdSchema.optional()
 })
+
+export const PipelineActivitySchema = z.object({
+  limit: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  pools: z.record(z.enum(POOL_KINDS), z.object({
+    active: z.number().int().nonnegative(),
+    waiting: z.number().int().nonnegative()
+  }))
+})
+export type PipelineActivity = z.infer<typeof PipelineActivitySchema>
+
+export const IDLE_PIPELINE_ACTIVITY: PipelineActivity = {
+  limit: 3,
+  pools: Object.fromEntries(POOL_KINDS.map((kind) => [kind, { active: 0, waiting: 0 }])) as PipelineActivity['pools']
+}
 
 export const QueuePageSchema = z.object({
   items: z.array(TaskSummarySchema),
-  total: z.number().int().nonnegative()
+  total: z.number().int().nonnegative(),
+  activity: PipelineActivitySchema
 })
 export type QueuePage = z.infer<typeof QueuePageSchema>
 
@@ -256,6 +281,12 @@ export const ToolHealthSnapshotSchema = z.object({
 })
 export type ToolHealthSnapshot = z.infer<typeof ToolHealthSnapshotSchema>
 
+export const InstallableToolSchema = z.enum(['yt-dlp', 'ffmpeg', 'ffprobe', 'python', 'mlx_whisper'])
+export type InstallableTool = z.infer<typeof InstallableToolSchema>
+export const ToolInstallPayloadSchema = z.object({ tool: InstallableToolSchema })
+export const ToolInstallResultSchema = z.object({ outcome: z.enum(['launched', 'homebrew-missing']) })
+export type ToolInstallResult = z.infer<typeof ToolInstallResultSchema>
+
 export interface EtchApi {
   bootstrap(): Promise<Bootstrap>
   queuePage(offset?: number, limit?: number): Promise<QueuePage>
@@ -282,6 +313,7 @@ export interface EtchApi {
   getSettings(): Promise<AppSettings>
   updateSettings(settings: AppSettings): Promise<AppSettings>
   detectTools(): Promise<ToolHealthSnapshot[]>
+  installTool(tool: InstallableTool): Promise<ToolInstallResult>
   bilibiliAccount(): Promise<BilibiliAccount>
   startBilibiliQrLogin(): Promise<BilibiliQrState>
   pollBilibiliQrLogin(sessionId: string): Promise<BilibiliQrState>
@@ -293,8 +325,12 @@ export interface EtchApi {
   continueBilibiliPublication(taskId: string): Promise<TaskDetail>
   openBilibiliCreatorCenter(): Promise<void>
   setVideoFullscreen(fullscreen: boolean): Promise<void>
-  openFullDiskAccessSettings(): Promise<void>
+  requestChromeCookieAccess(): Promise<boolean>
+  chromeCookieAccess(): Promise<ChromeCookieAccess>
+  dismissFullDiskAccessGuide(): Promise<void>
+  relaunchApp(): Promise<void>
   onVideoFullscreenChanged(listener: (fullscreen: boolean) => void): () => void
+  onToolHealthChanged(listener: (health: ToolHealthSnapshot) => void): () => void
   onOpenSettings(listener: () => void): () => void
 }
 

@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { mkdir, readFile, realpath, rename, rm } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerSaveBlocker, safeStorage, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
-import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
-import { ToolIdSchema, type ToolId } from '../shared/settings-schema'
+import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, safeStorage, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
+import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
+import { ToolIdSchema, type ThemePreference, type ToolId } from '../shared/settings-schema'
 import { createTaskManifest, type ProviderId } from '../shared/task-schema'
+import { chromeCookieState, fullDiskAccessSettingsUrl } from './media/browser-cookies'
 import { IndexStore } from './storage/index-store'
 import { HiddenTaskStore } from './storage/hidden-task-store'
 import { LocationRegistry, discoverTasks } from './storage/location-registry'
@@ -21,6 +23,7 @@ import {
   providerEnvironment
 } from './runtime/shell-env'
 import { detectTool } from './runtime/tool-detector'
+import { toolInstallScript } from './runtime/tool-install'
 import { moveTaskToTrash, removeTaskRecord, revealTaskInFinder, type DeleteCleanupWarning } from './task-deletion'
 import { TaskReviewService } from './task-review'
 import { TaskThumbnailService } from './task-thumbnail'
@@ -28,7 +31,7 @@ import { RunRegistry } from './runtime/run-registry'
 import { removeStaleCodexTextOnlyExecutableSnapshots } from './providers/codex-capability'
 import { confirmProviderRecovery, recoverProviderRunsAtStartup } from './runtime/startup-recovery'
 import { runProcess, type ProcessSpec } from './runtime/process-runner'
-import { coordinateShutdown, handleShutdownResult, type ShutdownMode } from './runtime/shutdown-coordinator'
+import { ENVIRONMENT_RUN_STAGE, coordinateShutdown, handleShutdownResult, type ShutdownMode } from './runtime/shutdown-coordinator'
 import { PipelinePowerManager } from './runtime/power'
 import { TaskNotifier } from './runtime/task-notifier'
 import { AsyncRunScope } from './runtime/async-run-scope'
@@ -50,6 +53,7 @@ const TOOL_PROVIDER: Partial<Record<ToolId, ProviderId>> = {
   opencode: 'opencode'
 }
 let recoveryHold = false
+let publisherActive = false
 let interruptedTasks = 0
 let indexStore: IndexStore | undefined
 let appStateStore: AppStateStore | undefined
@@ -180,6 +184,35 @@ async function trashTaskDirectory(taskDirectory: string, support: string): Promi
   await rename(taskDirectory, join(trashRoot, `${basename(taskDirectory)}-${randomUUID()}`))
 }
 
+const HOMEBREW_CANDIDATES = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']
+
+// 窗口底色只在首帧前和缩放时可见，但它必须跟得上有效主题，
+// 否则浅色下启动会闪一下深底。取值与 app.css 的 --bg 两侧一致。
+const WINDOW_BACKGROUND = { dark: '#0b0d10', light: '#f2f5f8' } as const
+let themePreference: ThemePreference = 'system'
+
+function windowBackgroundColor(): string {
+  const dark = themePreference === 'system' ? nativeTheme.shouldUseDarkColors : themePreference === 'dark'
+  return dark ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light
+}
+
+function applyThemePreference(preference: ThemePreference): void {
+  themePreference = preference
+  const color = windowBackgroundColor()
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.setBackgroundColor(color)
+  }
+}
+
+nativeTheme.on('updated', () => applyThemePreference(themePreference))
+
+async function resolveHomebrew(): Promise<string | undefined> {
+  for (const candidate of HOMEBREW_CANDIDATES) {
+    try { await access(candidate, fsConstants.X_OK); return candidate } catch { /* keep searching */ }
+  }
+  return undefined
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1360,
@@ -187,7 +220,7 @@ function createWindow(): BrowserWindow {
     minWidth: 1040,
     minHeight: 680,
     title: 'Etch',
-    backgroundColor: '#0b0d10',
+    backgroundColor: windowBackgroundColor(),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 18, y: 18 },
     webPreferences: {
@@ -262,6 +295,7 @@ app.on('before-quit', (event) => {
     pipeline: activePipeline,
     runRegistry: activeRunRegistry,
     appRuns: activeAppRuns,
+    publicationActive: () => publisherActive,
     chooseMode: async (activeWorkers): Promise<ShutdownMode> => {
       const options: MessageBoxOptions = {
         type: 'warning',
@@ -307,17 +341,32 @@ app.on('activate', () => {
   else mainWindow.show()
 })
 
-ipcMain.handle('app:bootstrap', async () => BootstrapSchema.parse({
-  version: app.getVersion(),
-  arch: process.arch,
-  showFullDiskAccessOnboarding: await appStateStore?.claimFullDiskAccessOnboarding() ?? false,
-  startupDiagnostics: runtimeDiagnostics
-}))
+ipcMain.handle('app:bootstrap', async () => {
+  const access = (await chromeCookieState()).access
+  if (access === 'granted') {
+    await appStateStore?.setFullDiskAccessGuideDismissed(false)
+  }
+  const appState = await appStateStore?.load()
+  return BootstrapSchema.parse({
+    version: app.getVersion(),
+    arch: process.arch,
+    showFullDiskAccessOnboarding: access === 'denied' && !(appState?.fullDiskAccessGuideDismissed ?? true),
+    chromeCookieAccess: access,
+    startupDiagnostics: runtimeDiagnostics
+  })
+})
 
 function queuePage(offset = 0, limit = 100): unknown {
   if (!indexStore) throw new Error('Etch 尚未初始化')
-  const items = indexStore.list(Math.min(Math.max(limit, 1), 100), Math.max(offset, 0)).map(({ taskId, title, status, revision, updatedAt }) => ({ taskId, title, status, revision, updatedAt }))
-  return QueuePageSchema.parse({ items, total: indexStore.count() })
+  const items = indexStore.list(Math.min(Math.max(limit, 1), 100), Math.max(offset, 0)).map(({ taskId, title, status, revision, updatedAt, location }) => ({
+    taskId,
+    title,
+    status,
+    revision,
+    updatedAt,
+    ...(activePipeline?.taskSchedule(location) ?? { schedule: 'idle' })
+  }))
+  return QueuePageSchema.parse({ items, total: indexStore.count(), activity: activePipeline?.activity() ?? IDLE_PIPELINE_ACTIVITY })
 }
 
 function assertRecoveryReleased(): void {
@@ -351,7 +400,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const taskId = randomUUID()
     const appInstanceToken = runRegistry.appInstanceToken
     return appRuns.track(runProcess(spec, {
-      started: async (pid, executable) => runRegistry.register({ runId, appInstanceToken, pid, pgid: pid, executable, taskId, stage: 'environment' }).then(() => undefined),
+      started: async (pid, executable) => runRegistry.register({ runId, appInstanceToken, pid, pgid: pid, executable, taskId, stage: ENVIRONMENT_RUN_STAGE }).then(() => undefined),
       finished: () => runRegistry.finish(runId)
     }, { runId, appInstanceToken }))
   }
@@ -363,6 +412,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   }
   const settingsStore = new SettingsStore(join(support, 'settings.json'), app.getPath('home'))
   const settings = await settingsStore.load()
+  applyThemePreference(settings.theme)
   const bilibiliAccountStore = new BilibiliAccountStore(join(support, 'bilibili-account.json'), safeStorage)
   const bilibiliFetch: typeof fetch = process.env.ETCH_E2E_HERMETIC === '1' && process.env.ETCH_E2E_BILIBILI_NETWORK !== '1'
     ? async (input, init) => {
@@ -380,7 +430,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
         }
       })
       if (url.includes('/x/space/myinfo')) return json({ code: 0, data: { mid: 123, name: 'Etch E2E' } })
-      if (url.includes('/x/vupre/web/archive/pre')) return json({ code: 0, data: { typelist: [{ id: 160, name: '生活', children: [{ id: 21, name: '日常' }, { id: 138, name: '搞笑' }] }] } })
+      if (url.includes('/x/vupre/web/archive/pre')) return json({ code: 0, data: { typelist: [{ id: 160, name: '生活', children: [{ id: 21, name: '日常' }, { id: 138, name: '搞笑' }] }, { id: 1, name: '动画', children: [{ id: 24, name: 'MAD·AMV' }, { id: 27, name: '综合' }] }] } })
       return fetch(input, init)
     }
     : fetch
@@ -451,11 +501,13 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     }
   }
   let pipelineWorkerCount = 0
-  let publisherActive = false
   const syncPowerWorkers = (): void => powerManager.setActiveWorkers(pipelineWorkerCount + (publisherActive ? 1 : 0))
   const pipeline = new TaskPipeline(taskStore, settings, historicalGlossary, publishManifest, runRegistry, (count) => {
     pipelineWorkerCount = count
     syncPowerWorkers()
+  }, (health) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('tools:health-changed', ToolHealthSnapshotSchema.parse(health))
   })
   activePipeline = pipeline
   const sidecarPath = app.isPackaged
@@ -686,6 +738,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const next = AppSettingsSchema.parse(raw)
     await settingsStore.save(next)
     Object.assign(settings, next)
+    applyThemePreference(next.theme)
     pipeline.setQueuePaused(next.queuePaused)
     powerManager.setEnabled(next.preventSleep)
     await mkdir(next.workspaceRoot, { recursive: true })
@@ -703,6 +756,21 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       return detectTool(tool, env, settings.toolOverrides[tool], runAppScopedExternal)
     }))
     return results.map((health) => ToolHealthSnapshotSchema.parse(health))
+  })
+  ipcMain.handle('tools:install', async (_event, raw) => {
+    const { tool } = ToolInstallPayloadSchema.parse(raw)
+    const brew = await resolveHomebrew()
+    if (!brew) {
+      await shell.openExternal('https://brew.sh')
+      return ToolInstallResultSchema.parse({ outcome: 'homebrew-missing' })
+    }
+    const scriptDirectory = join(support, 'tool-install')
+    await mkdir(scriptDirectory, { recursive: true })
+    const scriptPath = join(scriptDirectory, `install-${tool}.command`)
+    await writeFile(scriptPath, toolInstallScript(tool, brew), { mode: 0o755 })
+    const failure = await shell.openPath(scriptPath)
+    if (failure) throw new Error(`无法在终端启动安装：${failure}`)
+    return ToolInstallResultSchema.parse({ outcome: 'launched' })
   })
   ipcMain.handle('bilibili:account', async () => BilibiliAccountSchema.parse(await bilibiliAuth.account()))
   ipcMain.handle('bilibili:qr-start', async () => BilibiliQrStateSchema.parse(await bilibiliAuth.startQrLogin()))
@@ -764,7 +832,24 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (!owner || owner.isDestroyed()) return
     setVideoFullscreen(owner, fullscreen)
   })
-  ipcMain.handle('permissions:open-full-disk-access-settings', () => shell.openExternal('x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles'))
+  ipcMain.handle('permissions:request-chrome-cookie-access', async () => {
+    await shell.openExternal(fullDiskAccessSettingsUrl())
+    await appStateStore?.setFullDiskAccessGuideDismissed(true)
+    return true
+  })
+  ipcMain.handle('permissions:chrome-cookie-access', async () => {
+    const access = (await chromeCookieState()).access
+    if (access === 'granted') {
+      await appStateStore?.setFullDiskAccessGuideDismissed(false)
+    }
+    return ChromeCookieAccessSchema.parse(access)
+  })
+  ipcMain.handle('permissions:dismiss-full-disk-access-guide', () => appStateStore!.setFullDiskAccessGuideDismissed(true))
+  ipcMain.handle('permissions:relaunch-app', () => {
+    // TCC 授权按进程评估，必须整个 App 重建进程才能生效。
+    app.relaunch()
+    app.quit()
+  })
   ipcMain.handle('task:create-urls', async (_event, raw) => {
     const payload = CreateUrlsSchema.parse(raw)
     for (const url of payload.urls) {

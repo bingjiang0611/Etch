@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg"><strong>Download the v0.1.2 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.24/Etch-0.1.24-arm64.dmg"><strong>Download the v0.1.24 DMG</strong></a>
   ·
   <a href="#start-in-3-steps">Start in 3 steps</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.2 · Apple Silicon · macOS 13.5+ · HTTP(S) URL input · public DMG includes Bilibili publishing</sub>
+  <sub>v0.1.24 · Apple Silicon · macOS 13.5+ · HTTP(S) URL input · public DMG includes Bilibili publishing</sub>
 </p>
 
 ## A reviewable, recoverable video pipeline
@@ -45,11 +45,11 @@ Etch does not reduce long-video translation to one opaque “Generate with AI”
 
 ### 1. Install
 
-1. Download `Etch-0.1.2-arm64.dmg` from [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest).
+1. Download `Etch-0.1.24-arm64.dmg` from [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest).
 2. Open the DMG and drag `Etch.app` into `Applications`.
 3. If Gatekeeper blocks the first launch, right-click Etch in Finder and choose **Open**. If it is still blocked, use **System Settings → Privacy & Security → Open Anyway**.
 
-> The current DMG is not notarized by Apple. It uses an ad-hoc signature rather than an Apple Developer ID. A DMG is only an installation container and does not bypass Gatekeeper.
+> The current DMG is not notarized by Apple. It uses an Apple Development signature rather than an Apple Developer ID. A DMG is only an installation container and does not bypass Gatekeeper.
 
 ### 2. Check local tools
 
@@ -67,7 +67,7 @@ If a tool is not on the normal `PATH`, set its absolute executable path in Setti
 
 Paste 1–50 HTTP(S) video URLs into the task queue, choose a Provider, and optionally describe the translation style. A task can be stopped and later resumed from its last committed stage.
 
-Current release: `0.1.2`. Input is limited to **HTTP(S) URLs**; local file import remains planned. GitHub Releases provides an Apple Silicon DMG.
+Current release: `0.1.24`. Input is limited to **HTTP(S) URLs**; local file import remains planned. GitHub Releases provides an Apple Silicon DMG.
 
 ## Publish to Bilibili
 
@@ -76,7 +76,7 @@ Current release: `0.1.2`. Input is limited to **HTTP(S) URLs**; local file impor
 </p>
 
 <p align="center">
-  <sub>Real publication UI from v0.1.2, shown with a hermetic fixture; it does not prove an end-to-end publication with a real Bilibili account.</sub>
+  <sub>Real publication UI from v0.1.11, shown with a hermetic fixture; it does not prove an end-to-end publication with a real Bilibili account.</sub>
 </p>
 
 First connect a Bilibili account with publishing permission via QR code under **Settings → Bilibili publishing**, then configure the default category, tags, and description template. You can then:
@@ -100,7 +100,7 @@ The publishing path requires no Bilibili Open Platform application and does not 
 | --- | --- | --- |
 | Implemented | URL to bilingual hard-subtitle video | Subtitle retrieval/local transcription, four Agent CLIs, terminology audit, cue-by-cue review, bilingual SRT generation, FFmpeg rendering, and ffprobe verification. |
 | Implemented | Recoverable tasks | `task.json` is authoritative; artifact commits are guarded by lease, revision, and fingerprint checks. |
-| Implemented | Direct Bilibili publishing | The public v0.1.2 DMG includes single-account QR login, manual/automatic publishing, one concurrent publication, and verifiable receipts. Real-account L3 publishing remains unverified. |
+| Implemented | Direct Bilibili publishing | The public v0.1.11 DMG includes single-account QR login, manual/automatic publishing, one concurrent publication, and verifiable receipts. Real-account L3 publishing remains unverified. |
 | Partial | Providers, long media, and public distribution | Automated tests cover all four Provider protocols, but real accounts and current server behavior require on-machine verification. There is no global disk budget, Developer ID signing, notarization, or auto-update. |
 | Planned | Local file import | The schema reserves this input type, but the UI, APFS clone/copy, space checks, and recovery path are not implemented. |
 
@@ -117,7 +117,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` builds and verifies `dist/mac-arm64/Etch.app`; `npm run dist:mac` builds, mounts, and verifies `dist/Etch-0.1.2-arm64.dmg`. DMG verification covers the mounted-volume allowlist, app signature, entitlements, arm64 architecture, version, minimum macOS version, and the pinned `biliup` sidecar's architecture, version, executable permissions, and SHA-256.
+`npm run pack` builds and verifies `dist/mac-arm64/Etch.app`; `npm run dist:mac` builds, mounts, and verifies `dist/Etch-0.1.24-arm64.dmg`. DMG verification covers the mounted-volume allowlist, app signature, entitlements, arm64 architecture, version, minimum macOS version, and the pinned `biliup` sidecar's architecture, version, executable permissions, and SHA-256.
 
 </details>
 

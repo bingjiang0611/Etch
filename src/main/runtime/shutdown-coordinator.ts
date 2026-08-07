@@ -1,7 +1,9 @@
 export type ShutdownMode = 'cancel' | 'drain-current-stage' | 'stop-now'
 
+export const ENVIRONMENT_RUN_STAGE = 'environment'
+
 export interface ShutdownPipeline {
-  readonly runningCount: number
+  readonly activeStageCount: number
   freezeAcquisition(): void
   thawAcquisition(): void
   whenIdle(): Promise<void>
@@ -9,11 +11,11 @@ export interface ShutdownPipeline {
 }
 
 export interface ShutdownRunRegistry {
-  activeCurrent(): Promise<unknown[]>
+  activeCurrent(): Promise<Array<{ stage: string }>>
+  stopCurrent(): Promise<number>
 }
 
 export interface ShutdownAsyncRuns {
-  readonly runningCount: number
   whenIdle(): Promise<void>
 }
 
@@ -26,16 +28,19 @@ export async function coordinateShutdown(options: {
   pipeline: ShutdownPipeline
   runRegistry: ShutdownRunRegistry
   appRuns: ShutdownAsyncRuns
+  publicationActive(): boolean
   chooseMode(activeWorkers: number): Promise<ShutdownMode>
   markCleanExit(): Promise<void>
   stopTimeoutMs?: number
 }): Promise<ShutdownResult> {
   options.pipeline.freezeAcquisition()
   try {
+    const taskRunCount = async (): Promise<number> =>
+      (await options.runRegistry.activeCurrent()).filter((run) => run.stage !== ENVIRONMENT_RUN_STAGE).length
     const activeWorkers = Math.max(
-      options.pipeline.runningCount,
-      options.appRuns.runningCount,
-      (await options.runRegistry.activeCurrent()).length
+      options.pipeline.activeStageCount,
+      options.publicationActive() ? 1 : 0,
+      await taskRunCount()
     )
     const mode = activeWorkers ? await options.chooseMode(activeWorkers) : 'drain-current-stage'
     if (mode === 'cancel') {
@@ -48,13 +53,20 @@ export async function coordinateShutdown(options: {
         options.pipeline.stopAllNow(),
         options.appRuns.whenIdle()
       ]).then(() => undefined), options.stopTimeoutMs ?? 15_000)
-    } else {
+    } else if (activeWorkers) {
       await Promise.all([options.pipeline.whenIdle(), options.appRuns.whenIdle()])
+    } else {
+      await withTimeout(
+        Promise.all([options.pipeline.whenIdle(), options.appRuns.whenIdle()]).then(() => undefined),
+        options.stopTimeoutMs ?? 15_000
+      ).catch((error) => console.warn('退出前空闲收敛超时，改按真实在途工作判定', error))
     }
 
-    const remainingRuns = await options.runRegistry.activeCurrent()
-    if (options.pipeline.runningCount !== 0 || options.appRuns.runningCount !== 0 || remainingRuns.length !== 0) {
-      throw new Error(`退出收敛失败：仍有 ${options.pipeline.runningCount} 个流水线任务、${options.appRuns.runningCount} 个应用级调用、${remainingRuns.length} 个外部进程`)
+    if ((await options.runRegistry.activeCurrent()).length) await options.runRegistry.stopCurrent()
+
+    const remainingTaskRuns = await taskRunCount()
+    if (options.pipeline.activeStageCount !== 0 || options.publicationActive() || remainingTaskRuns !== 0) {
+      throw new Error(`退出收敛失败：仍有 ${options.pipeline.activeStageCount} 个执行中阶段、${options.publicationActive() ? 1 : 0} 个投稿任务、${remainingTaskRuns} 个任务外部进程`)
     }
     await options.markCleanExit()
     return { state: 'clean' }

@@ -12,4 +12,17 @@ describe('settings schema', () => {
     delete legacy.globalGlossary
     expect(AppSettingsSchema.parse(legacy).globalGlossary).toEqual({})
   })
+
+  it('defaults a missing theme preference to following the system appearance', () => {
+    const legacy = { ...defaultSettings('/Users/test') } as Partial<ReturnType<typeof defaultSettings>>
+    delete legacy.theme
+    expect(AppSettingsSchema.parse(legacy).theme).toBe('system')
+  })
+
+  it('keeps an explicit theme preference and rejects unknown values', () => {
+    const base = defaultSettings('/Users/test')
+    expect(AppSettingsSchema.parse({ ...base, theme: 'light' }).theme).toBe('light')
+    expect(AppSettingsSchema.parse({ ...base, theme: 'dark' }).theme).toBe('dark')
+    expect(() => AppSettingsSchema.parse({ ...base, theme: 'sepia' })).toThrow()
+  })
 })

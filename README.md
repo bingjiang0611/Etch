@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg"><strong>下载 v0.1.2 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.24/Etch-0.1.24-arm64.dmg"><strong>下载 v0.1.24 DMG</strong></a>
   ·
   <a href="#3-步开始">3 步开始</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.2 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 输入 · 公开 DMG 已含 B站投稿</sub>
+  <sub>v0.1.24 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 输入 · 公开 DMG 已含 B站投稿</sub>
 </p>
 
 ## 一条可审阅、可恢复的成片流水线
@@ -45,11 +45,11 @@ Etch 不把长视频翻译伪装成一次不可见的“AI 生成”。每个任
 
 ### 1. 安装
 
-1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.2-arm64.dmg`。
+1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.24-arm64.dmg`。
 2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
 3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
 
-> 当前 DMG 未经 Apple 公证，使用 ad-hoc 签名，尚未使用 Apple Developer ID。DMG 只是安装容器，不会绕过 Gatekeeper。
+> 当前 DMG 未经 Apple 公证，使用 Apple Development 开发签名，尚未使用 Apple Developer ID。DMG 只是安装容器，不会绕过 Gatekeeper。
 
 ### 2. 检查本地工具
 
@@ -67,7 +67,7 @@ Etch 启动后会自动检测可执行文件、版本、关键能力和登录状
 
 在任务队列粘贴 1–50 个 HTTP(S) 视频 URL，选择 Provider，并按需填写翻译风格。任务可以停止，之后从最后已提交阶段继续。
 
-当前版本：`0.1.2`。当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。GitHub Release 提供 Apple Silicon DMG。
+当前版本：`0.1.24`。当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。GitHub Release 提供 Apple Silicon DMG。
 
 ## 投稿到 B站
 
@@ -76,7 +76,7 @@ Etch 启动后会自动检测可执行文件、版本、关键能力和登录状
 </p>
 
 <p align="center">
-  <sub>v0.1.2 真实投稿确认界面；使用 hermetic fixture，不代表真实 B站账号端到端投稿已通过。</sub>
+  <sub>v0.1.11 真实投稿确认界面；使用 hermetic fixture，不代表真实 B站账号端到端投稿已通过。</sub>
 </p>
 
 先在“设置 → B站投稿”使用具备投稿权限的账号扫码登录，并填写默认分区、标签和简介模板。完成后可以：
@@ -100,7 +100,7 @@ Etch 启动后会自动检测可执行文件、版本、关键能力和登录状
 | --- | --- | --- |
 | Implemented | URL 到双语硬字幕成片 | 字幕获取/本地转写、四个 Agent CLI、术语审计、逐句校对、双语 SRT、FFmpeg 压制与 ffprobe 验证。 |
 | Implemented | 可恢复任务 | `task.json` 是权威状态；产物提交受 lease、revision 与 fingerprint 约束。 |
-| Implemented | B站直连投稿 | 公开 DMG 已包含 B站投稿：v0.1.2 支持单账号扫码登录、手动/自动投稿、单并发和可验证回执；真实账号 L3 投稿尚未验证。 |
+| Implemented | B站直连投稿 | 公开 DMG 已包含 B站投稿：v0.1.11 支持单账号扫码登录、手动/自动投稿、单并发和可验证回执；真实账号 L3 投稿尚未验证。 |
 | Partial | Provider、长媒体与公开发行 | 四端协议有自动化覆盖，但真实账号/服务端仍需当机验证；尚无全局磁盘预算、Developer ID、公证或自动更新。 |
 | Planned | 本地文件导入 | Schema 已预留，但 UI、APFS clone/copy、空间检查和恢复链路尚未实现。 |
 
@@ -117,7 +117,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.1.2-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
+`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.1.24-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
 
 </details>
 

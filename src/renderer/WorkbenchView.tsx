@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { BilibiliAccount } from '../shared/bilibili'
-import type { GlossaryApplyResult, GlossaryImpactPreview, TaskDetail, TaskReviewPage } from '../shared/ipc'
-import { STAGE_ORDER } from '../shared/pipeline'
+import type { GlossaryApplyResult, GlossaryImpactPreview, ChromeCookieAccess, PipelineActivity, TaskDetail, TaskReviewPage } from '../shared/ipc'
+import { POOL_BY_STAGE, POOL_LABELS, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
-import { taskInputName } from '../shared/task-schema'
+import { taskInputName, type StageId } from '../shared/task-schema'
 import { AuditGlossary, type GlossaryEdit } from './AuditGlossary'
 import {
   Icon,
@@ -59,15 +59,19 @@ interface WorkbenchViewProps {
   savingPreset: boolean
   glossaryBusy: boolean
   selectedIsRunning: boolean
+  selectedWaitingStage: StageId | undefined
+  activity: PipelineActivity
   selectedIsPaused: boolean
   stoppingTask: boolean
   publicationActionBusy: boolean
   bilibiliAccount: BilibiliAccount
   needsRebuild: boolean
+  chromeCookieAccess: ChromeCookieAccess
   videoRef: RefObject<HTMLVideoElement | null>
   onBack: () => void
   onStart: () => Promise<void>
   onStop: () => Promise<void>
+  onOpenPermissionGuide: () => void
   onPublish: () => void
   onStopPublication: () => Promise<void>
   onContinuePublication: () => Promise<void>
@@ -271,15 +275,19 @@ export function WorkbenchView({
   savingPreset,
   glossaryBusy,
   selectedIsRunning,
+  selectedWaitingStage,
+  activity,
   selectedIsPaused,
   stoppingTask,
   publicationActionBusy,
   bilibiliAccount,
   needsRebuild,
+  chromeCookieAccess,
   videoRef,
   onBack,
   onStart,
   onStop,
+  onOpenPermissionGuide,
   onPublish,
   onStopPublication,
   onContinuePublication,
@@ -317,7 +325,11 @@ export function WorkbenchView({
   const reviewStage = selected ? getStage(selected, 'review') : undefined
   const reviewCheckpoint = reviewStage?.status === 'checkpoint' && reviewStage.checkpointId === 'manual-review'
   const reviewCheckpointKey = reviewCheckpoint && reviewStage ? `${selected?.manifest.taskId}:${reviewStage.checkpointId}:${reviewStage.attempt}` : undefined
+  const sourceStage = selected ? getStage(selected, 'source') : undefined
+  const showChromeLoginHelp = sourceStage?.status === 'failed' && chromeCookieAccess !== 'granted'
   const verifyCompleted = selected ? getStage(selected, 'verify').status === 'completed' : false
+  const waitingPool = selectedWaitingStage ? POOL_BY_STAGE[selectedWaitingStage] : undefined
+  const waitingOccupancy = waitingPool ? activity.pools[waitingPool] : undefined
   const publication = selected?.manifest.publication
   const publicationRunning = publication ? ['queued', 'uploading', 'submitting'].includes(publication.status) : false
   const publicationCanContinue = publication ? ['paused', 'failed'].includes(publication.status) && Boolean(publication.draft) : false
@@ -339,6 +351,8 @@ export function WorkbenchView({
       ? completingReview ? '正在继续…' : '完成校对并继续'
       : selectedIsRunning
         ? stoppingTask ? '正在停止…' : '停止处理'
+        : selectedWaitingStage
+          ? stoppingTask ? '正在退出排队…' : '退出排队'
         : selectedIsPaused
           ? '继续处理'
         : needsRebuild
@@ -349,7 +363,7 @@ export function WorkbenchView({
     ? true
     : reviewCheckpoint
       ? reviewCompletionBlocked
-      : selectedIsRunning
+      : selectedIsRunning || selectedWaitingStage
         ? stoppingTask
       : resolvingAudit || savingCues || Boolean(dirtyCount) || glossaryBusy || (verifyCompleted && !needsRebuild)
   const seekVideo = (startMs: number, play = false): void => {
@@ -451,14 +465,14 @@ export function WorkbenchView({
               {workspaceTab === 'glossary' ? '返回字幕校对' : '查看审计术语表'}
             </button>
             <button
-              className={selectedIsRunning ? 'danger-button wb-stop-button' : 'primary-button'}
+              className={selectedIsRunning || selectedWaitingStage ? 'danger-button wb-stop-button' : 'primary-button'}
               type="button"
               disabled={primaryActionDisabled}
               onClick={() => {
-                void (selectedIsRunning ? onStop() : reviewCheckpoint ? onCompleteReview() : onStart())
+                void (selectedIsRunning || selectedWaitingStage ? onStop() : reviewCheckpoint ? onCompleteReview() : onStart())
               }}
             >
-              {selectedIsRunning && <Icon name="pause" />}
+              {(selectedIsRunning || selectedWaitingStage) && <Icon name="pause" />}
               {primaryActionLabel}
             </button>
           </div>
@@ -467,6 +481,33 @@ export function WorkbenchView({
           <p className="task-action-error" role="alert">
             {taskActionError}
           </p>
+        )}
+        {selectedWaitingStage && waitingPool && waitingOccupancy && (
+          <div className="permission-banner" role="status">
+            <Icon name="warning" />
+            <div>
+              <strong>{POOL_LABELS[waitingPool]}并发已满（{waitingOccupancy.active}/{activity.limit} 运行中）</strong>
+              <span>
+                本任务的「{stageLabels[selectedWaitingStage]}」阶段已排队，其他任务释放槽位后会自动继续。
+                {waitingOccupancy.waiting > 1 ? `同一个池里还有 ${waitingOccupancy.waiting - 1} 个任务在等。` : ''}
+                想提前抢到槽位，可以先停止其他占用该阶段的任务。
+              </span>
+            </div>
+          </div>
+        )}
+        {showChromeLoginHelp && (
+          <div className="permission-banner" role="status">
+            <Icon name="warning" />
+            <div>
+              <strong>{chromeCookieAccess === 'denied' ? 'Etch 未获授权读取 Chrome 登录状态' : '本机未找到 Chrome 登录资料'}</strong>
+              <span>
+                {chromeCookieAccess === 'denied'
+                  ? '需要登录验证的 YouTube 视频会一直失败，完成系统授权后重试即可。'
+                  : '请先安装 Chrome 并登录 YouTube，再重试此任务。'}
+              </span>
+            </div>
+            <button className="secondary-button" type="button" onClick={onOpenPermissionGuide}>解决办法</button>
+          </div>
         )}
         {publication && (publication.autoPublish || publication.status !== 'idle') && (
           <div className="publication-status-banner" data-status={publication.status} role="status">
@@ -556,7 +597,7 @@ export function WorkbenchView({
                       {stage.attempt > 1 && <span className="rail-attempt">×{stage.attempt}</span>}
                       <span className="rail-dot">{stage.status === 'completed' ? <Icon name="check" /> : String(index + 1).padStart(2, '0')}</span>
                       <span className="rail-label">{stageLabels[id]}</span>
-                      <span className="rail-sub">{stageSubLabel(selected, id, stage)}</span>
+                      <span className="rail-sub" title={stageSubLabel(selected, id, stage) || undefined}>{stageSubLabel(selected, id, stage)}</span>
                       {stage.status === 'running' && (
                         <span className="rail-progress">
                           <i style={{ width: `${Math.round((stage.progress ?? 0) * 100)}%` }} />
@@ -569,11 +610,12 @@ export function WorkbenchView({
               <div className="pipeline-pools">
                 {pools.map((pool) => {
                   const status = poolState(selected, pool)
+                  const queued = pool === waitingPool
                   return (
                     <span className="pool-tag" key={pool}>
-                      <span className="dot" data-status={status} />
+                      <span className="dot" data-status={queued ? 'queued' : status} />
                       <b>{pool}</b>
-                      {poolStateLabel(status)}
+                      {queued ? '排队中' : poolStateLabel(status)}
                     </span>
                   )
                 })}

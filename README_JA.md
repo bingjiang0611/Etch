@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg"><strong>v0.1.2 DMG をダウンロード</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.24/Etch-0.1.24-arm64.dmg"><strong>v0.1.24 DMG をダウンロード</strong></a>
   ·
   <a href="#3-ステップで開始">3 ステップで開始</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.2 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 入力 · 公開 DMG に Bilibili 投稿機能を収録</sub>
+  <sub>v0.1.24 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 入力 · 公開 DMG に Bilibili 投稿機能を収録</sub>
 </p>
 
 ## 確認でき、途中から再開できる動画制作フロー
@@ -45,11 +45,11 @@ Etch は、長尺動画の翻訳を中身の見えない一度きりの「AI 生
 
 ### 1. インストール
 
-1. [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) から `Etch-0.1.2-arm64.dmg` をダウンロードします。
+1. [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) から `Etch-0.1.24-arm64.dmg` をダウンロードします。
 2. DMG を開き、`Etch.app` を `Applications` にドラッグします。
 3. 初回起動時に Gatekeeper でブロックされた場合は、Finder で Etch を右クリックして「開く」を選択します。それでも開けない場合は、「システム設定 → プライバシーとセキュリティ」から「このまま開く」を選びます。
 
-> 現在の DMG は Apple の公証を受けておらず、Apple Developer ID ではなく ad-hoc 署名を使用しています。DMG はインストール用コンテナであり、Gatekeeper を回避するものではありません。
+> 現在の DMG は Apple の公証を受けておらず、Apple Developer ID ではなく Apple Development 開発署名を使用しています。DMG はインストール用コンテナであり、Gatekeeper を回避するものではありません。
 
 ### 2. ローカルツールを確認
 
@@ -67,7 +67,7 @@ Etch は起動時に、実行ファイル、バージョン、必要な機能、
 
 タスクキューに 1～50 件の HTTP(S) 動画 URL を貼り付け、Provider を選び、必要に応じて翻訳スタイルを入力します。実行中のタスクは停止でき、最後に確定した段階から再開できます。
 
-現在のバージョンは `0.1.2` です。入力は **HTTP(S) URL のみ**で、ローカルファイルの取り込みはまだ計画段階です。GitHub Releases から Apple Silicon 用 DMG を配布しています。
+現在のバージョンは `0.1.24` です。入力は **HTTP(S) URL のみ**で、ローカルファイルの取り込みはまだ計画段階です。GitHub Releases から Apple Silicon 用 DMG を配布しています。
 
 ## Bilibili へ投稿
 
@@ -76,7 +76,7 @@ Etch は起動時に、実行ファイル、バージョン、必要な機能、
 </p>
 
 <p align="center">
-  <sub>v0.1.2 の実際の投稿確認画面。hermetic fixture を使用しており、実アカウントによる Bilibili へのエンドツーエンド投稿成功を示すものではありません。</sub>
+  <sub>v0.1.11 の実際の投稿確認画面。hermetic fixture を使用しており、実アカウントによる Bilibili へのエンドツーエンド投稿成功を示すものではありません。</sub>
 </p>
 
 まず「設定 → B站投稿」で、投稿権限のあるアカウントを QR コードで接続し、既定のカテゴリ、タグ、説明文テンプレートを設定します。その後、次の操作ができます。
@@ -100,7 +100,7 @@ Etch は起動時に、実行ファイル、バージョン、必要な機能、
 | --- | --- | --- |
 | Implemented | URL から英中字幕の焼き込み済み動画まで | 字幕取得またはローカル文字起こし、4 種類の Agent CLI、用語監査、cue ごとの校正、英中 SRT、FFmpeg 焼き込み、ffprobe 検証に対応。 |
 | Implemented | 再開可能なタスク | `task.json` を正本とし、成果物の確定を lease、revision、fingerprint で保護。 |
-| Implemented | Bilibili への直接投稿 | 公開 v0.1.2 DMG に、1 アカウントの QR コード接続、手動・自動投稿、同時 1 件の投稿、検証可能なレシートを収録。実アカウントによる L3 投稿は未検証。 |
+| Implemented | Bilibili への直接投稿 | 公開 v0.1.11 DMG に、1 アカウントの QR コード接続、手動・自動投稿、同時 1 件の投稿、検証可能なレシートを収録。実アカウントによる L3 投稿は未検証。 |
 | Partial | Provider、長尺メディア、一般配布 | 4 種類のプロトコルは自動テスト済みですが、実アカウントと現在のサーバー挙動は端末ごとの確認が必要です。全体ディスク予算、Developer ID、公証、自動更新は未実装。 |
 | Planned | ローカルファイルの取り込み | Schema は予約済みですが、UI、APFS clone/copy、空き容量チェック、復旧経路は未実装。 |
 
@@ -117,7 +117,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` は `dist/mac-arm64/Etch.app` を構築・検証し、`npm run dist:mac` は `dist/Etch-0.1.2-arm64.dmg` を構築、マウント、検証します。DMG 検証では、ボリューム内の allowlist、App の署名、entitlements、arm64 アーキテクチャ、バージョン、最低 macOS バージョンに加え、固定版 `biliup` sidecar のアーキテクチャ、バージョン、実行権限、SHA-256 を確認します。
+`npm run pack` は `dist/mac-arm64/Etch.app` を構築・検証し、`npm run dist:mac` は `dist/Etch-0.1.24-arm64.dmg` を構築、マウント、検証します。DMG 検証では、ボリューム内の allowlist、App の署名、entitlements、arm64 アーキテクチャ、バージョン、最低 macOS バージョンに加え、固定版 `biliup` sidecar のアーキテクチャ、バージョン、実行権限、SHA-256 を確認します。
 
 </details>
 

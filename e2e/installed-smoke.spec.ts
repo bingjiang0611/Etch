@@ -52,7 +52,7 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
     schemaVersion: 1,
     cleanExit: true,
     recoveryHold: false,
-    fullDiskAccessOnboardingShown: true,
+    fullDiskAccessGuideDismissed: true,
     updatedAt: new Date().toISOString()
   }, null, 2)}\n`, 'utf8')
 
@@ -60,19 +60,23 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
   try {
     let window = await application.firstWindow()
     await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
-    expect(await window.evaluate(async () => ({
+    const packagedApi = await window.evaluate(async () => ({
       createUrls: typeof window.etch?.createUrls,
       queuePage: typeof window.etch?.queuePage,
       getSettings: typeof window.etch?.getSettings,
       bilibiliAccount: typeof window.etch?.bilibiliAccount,
       publishToBilibili: typeof window.etch?.publishToBilibili,
+      requestChromeCookieAccess: typeof window.etch?.requestChromeCookieAccess,
+      bootstrap: await window.etch.bootstrap(),
       account: await window.etch.bilibiliAccount()
-    }))).toEqual({
+    }))
+    expect(packagedApi).toMatchObject({
       createUrls: 'function',
       queuePage: 'function',
       getSettings: 'function',
       bilibiliAccount: 'function',
       publishToBilibili: 'function',
+      requestChromeCookieAccess: 'function',
       account: { status: 'disconnected' }
     })
     expect(await application.evaluate(({ Menu }) => {

@@ -1,4 +1,4 @@
-import { POOL_BY_STAGE } from '../../shared/pipeline'
+import { POOL_BY_STAGE, POOL_KINDS, type PoolKind } from '../../shared/pipeline'
 import type { StageId } from '../../shared/task-schema'
 
 type PoolWaiter = {
@@ -22,6 +22,8 @@ class BoundedPool {
 
   constructor(limit: 1 | 2 | 3) { this.#limit = limit }
   setLimit(limit: 1 | 2 | 3): void { this.#limit = limit; this.#drain() }
+  get active(): number { return this.#active }
+  get waiting(): number { return this.#queue.length }
 
   async run<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) throw new PoolCancelledError()
@@ -64,12 +66,19 @@ class BoundedPool {
   }
 }
 
-type PoolKind = 'download' | 'whisper' | 'agent' | 'ffmpeg' | 'audit'
+type PoolOccupancy = { active: number; waiting: number }
 
 export class StagePools {
   readonly #pools: Record<PoolKind, BoundedPool>
   constructor(limit: 1 | 2 | 3) {
-    this.#pools = Object.fromEntries(['download', 'whisper', 'agent', 'ffmpeg', 'audit'].map((key) => [key, new BoundedPool(limit)])) as Record<PoolKind, BoundedPool>
+    this.#pools = Object.fromEntries(POOL_KINDS.map((key) => [key, new BoundedPool(limit)])) as Record<PoolKind, BoundedPool>
+  }
+  hasFreeSlot(stage: StageId, limit: 1 | 2 | 3): boolean {
+    const kind = POOL_BY_STAGE[stage]
+    return kind ? this.#pools[kind].active < limit : true
+  }
+  occupancy(): Record<PoolKind, PoolOccupancy> {
+    return Object.fromEntries(POOL_KINDS.map((kind) => [kind, { active: this.#pools[kind].active, waiting: this.#pools[kind].waiting }])) as Record<PoolKind, PoolOccupancy>
   }
   runStage<T>(stage: StageId, limit: 1 | 2 | 3, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const kind = POOL_BY_STAGE[stage]

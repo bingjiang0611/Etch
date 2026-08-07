@@ -70,10 +70,14 @@ async function quitApplication(application: ElectronApplication): Promise<void> 
   await exited
 }
 
-test('shows the Full Disk Access guide only on the first launch', async () => {
+test('shows the Chrome cookie access guide only on the first launch', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'etch-onboarding-e2e-'))
   const workspaceRoot = join(userData, 'workspace')
-  await mkdir(workspaceRoot)
+  const chromeDirectory = join(userData, 'home/Library/Application Support/Google/Chrome')
+  await Promise.all([mkdir(workspaceRoot), mkdir(chromeDirectory, { recursive: true })])
+  const localState = join(chromeDirectory, 'Local State')
+  await writeFile(localState, '{"profile":{"last_used":"Default"}}')
+  await chmod(localState, 0o000)
   await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
   try {
     const firstLaunch = await launchHermeticEtch(userData)
@@ -81,12 +85,11 @@ test('shows the Full Disk Access guide only on the first launch', async () => {
       const window = await firstLaunch.firstWindow()
       const guide = window.getByRole('dialog', { name: '允许 Etch 读取 Chrome 登录状态' })
       await expect(guide).toBeVisible()
-      await expect(guide).toContainText('隐私与安全性')
       await expect(guide).toContainText('完全磁盘访问')
       await expect(guide.getByRole('button', { name: '打开系统设置', exact: true })).toBeVisible()
       await guide.getByRole('button', { name: '稍后设置', exact: true }).click()
       await expect(guide).toBeHidden()
-      await expect.poll(async () => JSON.parse(await readFile(join(userData, 'app-state.json'), 'utf8')).fullDiskAccessOnboardingShown).toBe(true)
+      await expect.poll(async () => JSON.parse(await readFile(join(userData, 'app-state.json'), 'utf8')).fullDiskAccessGuideDismissed).toBe(true)
     } finally {
       await quitApplication(firstLaunch)
     }
@@ -95,7 +98,7 @@ test('shows the Full Disk Access guide only on the first launch', async () => {
     try {
       const window = await secondLaunch.firstWindow()
       await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
-      await expect(window.getByRole('dialog', { name: '允许 Etch 读取 Chrome 登录状态' })).toHaveCount(0)
+      await expect(window.getByRole('dialog')).toHaveCount(0)
     } finally {
       await quitApplication(secondLaunch)
     }

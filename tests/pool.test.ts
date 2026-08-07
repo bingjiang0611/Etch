@@ -27,6 +27,30 @@ describe('StagePools', () => {
     }
   })
 
+  it('reports occupancy and free slots for the stage that is being scheduled', async () => {
+    const pools = new StagePools(1)
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const burnStarted = new Promise<void>((resolve) => { started = resolve })
+    const running = pools.runStage('burn', 1, async () => {
+      started()
+      await gate
+    })
+    const waiting = pools.runStage('burn', 1, async () => undefined)
+
+    await burnStarted
+    expect(pools.hasFreeSlot('burn', 1)).toBe(false)
+    expect(pools.hasFreeSlot('source', 1)).toBe(true)
+    expect(pools.hasFreeSlot('srt', 1)).toBe(true)
+    expect(pools.occupancy()).toMatchObject({ ffmpeg: { active: 1, waiting: 1 }, download: { active: 0, waiting: 0 } })
+
+    release()
+    await Promise.all([running, waiting])
+    expect(pools.hasFreeSlot('burn', 1)).toBe(true)
+    expect(pools.occupancy().ffmpeg).toEqual({ active: 0, waiting: 0 })
+  })
+
   it('removes an aborted waiter without starting its operation', async () => {
     const pools = new StagePools(1)
     let release!: () => void

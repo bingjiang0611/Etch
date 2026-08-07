@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BilibiliAccount, BilibiliPartition, BilibiliQrState } from '../shared/bilibili'
 import type { AppSettings } from '../shared/settings-schema'
+import { bilibiliPartitionLabel } from './bilibili-partition-groups'
+import { BilibiliPartitionPicker } from './BilibiliPartitionPicker'
 import { readableRemoteError } from './readable-error'
 
 interface BilibiliSettingsCardProps {
@@ -160,22 +162,14 @@ export function BilibiliSettingsCard({ account, settings, disabled, guidance, on
         <div className="bilibili-template-grid" aria-disabled={account.status !== 'connected'}>
           <label>
             <span>默认分区</span>
-            <select
-              className="field-select"
-              ref={partitionRef}
-              disabled={disabled || account.status !== 'connected' || partitionsLoading}
-              value={template.tid ?? ''}
-              onChange={(event) => {
-                const tid = Number(event.target.value)
-                const partition = partitions.find((item) => item.tid === tid)
-                updateTemplate({ tid: tid || undefined, partitionName: partition ? `${partition.parentName ? `${partition.parentName} · ` : ''}${partition.name}` : '' })
-              }}
-            >
-              <option value="">{partitionsLoading ? '正在读取分区…' : '请选择投稿分区'}</option>
-              {partitions.map((partition) => (
-                <option value={partition.tid} key={partition.tid}>{partition.parentName ? `${partition.parentName} · ` : ''}{partition.name}</option>
-              ))}
-            </select>
+            <BilibiliPartitionPicker
+              partitions={partitions}
+              tid={template.tid}
+              disabled={disabled || account.status !== 'connected'}
+              loading={partitionsLoading}
+              groupSelectRef={partitionRef}
+              onChange={(partition) => updateTemplate({ tid: partition?.tid, partitionName: partition ? bilibiliPartitionLabel(partition) : '' })}
+            />
           </label>
           <label>
             <span>默认标签 <small>逗号分隔，至少一个</small></span>

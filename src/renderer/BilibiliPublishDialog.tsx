@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { BilibiliAccount, BilibiliCopyright, BilibiliPartition } from '../shared/bilibili'
 import type { TaskDetail } from '../shared/ipc'
 import type { AppSettings } from '../shared/settings-schema'
+import { bilibiliPartitionLabel } from './bilibili-partition-groups'
+import { BilibiliPartitionPicker } from './BilibiliPartitionPicker'
 import { initialBilibiliPublishForm, publishBilibiliDraftAndRemember, reconcileBilibiliPartitionTid, type BilibiliPublishFormState } from './bilibili-publish-form'
 import { loadBilibiliPublishPreferences } from './bilibili-publish-preferences'
 
@@ -117,7 +119,7 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
       const draft = {
         title: form.title.trim(),
         tid: Number(form.tid),
-        partitionName: partition ? `${partition.parentName ? `${partition.parentName} · ` : ''}${partition.name}` : settings.bilibiliPublishTemplate.partitionName,
+        partitionName: partition ? bilibiliPartitionLabel(partition) : settings.bilibiliPublishTemplate.partitionName,
         tags,
         description: form.description.trim(),
         copyright: form.copyright,
@@ -171,10 +173,12 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
             </label>
             <label>
               <span>分区</span>
-              <select className="field-select" disabled={loadingPartitions} value={form.tid} onChange={(event) => setForm({ ...form, tid: event.target.value })}>
-                <option value="">{loadingPartitions ? '正在读取分区…' : '请选择分区'}</option>
-                {partitions.map((partition) => <option value={partition.tid} key={partition.tid}>{partition.parentName ? `${partition.parentName} · ` : ''}{partition.name}</option>)}
-              </select>
+              <BilibiliPartitionPicker
+                partitions={partitions}
+                tid={form.tid ? Number(form.tid) : undefined}
+                loading={loadingPartitions}
+                onChange={(partition) => setForm({ ...form, tid: partition ? String(partition.tid) : '' })}
+              />
             </label>
             <label>
               <span>标签 <small>逗号分隔</small></span>

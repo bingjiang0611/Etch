@@ -17,7 +17,7 @@ vi.mock('../src/main/runtime/tool-detector', () => ({
   identityStillMatches: async () => true,
   toolCacheKey: (tool: string, override?: string) => `${tool}:${override ?? ''}`
 }))
-vi.mock('../src/main/media/browser-cookies', () => ({ chromeCookieBrowser: async () => false }))
+vi.mock('../src/main/media/browser-cookies', () => ({ chromeCookieState: async () => ({ access: 'missing', browser: false }) }))
 
 import { HistoricalGlossaryService } from '../src/main/historical-glossary'
 import { TaskPipeline } from '../src/main/pipeline/task-pipeline'
