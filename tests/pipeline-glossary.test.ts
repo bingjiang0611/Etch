@@ -610,6 +610,7 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
       taskId: history.taskId,
       location: historyDirectory,
       title: history.title,
+      kind: history.kind,
       revision: history.revision,
       status: 'completed',
       updatedAt: history.updatedAt

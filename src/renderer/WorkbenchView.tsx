@@ -5,6 +5,7 @@ import { POOL_BY_STAGE, POOL_LABELS, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
 import { taskInputName, type StageId } from '../shared/task-schema'
 import { AuditGlossary, type GlossaryEdit } from './AuditGlossary'
+import { IllustrationCheckpointEditor, SummaryDraftsPanel, SummaryPanel, useSummaryPage } from './SummaryPanel'
 import { recoveredToolForStageFailure } from './tool-health'
 import {
   Icon,
@@ -28,7 +29,7 @@ import {
 } from './ui'
 
 const REVIEW_PAGE_SIZE = 100
-type WorkspaceTab = 'review' | 'info' | 'glossary' | 'style'
+type WorkspaceTab = 'review' | 'info' | 'glossary' | 'style' | 'summary' | 'drafts'
 type AuditCheckpoint = NonNullable<TaskDetail['manifest']['translation']['auditCheckpoint']>
 type AuditDecision = { cueId: number; translation: string }
 
@@ -79,6 +80,9 @@ interface WorkbenchViewProps {
   onContinuePublication: () => Promise<void>
   onOpenCreatorCenter: () => Promise<void>
   onResolveAudit: (decisions: AuditDecision[]) => Promise<void>
+  resolvingIllustration: boolean
+  onResolveIllustrationAgent: (choice: Parameters<typeof window.etch.resolveIllustrationAgent>[2]) => Promise<void>
+  onResolveIllustrationCover: (decision: Parameters<typeof window.etch.resolveIllustrationCover>[2]) => Promise<void>
   onCompleteReview: () => Promise<void>
   onPreset: (preset: SubtitlePreset) => Promise<void>
   onDiscardCues: () => void
@@ -296,6 +300,9 @@ export function WorkbenchView({
   onContinuePublication,
   onOpenCreatorCenter,
   onResolveAudit,
+  resolvingIllustration,
+  onResolveIllustrationAgent,
+  onResolveIllustrationCover,
   onCompleteReview,
   onPreset,
   onDiscardCues,
@@ -311,6 +318,10 @@ export function WorkbenchView({
   const [pipelineExpanded, setPipelineExpanded] = useState(true)
   const [activeCueId, setActiveCueId] = useState<number>()
   const guidedReviewCheckpointRef = useRef<string | undefined>(undefined)
+  const isSummaryTask = selected?.manifest.kind === 'summary'
+  const summary = useSummaryPage(isSummaryTask ? selected?.manifest.taskId : undefined, selected?.manifest.revision ?? 0)
+  const illustrateStage = selected ? getStage(selected, 'illustrate') : undefined
+  const illustrationCheckpoint = illustrateStage?.status === 'checkpoint' ? illustrateStage.checkpointId : undefined
   const selectedProvider = selected?.manifest.translation.selectedProvider
   const selectedStage = selected ? activeStageId(selected) : undefined
   const selectedCompletedCount = selected ? completedStageCount(selected) : 0
@@ -330,7 +341,7 @@ export function WorkbenchView({
   const reviewCheckpointKey = reviewCheckpoint && reviewStage ? `${selected?.manifest.taskId}:${reviewStage.checkpointId}:${reviewStage.attempt}` : undefined
   const sourceStage = selected ? getStage(selected, 'source') : undefined
   const showChromeLoginHelp = sourceStage?.status === 'failed' && chromeCookieAccess !== 'granted'
-  const verifyCompleted = selected ? getStage(selected, 'verify').status === 'completed' : false
+  const verifyCompleted = selected ? getStage(selected, isSummaryTask ? 'illustrate' : 'verify').status === 'completed' : false
   const waitingPool = selectedWaitingStage ? POOL_BY_STAGE[selectedWaitingStage] : undefined
   const waitingOccupancy = waitingPool ? activity.pools[waitingPool] : undefined
   const publication = selected?.manifest.publication
@@ -350,6 +361,8 @@ export function WorkbenchView({
   const saveStateText = autoSaveBlocked ? '自动保存失败，需处理' : savingCues ? '正在自动保存…' : dirtyCount ? '等待自动保存…' : cueSaveNotice || '已自动保存'
   const primaryActionLabel = checkpoint
     ? '等待审计裁决'
+    : illustrationCheckpoint
+      ? '等待配图确认'
     : reviewCheckpoint
       ? completingReview ? '正在继续…' : '完成校对并继续'
       : selectedIsRunning
@@ -364,6 +377,8 @@ export function WorkbenchView({
   const reviewCompletionBlocked = completingReview || savingCues || autoSaveBlocked || Boolean(dirtyCount) || glossaryBusy || reviewLoading || reviewPage?.availability !== 'ready' || reviewPage.revision !== selected?.manifest.revision
   const primaryActionDisabled = checkpoint
     ? true
+    : illustrationCheckpoint
+      ? true
     : reviewCheckpoint
       ? reviewCompletionBlocked
       : selectedIsRunning || selectedWaitingStage
@@ -378,10 +393,14 @@ export function WorkbenchView({
   }
 
   useEffect(() => {
-    setWorkspaceTab('review')
+    setWorkspaceTab(selected?.manifest.kind === 'summary' ? 'summary' : 'review')
     setActiveCueId(undefined)
     setPipelineExpanded(true)
-  }, [selected?.manifest.taskId])
+  }, [selected?.manifest.taskId, selected?.manifest.kind])
+
+  useEffect(() => {
+    if (illustrationCheckpoint) setPipelineExpanded(true)
+  }, [illustrationCheckpoint])
 
   useEffect(() => {
     if (checkpoint) setPipelineExpanded(true)
@@ -420,12 +439,18 @@ export function WorkbenchView({
   const failedErrorCode = failedStage ? getStage(selected, failedStage).errorCode : undefined
   const recoveredTool = selectedIsRunning || selectedWaitingStage ? undefined : recoveredToolForStageFailure(failedErrorCode, toolHealth)
   const glossaryCount = reviewPage?.glossaryState === 'ready' ? reviewPage.glossary.length : undefined
-  const tabs: Array<{ id: WorkspaceTab; label: string; count?: number }> = [
-    { id: 'review', label: '校对', count: reviewPage?.total },
-    { id: 'info', label: '任务信息' },
-    { id: 'glossary', label: '审计术语', count: glossaryCount },
-    { id: 'style', label: '样式' },
-  ]
+  const tabs: Array<{ id: WorkspaceTab; label: string; count?: number }> = isSummaryTask
+    ? [
+        { id: 'summary', label: '总结' },
+        { id: 'info', label: '任务信息' },
+        { id: 'drafts', label: '三稿记录' },
+      ]
+    : [
+        { id: 'review', label: '校对', count: reviewPage?.total },
+        { id: 'info', label: '任务信息' },
+        { id: 'glossary', label: '审计术语', count: glossaryCount },
+        { id: 'style', label: '样式' },
+      ]
 
   return (
     <section className="workbench-view" aria-label="任务工作台">
@@ -446,7 +471,7 @@ export function WorkbenchView({
             </code>
           </div>
           <div className="wb-actions">
-            {verifyCompleted && !needsRebuild && (
+            {!isSummaryTask && verifyCompleted && !needsRebuild && (
               <button
                 className={publicationRunning ? 'danger-button' : 'secondary-button bilibili-publish-button'}
                 type="button"
@@ -462,14 +487,16 @@ export function WorkbenchView({
                 {publicationActionLabel}
               </button>
             )}
-            <button
-              className="secondary-button"
-              type="button"
-              aria-controls="workbench-panel-glossary"
-              onClick={() => setWorkspaceTab((current) => (current === 'glossary' ? 'review' : 'glossary'))}
-            >
-              {workspaceTab === 'glossary' ? '返回字幕校对' : '查看审计术语表'}
-            </button>
+            {!isSummaryTask && (
+              <button
+                className="secondary-button"
+                type="button"
+                aria-controls="workbench-panel-glossary"
+                onClick={() => setWorkspaceTab((current) => (current === 'glossary' ? 'review' : 'glossary'))}
+              >
+                {workspaceTab === 'glossary' ? '返回字幕校对' : '查看审计术语表'}
+              </button>
+            )}
             <button
               className={selectedIsRunning || selectedWaitingStage ? 'danger-button wb-stop-button' : 'primary-button'}
               type="button"
@@ -536,7 +563,7 @@ export function WorkbenchView({
             </button>
           </div>
         )}
-        {publication && (publication.autoPublish || publication.status !== 'idle') && (
+        {!isSummaryTask && publication && (publication.autoPublish || publication.status !== 'idle') && (
           <div className="publication-status-banner" data-status={publication.status} role="status">
             <strong>{bilibiliPublicationText(selected)}</strong>
             <span title={publication.lastError?.message}>
@@ -664,6 +691,17 @@ export function WorkbenchView({
                 key={`${taskId}:${JSON.stringify(checkpoint.ambiguities)}`}
               />
             )}
+
+            {illustrationCheckpoint && (
+              <IllustrationCheckpointEditor
+                detail={selected}
+                capabilities={summary.page?.imageCapabilities ?? []}
+                busy={resolvingIllustration}
+                onResolveAgent={onResolveIllustrationAgent}
+                onResolveCover={onResolveIllustrationCover}
+                key={`${taskId}:${illustrationCheckpoint}:${illustrateStage?.attempt ?? 0}`}
+              />
+            )}
           </div>
         </details>
 
@@ -677,7 +715,7 @@ export function WorkbenchView({
             onActiveCueChange={setActiveCueId}
           />
 
-          <aside className="transcript-panel" aria-label="字幕工作区">
+          <aside className="transcript-panel" aria-label={isSummaryTask ? '总结工作区' : '字幕工作区'}>
             <div className="tp-tabs" role="tablist" aria-label="工作台面板">
               {tabs.map((tab) => (
                 <button
@@ -698,7 +736,7 @@ export function WorkbenchView({
 
             <div className="transcript-statebar">
               <span className="review-save-state" role="status">
-                {saveStateText}
+                {isSummaryTask ? selected.manifest.runtime.currentMessage : saveStateText}
               </span>
               {workspaceTab === 'review' && dirtyCount > 0 && (
                 <span className="review-inline-actions">
@@ -723,6 +761,18 @@ export function WorkbenchView({
               <p className="review-error transcript-error" role="alert">
                 {reviewError}
               </p>
+            )}
+
+            {workspaceTab === 'summary' && (
+              <section className="transcript-tabpanel summary-panel" id="workbench-panel-summary" role="tabpanel" aria-labelledby="workbench-tab-summary">
+                <SummaryPanel taskId={taskId} page={summary.page} error={summary.error} />
+              </section>
+            )}
+
+            {workspaceTab === 'drafts' && (
+              <section className="transcript-tabpanel summary-drafts-panel" id="workbench-panel-drafts" role="tabpanel" aria-labelledby="workbench-tab-drafts">
+                <SummaryDraftsPanel page={summary.page} />
+              </section>
             )}
 
             {workspaceTab === 'review' && (

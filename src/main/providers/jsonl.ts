@@ -250,7 +250,7 @@ class LineParser {
   }
 }
 
-function parseProviderLine(line: string): ProviderEvent {
+export function parseProviderLine(line: string): ProviderEvent {
   let value: unknown
   try { value = JSON.parse(line) } catch { return { type: 'raw', value: line } }
   if (!value || typeof value !== 'object') return { type: 'raw', value }

@@ -4,7 +4,7 @@ import type { EtchApi } from '../shared/ipc'
 const api: EtchApi = {
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   queuePage: (offset = 0, limit = 100) => ipcRenderer.invoke('queue:page', { offset, limit }),
-  createUrls: (urls, provider, styleNote = '', autoPublish = false) => ipcRenderer.invoke('task:create-urls', { urls, provider, styleNote, autoPublish }),
+  createUrls: (urls, provider, styleNote = '', autoPublish = false, kind = 'subtitle') => ipcRenderer.invoke('task:create-urls', { urls, provider, styleNote, autoPublish, kind }),
   taskDetail: (taskId) => ipcRenderer.invoke('task:detail', { taskId }),
   taskThumbnail: (taskId, expectedSha256) => ipcRenderer.invoke('task:thumbnail', { taskId, expectedSha256 }),
   startTask: (taskId) => ipcRenderer.invoke('task:start', { taskId }),
@@ -14,6 +14,11 @@ const api: EtchApi = {
   recoveryState: () => ipcRenderer.invoke('recovery:state'),
   releaseRecovery: () => ipcRenderer.invoke('recovery:release'),
   resolveAudit: (taskId, decisions) => ipcRenderer.invoke('task:resolve-audit', { taskId, decisions }),
+  resolveIllustrationAgent: (taskId, expectedRevision, choice) => ipcRenderer.invoke('task:resolve-illustration-agent', { taskId, expectedRevision, choice }),
+  resolveIllustrationCover: (taskId, expectedRevision, decision) => ipcRenderer.invoke('task:resolve-illustration-cover', { taskId, expectedRevision, decision }),
+  summaryPage: (taskId) => ipcRenderer.invoke('task:summary-page', { taskId }),
+  summaryImage: (taskId, filename, expectedSha256) => ipcRenderer.invoke('task:summary-image', { taskId, filename, expectedSha256 }),
+  exportSummary: (taskId) => ipcRenderer.invoke('task:export-summary', { taskId }),
   completeReview: (taskId, expectedRevision) => ipcRenderer.invoke('task:complete-review', { taskId, expectedRevision }),
   reviewPage: (taskId, offset = 0, limit = 100) => ipcRenderer.invoke('task:review-page', { taskId, offset, limit }),
   reviewTimelineWindow: (taskId, milliseconds, expectedRevision, expectedEnglishSha256, expectedChineseSha256, limit = 100) => ipcRenderer.invoke('task:review-timeline-window', {

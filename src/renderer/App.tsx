@@ -4,7 +4,7 @@ import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, GlossaryApplyResult
 import { IDLE_PIPELINE_ACTIVITY, InstallableToolSchema } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
 import { defaultSettings, type AppSettings, type ThemePreference, type ToolId } from '../shared/settings-schema'
-import type { ProviderId, StageId } from '../shared/task-schema'
+import type { ProviderId, StageId, TaskKind } from '../shared/task-schema'
 import type { GlossaryEdit } from './AuditGlossary'
 import { glossaryImpactCounts } from './glossary-impact'
 import { GlossaryCatalog } from './GlossaryCatalog'
@@ -14,6 +14,7 @@ import { detectInitialToolsWithRetry } from './tool-detection'
 import { mergeToolHealth } from './tool-health'
 import { parseTaskUrls } from './task-input'
 import { TaskDeleteDialog, type TaskDeleteRequest } from './TaskDeleteDialog'
+import { deleteFocusNeighborId } from './task-delete-focus'
 import { WorkbenchView } from './WorkbenchView'
 import { BilibiliPublishDialog } from './BilibiliPublishDialog'
 import { BilibiliSettingsCard } from './BilibiliSettingsCard'
@@ -58,6 +59,7 @@ export function App(): React.JSX.Element {
   const [openingTaskId, setOpeningTaskId] = useState<string>()
   const [startingTaskIds, setStartingTaskIds] = useState<Record<string, true>>({})
   const [url, setUrl] = useState('')
+  const [taskKind, setTaskKind] = useState<TaskKind>('subtitle')
   const [styleNote, setStyleNote] = useState('')
   const [autoPublish, setAutoPublish] = useState(false)
   const [provider, setProvider] = useState<ProviderId>(DEFAULT_PROVIDER)
@@ -102,6 +104,7 @@ export function App(): React.JSX.Element {
   const [autoSaveBlocked, setAutoSaveBlocked] = useState(false)
   const [cueSaveNotice, setCueSaveNotice] = useState('')
   const [resolvingAudit, setResolvingAudit] = useState(false)
+  const [resolvingIllustration, setResolvingIllustration] = useState(false)
   const [completingReview, setCompletingReview] = useState(false)
   const [savingPreset, setSavingPreset] = useState(false)
   const [glossaryQuery, setGlossaryQuery] = useState('')
@@ -147,6 +150,7 @@ export function App(): React.JSX.Element {
   const newTaskDialogRef = useRef<HTMLDialogElement>(null)
   const fullDiskAccessDialogRef = useRef<HTMLDialogElement>(null)
   const newTaskTriggerRef = useRef<HTMLButtonElement>(null)
+  const deleteFocusNeighborRef = useRef<string | undefined>(undefined)
   const taskThumbnailsRef = useRef<Record<string, TaskThumbnailState>>({})
   const thumbnailRequestsRef = useRef(new Set<string>())
   const changeViewRef = useRef<(next: View) => void>(() => undefined)
@@ -195,9 +199,11 @@ export function App(): React.JSX.Element {
         trigger.focus()
         return
       }
-      const taskRow = [...document.querySelectorAll<HTMLElement>('[data-task-id]')]
-        .find((row) => row.dataset.taskId === taskId)
-        ?.querySelector<HTMLButtonElement>('.task-row-open')
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-task-id]')]
+      const openButton = (id: string | undefined): HTMLButtonElement | undefined =>
+        (id ? rows.find((row) => row.dataset.taskId === id)?.querySelector<HTMLButtonElement>('.task-row-open') : null) ?? undefined
+      // 删除后原任务行已消失，把焦点交给相邻卡片，否则回落到页头按钮会把整个队列滚回顶部。
+      const taskRow = openButton(taskId) ?? openButton(deleteFocusNeighborRef.current)
       ;(taskRow ?? newTaskTriggerRef.current)?.focus()
     })
   }, [])
@@ -473,15 +479,16 @@ export function App(): React.JSX.Element {
       return
     }
     const submittedUrlText = url
+    const submittedKind = taskKind
     const submittedStyleNote = styleNote
-    const submittedAutoPublish = autoPublish
+    const submittedAutoPublish = submittedKind === 'summary' ? false : autoPublish
     const submittedProvider = providerOrDefault(provider)
     createTaskInFlightRef.current = true
     setCreatingTask(true)
     try {
       setError('')
       await ensureRecoveryReleased()
-      const next = await window.etch.createUrls(submittedUrls, submittedProvider, submittedStyleNote, submittedAutoPublish)
+      const next = await window.etch.createUrls(submittedUrls, submittedProvider, submittedStyleNote, submittedAutoPublish, submittedKind)
       commitQueuePage(next)
       saveLastNewTaskProvider(() => window.localStorage, submittedProvider)
       setUrl((current) => (current === submittedUrlText ? '' : current))
@@ -656,6 +663,7 @@ export function App(): React.JSX.Element {
       setTaskActionError('')
       setTaskDeleteError('')
       setDeletingTaskId(taskId)
+      deleteFocusNeighborRef.current = deleteFocusNeighborId(queue.items.map((item) => item.taskId), taskId)
       commitQueuePage(await window.etch.deleteTask(taskId, mode))
       queueDetailGenerationRef.current += 1
       const nextDetails = { ...queueDetailsRef.current }
@@ -717,6 +725,28 @@ export function App(): React.JSX.Element {
     } finally {
       auditSubmittingRef.current = false
       setResolvingAudit(false)
+    }
+  }
+
+  const resolveIllustration = async (
+    submit: (taskId: string, expectedRevision: number) => Promise<TaskDetail>
+  ): Promise<void> => {
+    if (!selected || resolvingIllustration) return
+    const taskId = selected.manifest.taskId
+    const expectedRevision = selected.manifest.revision
+    const selectionGeneration = openTaskGenerationRef.current
+    setResolvingIllustration(true)
+    try {
+      setTaskActionError('')
+      await ensureRecoveryReleased()
+      if (selectionGeneration !== openTaskGenerationRef.current) return
+      const detail = await submit(taskId, expectedRevision)
+      rememberDetail(detail)
+      setSelected((current) => (current?.manifest.taskId === taskId && current.manifest.revision <= detail.manifest.revision ? detail : current))
+    } catch (caught) {
+      if (selectionGeneration === openTaskGenerationRef.current) setTaskActionError(caught instanceof Error ? caught.message : '配图决议提交失败')
+    } finally {
+      setResolvingIllustration(false)
     }
   }
 
@@ -1499,6 +1529,9 @@ export function App(): React.JSX.Element {
                           </span>
                           <span className="task-card-footer">
                             <span className="id mono">{task.taskId.slice(0, 8)}</span>
+                            {detail?.manifest.runtime.uploadDate && (
+                              <span className="task-published mono" title="视频发布时间">发布 {detail.manifest.runtime.uploadDate}</span>
+                            )}
                             <span className="task-updated mono">更新于 {updatedAt}</span>
                           </span>
                           <span className="task-card-action-row">
@@ -1559,6 +1592,7 @@ export function App(): React.JSX.Element {
             autoSaveBlocked={autoSaveBlocked}
             cueSaveNotice={cueSaveNotice}
             resolvingAudit={resolvingAudit}
+            resolvingIllustration={resolvingIllustration}
             completingReview={completingReview}
             savingPreset={savingPreset || savingSettings}
             glossaryBusy={glossaryBusy}
@@ -1582,6 +1616,8 @@ export function App(): React.JSX.Element {
             onContinuePublication={continuePublication}
             onOpenCreatorCenter={() => window.etch.openBilibiliCreatorCenter()}
             onResolveAudit={resolveAudit}
+            onResolveIllustrationAgent={(choice) => resolveIllustration((taskId, revision) => window.etch.resolveIllustrationAgent(taskId, revision, choice))}
+            onResolveIllustrationCover={(decision) => resolveIllustration((taskId, revision) => window.etch.resolveIllustrationCover(taskId, revision, decision))}
             onCompleteReview={completeReview}
             onPreset={persistWorkbenchPreset}
             onDiscardCues={() => {
@@ -1893,8 +1929,31 @@ export function App(): React.JSX.Element {
             </button>
           </header>
           <p className="new-task-copy">
-            每行粘贴一个 YouTube、X 或 Vimeo 视频链接，最多 50 个。创建后会自动开始处理；队列暂停时先等待。
+            {taskKind === 'summary'
+              ? '每行粘贴一个 YouTube、X 或 Vimeo 视频链接，最多 50 个。总结任务只抽字幕并写中文长文，不翻译、不压制、不投稿。'
+              : '每行粘贴一个 YouTube、X 或 Vimeo 视频链接，最多 50 个。创建后会自动开始处理；队列暂停时先等待。'}
           </p>
+          <div className="new-task-kind" role="radiogroup" aria-label="任务类型">
+            {([
+              { id: 'subtitle' as const, label: '双语硬字幕', hint: '翻译、校对、压制成片' },
+              { id: 'summary' as const, label: '视频总结', hint: '三稿择优长文 + 配图' }
+            ]).map((option) => (
+              <label className="new-task-kind-option" data-selected={taskKind === option.id ? 'true' : undefined} key={option.id}>
+                <input
+                  type="radio"
+                  name="new-task-kind"
+                  value={option.id}
+                  checked={taskKind === option.id}
+                  disabled={creatingTask}
+                  onChange={() => setTaskKind(option.id)}
+                />
+                <span>
+                  <strong>{option.label}</strong>
+                  <small>{option.hint}</small>
+                </span>
+              </label>
+            ))}
+          </div>
           <label className="new-task-field" htmlFor="video-url">
             <span>视频链接 <small>{enteredUrlCount ? `已输入 ${enteredUrlCount} 个` : '支持批量新建'}</small></span>
             <textarea
@@ -1909,7 +1968,7 @@ export function App(): React.JSX.Element {
             />
           </label>
           <label className="new-task-field" htmlFor="provider">
-            <span>翻译 Provider <small>{selectedProviderAvailability.summary ?? '使用本机 CLI；登录态在运行时校验'}</small></span>
+            <span>{taskKind === 'summary' ? '总结 Provider' : '翻译 Provider'} <small>{selectedProviderAvailability.summary ?? '使用本机 CLI；登录态在运行时校验'}</small></span>
             <select
               className="field-select"
               id="provider"
@@ -1926,16 +1985,19 @@ export function App(): React.JSX.Element {
             </select>
           </label>
           <label className="new-task-field" htmlFor="task-style-note">
-            <span>翻译风格 <small>选填</small></span>
+            <span>{taskKind === 'summary' ? '总结要求' : '翻译风格'} <small>选填</small></span>
             <textarea
               className="field-area"
               id="task-style-note"
               maxLength={1000}
-              placeholder="例如：简洁自然，保留足球解说的临场感；术语沿用统一术语表"
+              placeholder={taskKind === 'summary'
+                ? '例如：重点写商业模式与数字，多保留对话锋芒'
+                : '例如：简洁自然，保留足球解说的临场感；术语沿用统一术语表'}
               value={styleNote}
               onChange={(event) => setStyleNote(event.target.value)}
             />
           </label>
+          {taskKind === 'subtitle' && (
           <div className="new-task-auto-publish">
             <span>
               <strong>完成后自动投稿到 B站</strong>
@@ -1958,6 +2020,7 @@ export function App(): React.JSX.Element {
               onChange={setAutoPublish}
             />
           </div>
+          )}
           {error && <p className="form-error new-task-error" role="alert">{error}</p>}
           <footer className="new-task-actions">
             <button className="secondary-button" type="button" disabled={creatingTask} onClick={closeNewTask}>取消</button>

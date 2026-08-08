@@ -5,6 +5,9 @@ import { migrateTaskManifest, type StageId, type StepLease, type TaskManifest } 
 import { PROVIDER_SESSION_CONTAMINATED_PREFIX } from '../providers/session-errors'
 import { AtomicWriteCommittedError, writeJsonAtomic } from './atomic-json'
 
+// 纯文本 Provider 阶段；配图阶段本来就允许工具调用，不适用隔离污染判定。
+const TEXT_ONLY_PROVIDER_STAGES = new Set<StageId>(['cues', 'translate', 'audit', 'digest', 'summary'])
+
 async function writeTaskManifest(path: string, manifest: TaskManifest): Promise<void> {
   try {
     await writeJsonAtomic(path, manifest)
@@ -161,7 +164,7 @@ export class TaskStore {
       state.status = 'paused'
       delete state.activeLease
       delete state.checkpointId
-      const providerStages = new Set<StageId>(['cues', 'translate', 'audit'])
+      const providerStages = TEXT_ONLY_PROVIDER_STAGES
       if (providerStages.has(lease.stage) && manifest.translation.activeGenerationId) {
         state.errorCode = `${PROVIDER_SESSION_CONTAMINATED_PREFIX}用户在 Provider 调用期间停止任务`
       } else {
@@ -240,7 +243,7 @@ export class TaskStore {
       const activeGeneration = manifest.translation.sessionGenerations.find((generation) =>
         generation.id === manifest.translation.activeGenerationId && generation.status === 'active'
       )
-      const providerStages = new Set<StageId>(['cues', 'translate', 'audit'])
+      const providerStages = TEXT_ONLY_PROVIDER_STAGES
       let contaminatedProviderStage = false
       for (const [stage, state] of Object.entries(manifest.pipeline.stages)) {
         if (state.status !== 'running' && !state.activeLease) continue

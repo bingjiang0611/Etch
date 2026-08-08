@@ -68,6 +68,18 @@ export function flattenCue(cue: SrtCue): string {
   return cue.lines.join(' ').replace(/\s+/g, ' ').trim()
 }
 
+// Caption sources mark a speaker change with `>>` at the start of a line (escaped as `&gt;&gt;` by
+// some tracks). It is caption chrome, not speech, so it must not reach the translator or get burned
+// into the frame. Only a line-leading run of two or more is a marker; `>>` inside a line can be
+// real content in a programming talk.
+const SPEAKER_MARKER = /^(?:>|&gt;){2,}\s*/u
+
+export function stripSpeakerMarkers(cues: readonly SrtCue[]): SrtCue[] {
+  return cues
+    .map((cue) => ({ ...cue, lines: cue.lines.map((line) => line.replace(SPEAKER_MARKER, '').trim()).filter(Boolean) }))
+    .filter((cue) => cue.lines.length > 0)
+}
+
 export function extractCueTsv(cues: readonly SrtCue[]): string {
   validateCues(cues)
   return `${cues.map((cue) => `${cue.id}\t${flattenCue(cue)}`).join('\n')}\n`

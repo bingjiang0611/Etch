@@ -4,7 +4,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, safeStorage, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
-import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
+import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, ExportSummaryResultSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ResolveIllustrationAgentSchema, ResolveIllustrationCoverSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, SummaryImageDataUrlSchema, SummaryImagePayloadSchema, SummaryPageSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
 import { ToolIdSchema, type ThemePreference, type ToolId } from '../shared/settings-schema'
 import { createTaskManifest, type ProviderId } from '../shared/task-schema'
 import { chromeCookieState, fullDiskAccessSettingsUrl } from './media/browser-cookies'
@@ -27,6 +27,7 @@ import { toolInstallScript } from './runtime/tool-install'
 import { moveTaskToTrash, removeTaskRecord, revealTaskInFinder, type DeleteCleanupWarning } from './task-deletion'
 import { TaskReviewService } from './task-review'
 import { TaskThumbnailService } from './task-thumbnail'
+import { SummaryService } from './summary-service'
 import { RunRegistry } from './runtime/run-registry'
 import { removeStaleCodexTextOnlyExecutableSnapshots } from './providers/codex-capability'
 import { confirmProviderRecovery, recoverProviderRunsAtStartup } from './runtime/startup-recovery'
@@ -71,6 +72,7 @@ const taskStore = new TaskStore()
 const deletingTaskIds = new Set<string>()
 const videoFullscreenWindowIds = new Set<number>()
 const taskThumbnails = new TaskThumbnailService()
+const summaries = new SummaryService()
 
 if (process.env.ETCH_USER_DATA_DIR) app.setPath('userData', process.env.ETCH_USER_DATA_DIR)
 const isolatedE2EInstance = process.env.ETCH_E2E_ALLOW_MULTIPLE_INSTANCES === '1' && Boolean(process.env.ETCH_USER_DATA_DIR)
@@ -165,6 +167,9 @@ function setVideoFullscreen(window: BrowserWindow, fullscreen: boolean): void {
   const active = window.isSimpleFullScreen()
   if (active) videoFullscreenWindowIds.add(window.id)
   else videoFullscreenWindowIds.delete(window.id)
+  // Re-framing the native window drops keyboard focus, which would leave seek and play/pause keys
+  // dead until the user clicks the picture.
+  window.webContents.focus()
   window.webContents.send('video:fullscreen-changed', active)
 }
 
@@ -358,9 +363,10 @@ ipcMain.handle('app:bootstrap', async () => {
 
 function queuePage(offset = 0, limit = 100): unknown {
   if (!indexStore) throw new Error('Etch 尚未初始化')
-  const items = indexStore.list(Math.min(Math.max(limit, 1), 100), Math.max(offset, 0)).map(({ taskId, title, status, revision, updatedAt, location }) => ({
+  const items = indexStore.list(Math.min(Math.max(limit, 1), 100), Math.max(offset, 0)).map(({ taskId, title, kind, status, revision, updatedAt, location }) => ({
     taskId,
     title,
+    kind,
     status,
     revision,
     updatedAt,
@@ -697,6 +703,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
         protectedPaths: [app.getPath('home'), support]
       })
       taskThumbnails.forget(taskId)
+      summaries.forget(taskId)
       taskNotifier.forget(taskId)
       review.forget(taskId, indexedBeforeDelete?.location)
       await historicalGlossary.sync().catch((error) => console.error('global glossary delete reconciliation failed', error))
@@ -722,6 +729,59 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     await pipeline.resolveAudit(indexed.location, decisions)
     if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
     return detail(taskId)
+  })
+  ipcMain.handle('task:resolve-illustration-agent', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, expectedRevision, choice } = ResolveIllustrationAgentSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    await pipeline.resolveIllustrationAgent(indexed.location, expectedRevision, choice)
+    if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
+    return detail(taskId)
+  })
+  ipcMain.handle('task:resolve-illustration-cover', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, expectedRevision, decision } = ResolveIllustrationCoverSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    await pipeline.resolveIllustrationCover(indexed.location, expectedRevision, decision)
+    if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
+    return detail(taskId)
+  })
+  ipcMain.handle('task:summary-page', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    const manifest = await taskStore.load(indexed.location)
+    return SummaryPageSchema.parse(await summaries.page(taskId, indexed.location, manifest))
+  })
+  ipcMain.handle('task:summary-image', async (_event, raw) => {
+    const { taskId, filename, expectedSha256 } = SummaryImagePayloadSchema.parse(raw)
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) return undefined
+    const manifest = await taskStore.load(indexed.location)
+    try {
+      return SummaryImageDataUrlSchema.parse(await summaries.image(taskId, indexed.location, manifest, filename, expectedSha256))
+    } catch (error) {
+      console.warn('summary image unavailable', { taskId, filename, error: error instanceof Error ? error.message : String(error) })
+      return undefined
+    }
+  })
+  ipcMain.handle('task:export-summary', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    const manifest = await taskStore.load(indexed.location)
+    const options = { title: '选择总结导出位置', properties: ['openDirectory' as const, 'createDirectory' as const] }
+    const selection = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    if (selection.canceled || !selection.filePaths[0]) return ExportSummaryResultSchema.parse({ cancelled: true })
+    const exported = await summaries.export(indexed.location, manifest, selection.filePaths[0])
+    return ExportSummaryResultSchema.parse({ cancelled: false, directory: exported.directory, images: exported.images })
   })
   ipcMain.handle('task:complete-review', async (_event, raw) => {
     assertRecoveryReleased()
@@ -853,7 +913,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   ipcMain.handle('task:create-urls', async (_event, raw) => {
     const payload = CreateUrlsSchema.parse(raw)
     for (const url of payload.urls) {
-      const manifest = createTaskManifest({ kind: 'url', url }, '', payload.provider, payload.styleNote, settings.subtitlePreset, payload.autoPublish)
+      const manifest = createTaskManifest({ kind: 'url', url }, '', payload.provider, payload.styleNote, settings.subtitlePreset, payload.autoPublish, payload.kind)
       const safeTitle = 'pending'
       const taskDirectory = join(settings.workspaceRoot, `${safeTitle}--${manifest.taskId.slice(0, 8)}`)
       await mkdir(taskDirectory, { recursive: true })

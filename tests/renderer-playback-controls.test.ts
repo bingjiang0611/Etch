@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MAX_PLAYBACK_RATE,
-  MIN_PLAYBACK_RATE,
   PLAYBACK_RATE_PRESETS,
   SEEK_STEP_SECONDS,
-  parsePlaybackRate,
   playbackRateLabel,
   seekTarget
 } from '../src/renderer/playback-controls'
@@ -24,34 +21,17 @@ describe('预览播放控制', () => {
     expect(seekTarget(30, -SEEK_STEP_SECONDS, 0)).toBe(25)
   })
 
-  it('accepts any rate inside the supported range, including non-preset values', () => {
+  it('offers only rates the media element accepts', () => {
     expect(PLAYBACK_RATE_PRESETS).toEqual([0.5, 0.75, 1, 1.25, 1.5, 2, 3])
-    for (const preset of PLAYBACK_RATE_PRESETS) expect(parsePlaybackRate(String(preset))).toBe(preset)
-    expect(parsePlaybackRate('1.85')).toBe(1.85)
-    expect(parsePlaybackRate(' 2.5 ')).toBe(2.5)
-    expect(parsePlaybackRate(String(MIN_PLAYBACK_RATE))).toBe(MIN_PLAYBACK_RATE)
-    expect(parsePlaybackRate(String(MAX_PLAYBACK_RATE))).toBe(MAX_PLAYBACK_RATE)
+    for (const preset of PLAYBACK_RATE_PRESETS) {
+      expect(preset).toBeGreaterThan(0)
+      expect(preset).toBeLessThanOrEqual(4)
+    }
   })
 
-  it('round-trips the unit the field displays', () => {
+  it('labels every rate with the unit the menu shows', () => {
     expect(playbackRateLabel(1)).toBe('1×')
     expect(playbackRateLabel(0.75)).toBe('0.75×')
-    for (const preset of PLAYBACK_RATE_PRESETS) {
-      expect(parsePlaybackRate(playbackRateLabel(preset))).toBe(preset)
-    }
-    expect(parsePlaybackRate('1.85×')).toBe(1.85)
-    expect(parsePlaybackRate('2x')).toBe(2)
-    expect(parsePlaybackRate('2X ')).toBe(2)
-    expect(parsePlaybackRate('×')).toBeUndefined()
-  })
-
-  it('rejects values the media element would refuse instead of silencing playback', () => {
-    expect(parsePlaybackRate('')).toBeUndefined()
-    expect(parsePlaybackRate('  ')).toBeUndefined()
-    expect(parsePlaybackRate('abc')).toBeUndefined()
-    expect(parsePlaybackRate('0')).toBeUndefined()
-    expect(parsePlaybackRate('-2')).toBeUndefined()
-    expect(parsePlaybackRate('0.1')).toBeUndefined()
-    expect(parsePlaybackRate('16')).toBeUndefined()
+    expect(PLAYBACK_RATE_PRESETS.map(playbackRateLabel)).toEqual(['0.5×', '0.75×', '1×', '1.25×', '1.5×', '2×', '3×'])
   })
 })

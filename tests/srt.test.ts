@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { applyCueEdits, dedupeRolling, extractCueTsv, mergeBilingual, parseSrt, serializeSrt } from '../src/core/srt'
+import { applyCueEdits, dedupeRolling, extractCueTsv, mergeBilingual, parseSrt, serializeSrt, stripSpeakerMarkers } from '../src/core/srt'
 
 const fixture = (name: string): string => readFileSync(resolve('fixtures/srt', name), 'utf8')
 
@@ -63,6 +63,26 @@ describe('SRT core', () => {
 
     expect(deduped.map((cue) => cue.lines[0])).toEqual(['git clone the repository', 'and install'])
     expect(deduped[0].endMs).toBe(1_150)
+  })
+
+  it('drops caption speaker markers before dedupe and translation', () => {
+    const stripped = stripSpeakerMarkers([
+      { id: '1', startMs: 0, endMs: 1_000, lines: ['>> Yep.'] },
+      { id: '2', startMs: 1_000, endMs: 2_000, lines: ['&gt;&gt;&gt;No space here', '>> and a second speaker'] },
+      { id: '3', startMs: 2_000, endMs: 3_000, lines: ['>>'] },
+      { id: '4', startMs: 3_000, endMs: 4_000, lines: ['shift x >> 2 stays', '> a shell prompt stays'] }
+    ])
+
+    expect(stripped.map((cue) => cue.lines)).toEqual([
+      ['Yep.'],
+      ['No space here', 'and a second speaker'],
+      ['shift x >> 2 stays', '> a shell prompt stays']
+    ])
+    expect(dedupeRolling(stripped).map((cue) => cue.lines[0])).toEqual([
+      'Yep.',
+      'No space here and a second speaker',
+      'shift x >> 2 stays > a shell prompt stays'
+    ])
   })
 
   it('requires exact bilingual cue coverage', () => {

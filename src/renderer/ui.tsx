@@ -5,17 +5,14 @@ import type { AppSettings } from '../shared/settings-schema'
 import type { ProviderId, StageId } from '../shared/task-schema'
 import { clearPlaybackPosition, loadPlaybackPosition, savePlaybackPosition } from './playback-position'
 import {
-  MAX_PLAYBACK_RATE,
-  MIN_PLAYBACK_RATE,
   PLAYBACK_RATE_PRESETS,
   SEEK_STEP_SECONDS,
-  parsePlaybackRate,
   playbackRateLabel,
   seekTarget
 } from './playback-controls'
 import { TimelineWindowCoordinator, type TimelineRequestIdentity } from './timeline-window-coordinator'
 
-export const pools = ['download', 'whisper', 'agent', 'audit', 'ffmpeg'] as const
+export const pools = ['download', 'whisper', 'agent', 'audit', 'ffmpeg', 'image'] as const
 
 export type SubtitlePreset = AppSettings['subtitlePreset']
 type StageState = TaskDetail['manifest']['pipeline']['stages'][string]
@@ -39,6 +36,9 @@ export const stageLabels: Record<StageId, string> = {
   srt: '生成 SRT',
   burn: '压制',
   verify: '验证',
+  digest: '素材分析',
+  summary: '长文整理',
+  illustrate: '配图',
 }
 
 export function Icon({ name }: { name: IconName }): React.JSX.Element {
@@ -350,12 +350,17 @@ export function VideoPreview({
   const [isPlaying, setIsPlaying] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [subtitlePreview, setSubtitlePreview] = useState(true)
-  const [rateInput, setRateInput] = useState(playbackRateLabel(1))
+  const [playbackRate, setPlaybackRate] = useState(1)
+  // The menu lives in a fixed layer, so it needs the trigger's viewport anchor plus the remaining
+  // time it was opened with; later ticks repaint the labels in place.
+  const [rateMenu, setRateMenu] = useState<{ x: number; y: number; remainingSeconds?: number }>()
   const [timelineWindow, setTimelineWindow] = useState<ReviewTimelineWindow>()
   const stageRef = useRef<HTMLDivElement>(null)
   const currentTimeRef = useRef<HTMLSpanElement>(null)
   const progressRef = useRef<HTMLElement>(null)
   const scrubberRef = useRef<HTMLInputElement>(null)
+  const rateTriggerRef = useRef<HTMLButtonElement>(null)
+  const rateMenuRef = useRef<HTMLDivElement>(null)
   const lastPlaybackPositionRef = useRef<number | undefined>(undefined)
   const lastPersistedSecondRef = useRef(-1)
   const playbackRateRef = useRef(1)
@@ -392,6 +397,27 @@ export function VideoPreview({
     timelineCoordinatorRef.current!.request(timelineIdentity(), milliseconds)
   }
 
+  const remainingSeconds = (video: HTMLVideoElement): number | undefined => {
+    const duration = Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration
+      : detailRef.current.manifest.runtime.durationSeconds
+    if (!duration) return undefined
+    return Math.max(0, duration - video.currentTime)
+  }
+  // An unknown duration has no honest remaining time, so the rows keep the app's em dash.
+  const remainingLabel = (remaining: number | undefined, rate: number): string =>
+    durationLabel(remaining === undefined ? undefined : remaining / rate)
+  // Repainting the open menu's labels by hand keeps playback ticks out of React, exactly like the
+  // time code and the scrubber below.
+  const paintRateRemaining = (video: HTMLVideoElement): void => {
+    const menu = rateMenuRef.current
+    if (!menu) return
+    const remaining = remainingSeconds(video)
+    for (const node of menu.querySelectorAll<HTMLElement>('[data-rate]')) {
+      node.textContent = remainingLabel(remaining, Number(node.dataset.rate))
+    }
+  }
+
   const syncPlayback = (video: HTMLVideoElement): void => {
     const milliseconds = video.currentTime * 1000
     const currentWindow = timelineWindowRef.current
@@ -419,6 +445,7 @@ export function VideoPreview({
         scrubberRef.current.setAttribute('aria-valuetext', `${reviewTime(milliseconds)} / ${durationLabel(duration || undefined)}`)
       }
     }
+    paintRateRemaining(video)
   }
   syncPlaybackRef.current = syncPlayback
 
@@ -446,7 +473,8 @@ export function VideoPreview({
 
   useEffect(() => {
     setSubtitlePreview(true)
-    setRateInput(playbackRateLabel(1))
+    setPlaybackRate(1)
+    setRateMenu(undefined)
     playbackRateRef.current = 1
     if (videoRef.current) videoRef.current.playbackRate = 1
   }, [detail.manifest.taskId])
@@ -459,21 +487,35 @@ export function VideoPreview({
     }
   }, [])
 
-  // Arrow keys only drive the preview when nothing else owns them: typing in the cue editor, an
-  // open dialog and the focused scrubber all keep their native behaviour.
+  // Arrow keys and Space only drive the preview when nothing else owns them: typing in the cue
+  // editor, an open dialog and the focused scrubber all keep their native behaviour. Space is also
+  // the activation key of whatever control has focus, so the preview only claims it otherwise.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      const seeking = event.key === 'ArrowLeft' || event.key === 'ArrowRight'
+      if (!seeking && event.key !== ' ') return
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.defaultPrevented) return
       if (!videoRef.current) return
-      if ((event.target as HTMLElement | null)?.closest('input, textarea, select, [contenteditable="true"]')) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (!seeking && target?.closest('button, a, summary')) return
       if (document.querySelector('dialog[open]')) return
       event.preventDefault()
-      seekBy(event.key === 'ArrowLeft' ? -SEEK_STEP_SECONDS : SEEK_STEP_SECONDS)
+      if (seeking) seekBy(event.key === 'ArrowLeft' ? -SEEK_STEP_SECONDS : SEEK_STEP_SECONDS)
+      else togglePlayback()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  // The menu is anchored to where the trigger was when it opened, so a resize would leave it
+  // floating away from the toolbar.
+  useEffect(() => {
+    if (!rateMenu) return
+    const onResize = (): void => setRateMenu(undefined)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [rateMenu])
 
   useEffect(() => {
     const taskId = detail.manifest.taskId
@@ -512,15 +554,47 @@ export function VideoPreview({
       : (detailRef.current.manifest.runtime.durationSeconds ?? 0)
     video.currentTime = seekTarget(video.currentTime, deltaSeconds, duration)
   }
-  const changePlaybackRate = (value: string): void => {
-    setRateInput(value)
-    const parsed = parsePlaybackRate(value)
-    if (parsed === undefined) return
-    playbackRateRef.current = parsed
-    if (videoRef.current) videoRef.current.playbackRate = parsed
+  const openRateMenu = (): void => {
+    const trigger = rateTriggerRef.current
+    const video = videoRef.current
+    if (!trigger || !video) return
+    const bounds = trigger.getBoundingClientRect()
+    // The menu is centred on the trigger but stays inside the window; half its width plus a margin.
+    const inset = 96
+    setRateMenu({
+      x: Math.min(Math.max(bounds.left + bounds.width / 2, inset), window.innerWidth - inset),
+      y: bounds.top - 9,
+      remainingSeconds: remainingSeconds(video)
+    })
   }
-  const commitPlaybackRate = (): void => {
-    setRateInput(playbackRateLabel(playbackRateRef.current))
+  const closeRateMenu = (refocus: boolean): void => {
+    setRateMenu(undefined)
+    if (refocus) rateTriggerRef.current?.focus()
+  }
+  const selectPlaybackRate = (rate: number): void => {
+    setPlaybackRate(rate)
+    playbackRateRef.current = rate
+    if (videoRef.current) videoRef.current.playbackRate = rate
+    closeRateMenu(true)
+  }
+  const onRateMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault()
+      closeRateMenu(true)
+      return
+    }
+    const items = Array.from(rateMenuRef.current?.querySelectorAll('button') ?? [])
+    if (!items.length) return
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      ;(event.key === 'Home' ? items[0] : items[items.length - 1]).focus()
+      return
+    }
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    const current = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement))
+    const delta = event.key === 'ArrowDown' ? 1 : -1
+    items[(current + delta + items.length) % items.length].focus()
   }
   const persistPlayback = (video: HTMLVideoElement, force = false): void => {
     const seconds = video.currentTime
@@ -625,7 +699,14 @@ export function VideoPreview({
         >
           <Icon name="seek-back" />
         </button>
-        <button className="stage-play-button" type="button" disabled={!detail.mediaUrl} aria-label={isPlaying ? '暂停视频' : '播放视频'} onClick={togglePlayback}>
+        <button
+          className="stage-play-button"
+          type="button"
+          disabled={!detail.mediaUrl}
+          aria-label={isPlaying ? '暂停视频' : '播放视频'}
+          title={isPlaying ? '暂停（空格）' : '播放（空格）'}
+          onClick={togglePlayback}
+        >
           <Icon name={isPlaying ? 'pause' : 'play'} />
         </button>
         <button
@@ -662,24 +743,28 @@ export function VideoPreview({
             }}
           />
         </label>
-        <label className="stage-rate" title={`播放倍速 ${MIN_PLAYBACK_RATE}–${MAX_PLAYBACK_RATE}×`}>
-          <span className="sr-only">播放倍速</span>
-          <input
-            className="mono"
-            type="text"
-            list="stage-rate-presets"
-            inputMode="decimal"
-            spellCheck={false}
-            aria-label={`播放倍速 ${MIN_PLAYBACK_RATE}–${MAX_PLAYBACK_RATE}×`}
-            disabled={!detail.mediaUrl}
-            value={rateInput}
-            onChange={(event) => changePlaybackRate(event.target.value)}
-            onBlur={commitPlaybackRate}
-          />
-          <datalist id="stage-rate-presets">
-            {PLAYBACK_RATE_PRESETS.map((rate) => <option value={playbackRateLabel(rate)} key={rate} />)}
-          </datalist>
-        </label>
+        <button
+          ref={rateTriggerRef}
+          className="stage-rate"
+          type="button"
+          disabled={!detail.mediaUrl}
+          aria-haspopup="menu"
+          aria-expanded={Boolean(rateMenu)}
+          aria-label={`播放倍速，当前 ${playbackRateLabel(playbackRate)}`}
+          title="播放倍速"
+          data-off-normal={playbackRate === 1 ? undefined : 'true'}
+          onClick={openRateMenu}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+            event.preventDefault()
+            openRateMenu()
+          }}
+        >
+          <span className="stage-rate-value mono">{playbackRateLabel(playbackRate)}</span>
+          <svg className="stage-rate-caret" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="2.5 4.5 6 8 9.5 4.5" />
+          </svg>
+        </button>
         {showingBurnedFinal ? (
           <span className="preview-mode-badge">硬字幕成片</span>
         ) : (
@@ -699,11 +784,50 @@ export function VideoPreview({
           aria-label={isFullscreen ? '退出视频全屏' : '视频全屏'}
           aria-pressed={isFullscreen}
           title={isFullscreen ? '退出全屏' : '全屏'}
-          onClick={toggleFullscreen}
+          onClick={(event) => {
+            // A pointer click would leave this button focused, so Space would toggle fullscreen again
+            // instead of playback. Keyboard activation keeps its place in the tab order.
+            if (event.detail > 0) event.currentTarget.blur()
+            toggleFullscreen()
+          }}
         >
           <Icon name={isFullscreen ? 'fullscreen-exit' : 'fullscreen'} />
         </button>
       </div>
+      {rateMenu && (
+        <div className="stage-rate-layer" onPointerDown={() => closeRateMenu(false)}>
+          <div
+            ref={rateMenuRef}
+            className="stage-rate-menu"
+            role="menu"
+            aria-label="播放倍速"
+            style={{ left: rateMenu.x, top: rateMenu.y }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={onRateMenuKeyDown}
+          >
+            <div className="stage-rate-menu-head" aria-hidden="true">
+              <span />
+              <span />
+              <span>剩余</span>
+            </div>
+            {PLAYBACK_RATE_PRESETS.map((rate) => (
+              <button
+                className="stage-rate-item"
+                type="button"
+                role="menuitemradio"
+                aria-checked={rate === playbackRate}
+                autoFocus={rate === playbackRate}
+                key={rate}
+                onClick={() => selectPlaybackRate(rate)}
+              >
+                <Icon name="check" />
+                <span className="mono">{playbackRateLabel(rate)}</span>
+                <span className="stage-rate-remaining mono" data-rate={rate}>{remainingLabel(rateMenu.remainingSeconds, rate)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

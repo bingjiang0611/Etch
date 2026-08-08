@@ -1,9 +1,10 @@
-import type { TaskManifest } from '../../shared/task-schema'
+import type { TaskKind, TaskManifest } from '../../shared/task-schema'
 
 export interface IndexedTask {
   taskId: string
   location: string
   title: string
+  kind: TaskKind
   revision: number
   status: string
   updatedAt: string
@@ -23,6 +24,7 @@ export function indexedTask(location: string, manifest: TaskManifest): IndexedTa
     taskId: manifest.taskId,
     location,
     title: manifest.title,
+    kind: manifest.kind,
     revision: manifest.revision,
     status: taskStatus(manifest),
     updatedAt: manifest.updatedAt

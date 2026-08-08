@@ -515,6 +515,44 @@ test('offers Finder, record-only, and full-artifact actions from a task row cont
   }
 })
 
+test('keeps the queue scroll position and hands focus to a neighbour card after a delete', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'etch-delete-scroll-e2e-'))
+  const workspaceRoot = join(userData, 'workspace')
+  await mkdir(workspaceRoot)
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  await writeFile(
+    join(userData, 'app-state.json'),
+    `${JSON.stringify({ schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+  for (let index = 0; index < 18; index += 1) {
+    const taskDirectory = join(workspaceRoot, `scroll--${index}`)
+    await mkdir(taskDirectory)
+    const manifest = createTaskManifest({ kind: 'url', url: `https://example.com/scroll-video-${index}` }, `Scroll Video ${index}`, 'codex')
+    await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  }
+
+  const application = await launchHermeticEtch(userData)
+  try {
+    const window = await application.firstWindow()
+    await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(18)
+    await expect(window.locator('.task-row')).toHaveCount(18)
+    const panel = window.locator('.main-panel')
+    await window.locator('.task-row').nth(14).click({ button: 'right' })
+    const scrolled = await panel.evaluate((element) => element.scrollTop)
+    expect(scrolled).toBeGreaterThan(0)
+
+    await window.getByRole('menuitem', { name: '仅删除任务记录', exact: true }).click()
+    await window.locator('.task-delete-dialog').getByRole('button', { name: '仅删除任务记录', exact: true }).click()
+    await expect(window.locator('.task-row')).toHaveCount(17)
+    await expect(window.locator('.task-row').nth(14).locator('.task-row-open')).toBeFocused()
+    expect(await panel.evaluate((element) => element.scrollTop)).toBe(scrolled)
+  } finally {
+    await quitApplication(application)
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
 test('merges every completed audit into one deduplicated glossary and supports deletion', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'etch-glossary-catalog-e2e-'))
   const workspaceRoot = join(userData, 'workspace')

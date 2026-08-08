@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationDraftSchema, BilibiliQrStateSchema, type BilibiliAccount, type BilibiliPartition, type BilibiliPublicationDraft, type BilibiliQrState } from './bilibili'
-import { ProviderIdSchema, StageIdSchema, StageStatusSchema, SubtitlePresetSchema, TaskManifestSchema } from './task-schema'
+import { ModelSelectionSchema, ProviderIdSchema, StageIdSchema, StageStatusSchema, SubtitlePresetSchema, SummaryDraftRecordSchema, SummaryImagePlanEntrySchema, TaskKindSchema, TaskManifestSchema } from './task-schema'
 import { AppSettingsSchema, ToolIdSchema, type AppSettings } from './settings-schema'
 import { POOL_KINDS } from './pipeline'
 
@@ -33,6 +33,7 @@ export type TaskSchedule = z.infer<typeof TaskScheduleSchema>
 export const TaskSummarySchema = z.object({
   taskId: z.string().uuid(),
   title: z.string(),
+  kind: TaskKindSchema.default('subtitle'),
   status: StageStatusSchema,
   revision: z.number().int().nonnegative(),
   updatedAt: z.string().datetime({ offset: true }),
@@ -64,6 +65,7 @@ export type QueuePage = z.infer<typeof QueuePageSchema>
 export const CreateUrlsSchema = z.object({
   urls: z.array(z.string().url()).min(1).max(50),
   provider: ProviderIdSchema,
+  kind: TaskKindSchema.default('subtitle'),
   styleNote: z.string().trim().max(1000).default(''),
   autoPublish: z.boolean().default(false)
 })
@@ -287,10 +289,69 @@ export const ToolInstallPayloadSchema = z.object({ tool: InstallableToolSchema }
 export const ToolInstallResultSchema = z.object({ outcome: z.enum(['launched', 'homebrew-missing']) })
 export type ToolInstallResult = z.infer<typeof ToolInstallResultSchema>
 
+export const ImageCapabilitySchema = z.object({
+  provider: ProviderIdSchema,
+  available: z.boolean(),
+  reason: z.string().max(300).optional()
+})
+export type ImageCapabilityInfo = z.infer<typeof ImageCapabilitySchema>
+
+export const SummaryImageStateSchema = z.object({
+  filename: z.string().min(1),
+  alt: z.string(),
+  anchor: z.string(),
+  status: z.enum(['ready', 'pending']),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+  reason: z.string().max(300).optional()
+})
+
+export const SummaryPageSchema = z.object({
+  taskId: z.string().uuid(),
+  revision: z.number().int().nonnegative(),
+  availability: z.enum(['ready', 'not-ready']),
+  message: z.string().optional(),
+  markdown: z.string().max(2_000_000).default(''),
+  images: z.array(SummaryImageStateSchema).max(12).default([]),
+  draftRecord: SummaryDraftRecordSchema.optional(),
+  illustrationPhase: z.string().default('agent-pending'),
+  imageCapabilities: z.array(ImageCapabilitySchema).max(8).default([])
+})
+export type SummaryPage = z.infer<typeof SummaryPageSchema>
+
+export const SummaryImagePayloadSchema = z.object({
+  taskId: z.string().uuid(),
+  filename: z.string().min(1).max(120),
+  expectedSha256: z.string().regex(/^[a-f0-9]{64}$/u)
+})
+export const SummaryImageDataUrlSchema = z.string().startsWith('data:image/png;base64,').max(11_000_000).optional()
+
+export const ResolveIllustrationAgentSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  choice: z.discriminatedUnion('mode', [
+    z.object({ mode: z.literal('generate'), provider: ProviderIdSchema, model: ModelSelectionSchema }),
+    z.object({ mode: z.literal('skip') })
+  ])
+})
+
+export const ResolveIllustrationCoverSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  decision: z.enum(['accept', 'retry-with-agent', 'skip'])
+})
+
+export const ExportSummaryResultSchema = z.object({
+  cancelled: z.boolean(),
+  directory: z.string().optional(),
+  images: z.number().int().nonnegative().default(0)
+})
+export type ExportSummaryResult = z.infer<typeof ExportSummaryResultSchema>
+export type SummaryImagePlanEntry = z.infer<typeof SummaryImagePlanEntrySchema>
+
 export interface EtchApi {
   bootstrap(): Promise<Bootstrap>
   queuePage(offset?: number, limit?: number): Promise<QueuePage>
-  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string, autoPublish?: boolean): Promise<QueuePage>
+  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string, autoPublish?: boolean, kind?: z.infer<typeof TaskKindSchema>): Promise<QueuePage>
   taskDetail(taskId: string): Promise<TaskDetail>
   taskThumbnail(taskId: string, expectedSha256: string): Promise<string | undefined>
   startTask(taskId: string): Promise<TaskDetail>
@@ -300,6 +361,11 @@ export interface EtchApi {
   recoveryState(): Promise<RecoveryState>
   releaseRecovery(): Promise<RecoveryState>
   resolveAudit(taskId: string, decisions: Array<{ cueId: number; translation: string }>): Promise<TaskDetail>
+  resolveIllustrationAgent(taskId: string, expectedRevision: number, choice: z.infer<typeof ResolveIllustrationAgentSchema>['choice']): Promise<TaskDetail>
+  resolveIllustrationCover(taskId: string, expectedRevision: number, decision: z.infer<typeof ResolveIllustrationCoverSchema>['decision']): Promise<TaskDetail>
+  summaryPage(taskId: string): Promise<SummaryPage>
+  summaryImage(taskId: string, filename: string, expectedSha256: string): Promise<string | undefined>
+  exportSummary(taskId: string): Promise<ExportSummaryResult>
   completeReview(taskId: string, expectedRevision: number): Promise<TaskDetail>
   reviewPage(taskId: string, offset?: number, limit?: number): Promise<TaskReviewPage>
   reviewTimelineWindow(taskId: string, milliseconds: number, expectedRevision: number, expectedEnglishSha256?: string, expectedChineseSha256?: string, limit?: number): Promise<ReviewTimelineWindow>

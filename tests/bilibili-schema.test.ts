@@ -12,7 +12,7 @@ describe('B站投稿 schema', () => {
 
     const migrated = migrateTaskManifest(legacy)
 
-    expect(migrated.schemaVersion).toBe(2)
+    expect(migrated.schemaVersion).toBe(3)
     expect(migrated.publication).toEqual({ autoPublish: false, status: 'idle', attempt: 0 })
   })
 
