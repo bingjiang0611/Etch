@@ -8,11 +8,11 @@ import {
 } from '../src/renderer/provider-availability'
 
 describe('provider selection and availability', () => {
-  it('preserves every supported provider and defaults only an absent selection to Codex', () => {
-    expect(DEFAULT_PROVIDER).toBe('codex')
+  it('preserves every supported provider and defaults only an absent selection to Qoder', () => {
+    expect(DEFAULT_PROVIDER).toBe('qoder')
     expect(PROVIDER_IDS).toEqual(['claude', 'codex', 'qoder', 'opencode'])
     for (const provider of PROVIDER_IDS) expect(providerOrDefault(provider)).toBe(provider)
-    expect(providerOrDefault()).toBe('codex')
+    expect(providerOrDefault()).toBe('qoder')
   })
 
   it('fails closed before tool detection has completed', () => {

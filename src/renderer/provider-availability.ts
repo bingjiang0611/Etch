@@ -1,7 +1,7 @@
 import type { ToolHealthSnapshot } from '../shared/ipc'
 import type { ProviderId } from '../shared/task-schema'
 
-export const DEFAULT_PROVIDER = 'codex' as const satisfies ProviderId
+export const DEFAULT_PROVIDER = 'qoder' as const satisfies ProviderId
 export const PROVIDER_IDS = ['claude', 'codex', 'qoder', 'opencode'] as const satisfies readonly ProviderId[]
 
 export function providerOrDefault(provider?: ProviderId): ProviderId {

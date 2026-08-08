@@ -9,6 +9,7 @@ import type { GlossaryEdit } from './AuditGlossary'
 import { glossaryImpactCounts } from './glossary-impact'
 import { GlossaryCatalog } from './GlossaryCatalog'
 import { DEFAULT_PROVIDER, PROVIDER_IDS, providerAvailability, providerOrDefault } from './provider-availability'
+import { loadLastNewTaskProvider, resolveNewTaskProvider, saveLastNewTaskProvider } from './new-task-provider'
 import { detectInitialToolsWithRetry } from './tool-detection'
 import { mergeToolHealth } from './tool-health'
 import { parseTaskUrls } from './task-input'
@@ -482,6 +483,7 @@ export function App(): React.JSX.Element {
       await ensureRecoveryReleased()
       const next = await window.etch.createUrls(submittedUrls, submittedProvider, submittedStyleNote, submittedAutoPublish)
       commitQueuePage(next)
+      saveLastNewTaskProvider(() => window.localStorage, submittedProvider)
       setUrl((current) => (current === submittedUrlText ? '' : current))
       setStyleNote((current) => (current === submittedStyleNote ? '' : current))
       setAutoPublish((current) => (current === submittedAutoPublish ? false : current))
@@ -909,6 +911,8 @@ export function App(): React.JSX.Element {
 
   const openNewTask = (): void => {
     setError('')
+    providerEditVersionRef.current += 1
+    setProvider(resolveNewTaskProvider(loadLastNewTaskProvider(() => window.localStorage), settings.defaultProvider, toolHealth))
     setNewTaskOpen(true)
   }
 
