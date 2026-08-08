@@ -504,37 +504,32 @@ export function VideoPreview({
       <div className="stage-video">
         <div className="frame-grid" aria-hidden="true" />
         {detail.mediaUrl ? (
-          <>
-            <video
-              ref={videoRef}
-              playsInline
-              preload="metadata"
-              src={detail.mediaUrl}
-              onClick={togglePlayback}
-              onLoadedMetadata={(event) => restorePlayback(event.currentTarget)}
-              onTimeUpdate={(event) => {
-                syncPlayback(event.currentTarget)
-                persistPlayback(event.currentTarget)
-              }}
-              onSeeked={(event) => {
-                syncPlayback(event.currentTarget)
-                persistPlayback(event.currentTarget, true)
-              }}
-              onPlay={() => setIsPlaying(true)}
-              onPause={(event) => {
-                setIsPlaying(false)
-                if (event.currentTarget.ended) clearSavedPlayback()
-                else persistPlayback(event.currentTarget, true)
-              }}
-              onEnded={() => {
-                setIsPlaying(false)
-                clearSavedPlayback()
-              }}
-            />
-            <button className={`center-play media-play-toggle ${isPlaying ? 'is-playing' : ''}`} type="button" aria-label={isPlaying ? '暂停画面' : '播放画面'} onClick={togglePlayback}>
-              <Icon name={isPlaying ? 'pause' : 'play'} />
-            </button>
-          </>
+          <video
+            ref={videoRef}
+            playsInline
+            preload="metadata"
+            src={detail.mediaUrl}
+            onClick={togglePlayback}
+            onLoadedMetadata={(event) => restorePlayback(event.currentTarget)}
+            onTimeUpdate={(event) => {
+              syncPlayback(event.currentTarget)
+              persistPlayback(event.currentTarget)
+            }}
+            onSeeked={(event) => {
+              syncPlayback(event.currentTarget)
+              persistPlayback(event.currentTarget, true)
+            }}
+            onPlay={() => setIsPlaying(true)}
+            onPause={(event) => {
+              setIsPlaying(false)
+              if (event.currentTarget.ended) clearSavedPlayback()
+              else persistPlayback(event.currentTarget, true)
+            }}
+            onEnded={() => {
+              setIsPlaying(false)
+              clearSavedPlayback()
+            }}
+          />
         ) : (
           <div className="media-placeholder">
             <span className="center-play">

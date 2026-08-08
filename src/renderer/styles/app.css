@@ -493,10 +493,6 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .center-play { position: absolute; top: 44%; left: 50%; display: grid; width: 60px; height: 60px; place-items: center; transform: translate(-50%, -50%); border: 1.5px solid rgb(255 255 255 / 22%); border-radius: 50%; background: rgb(10 14 20 / 55%); backdrop-filter: blur(3px); }
 .center-play svg { width: 22px; height: 22px; margin-left: 3px; color: #dfe6ef; }
 .media-placeholder .center-play { position: static; transform: none; }
-.media-play-toggle { z-index: 4; padding: 0; color: var(--overlay-fg); cursor: pointer; transition: opacity 120ms ease-out, border-color 120ms ease-out, background-color 120ms ease-out; }
-.media-play-toggle.is-playing { opacity: 0; }
-.stage-video:hover .media-play-toggle.is-playing, .media-play-toggle:focus-visible { opacity: 1; }
-.media-play-toggle.is-playing svg { margin-left: 0; }
 .burn-overlay { position: relative; z-index: 2; width: 100%; padding: 0 24px 26px; text-align: center; pointer-events: none; }
 .burn-overlay p { margin: 0; }
 .burn-overlay .en { color: #f4f6f9; font-size: 21px; font-weight: 560; letter-spacing: -.01em; text-shadow: 0 1px 3px rgb(0 0 0 / 92%), 0 0 1px rgb(0 0 0 / 90%); }
