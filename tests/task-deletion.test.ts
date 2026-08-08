@@ -132,10 +132,9 @@ describe('moveTaskToTrash', () => {
     expect(item.indexStore.get(item.taskId)).toBeDefined()
   })
 
-  it('refuses to move a directory that is no longer explicitly registered', async () => {
+  it('still deletes a workspace task that discovery found without a registry entry', async () => {
     const item = await fixture()
     await item.registry.removeTaskLocation(item.taskDirectory)
-    let trashCalled = false
 
     await expect(moveTaskToTrash({
       taskId: item.taskId,
@@ -143,12 +142,16 @@ describe('moveTaskToTrash', () => {
       registry: item.registry,
       taskStore: item.taskStore,
       isRunning: () => false,
-      trashItem: async () => { trashCalled = true },
+      trashItem: async (path) => {
+        await mkdir(join(item.base, 'trash'), { recursive: true })
+        await rename(path, item.trashDirectory)
+      },
       protectedPaths: [item.base]
-    })).rejects.toThrow('任务目录不是 Etch 显式登记位置')
+    })).resolves.toBe(item.taskDirectory)
 
-    expect(trashCalled).toBe(false)
-    await expect(access(item.taskDirectory)).resolves.toBeUndefined()
+    await expect(access(item.taskDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(join(item.trashDirectory, 'task.json'))).resolves.toBeUndefined()
+    expect(item.indexStore.get(item.taskId)).toBeUndefined()
   })
 
   it('rejects a workspace child symlink that escapes the registered root', async () => {

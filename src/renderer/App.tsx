@@ -677,7 +677,7 @@ export function App(): React.JSX.Element {
       }
       setDeleteRequest(undefined)
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : '任务删除失败'
+      const message = readableRemoteError(caught, '任务删除失败')
       setTaskActionError(message)
       setTaskDeleteError(message)
     } finally {

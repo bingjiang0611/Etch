@@ -57,8 +57,9 @@ export async function moveTaskToTrash(options: DeleteTaskOptions): Promise<strin
   const taskDirectory = await canonicalPath(indexed.location)
   const protectedPaths = await Promise.all([...options.protectedPaths, ...registry.workspaceRoots].map(canonicalPath))
   if (protectedPaths.includes(taskDirectory)) throw new Error('任务目录与受保护目录重合，拒绝删除')
-  const explicitTaskLocations = await Promise.all(registry.explicitTaskLocations.map(canonicalPath))
-  if (!explicitTaskLocations.includes(taskDirectory)) throw new Error('任务目录不是 Etch 显式登记位置，拒绝删除')
+  // Being a direct child of a registered workspace root is the containment guard. Requiring an
+  // explicit registry entry on top of it would strand every task that discovery found by scanning a
+  // workspace root, because only task creation records those entries.
   if (!protectedPaths.slice(options.protectedPaths.length).some((root) => dirname(taskDirectory) === root)) {
     throw new Error('任务目录不在 Etch 工作区的直接子目录中，拒绝删除')
   }
