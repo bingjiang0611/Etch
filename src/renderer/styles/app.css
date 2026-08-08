@@ -329,9 +329,12 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .task-context-separator { height: 1px; margin: 4px 6px; background: var(--line); }
 
 .task-delete-dialog { width: min(520px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--dialog-bg); color: var(--fg); box-shadow: 0 28px 80px var(--shadow-ink-strong); }
-.task-delete-dialog[open] { display: grid; gap: 16px; }
+.task-delete-dialog[open] { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .task-delete-dialog::backdrop { background: var(--scrim); }
 .task-delete-heading { display: flex; align-items: flex-start; gap: 12px; }
+/* Without this the nowrap title below reports its full width as a minimum, widening the grid track
+   past the dialog so every row spills out and the confirm button is clipped. */
+.task-delete-heading > div { min-width: 0; }
 .task-delete-heading h2 { margin: 1px 0 4px; color: var(--fg-strong); font-size: 16px; }
 .task-delete-heading p { margin: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .task-delete-icon { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border: 1px solid var(--warn-line); border-radius: 7px; background: var(--warn-bg); color: var(--warn); }
