@@ -510,6 +510,16 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .stage-play-button { display: grid; width: 31px; height: 31px; flex: none; place-items: center; padding: 0; border: 1px solid var(--blue-strong); border-radius: 6px; background: var(--blue-strong); color: var(--on-accent); }
 .stage-play-button:disabled { opacity: .42; }
 .stage-play-button svg { width: 14px; height: 14px; }
+.stage-seek-button { display: grid; width: 27px; height: 27px; flex: none; place-items: center; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-raised); color: var(--fg-soft); transition: transform 130ms var(--ease-out), border-color 130ms ease, color 130ms ease; }
+.stage-seek-button:hover:not(:disabled) { border-color: var(--blue); color: var(--fg); }
+.stage-seek-button:active:not(:disabled) { transform: scale(.94); }
+.stage-seek-button:disabled { opacity: .42; }
+.stage-seek-button svg { width: 15px; height: 15px; }
+.stage-rate { display: inline-flex; flex: none; align-items: center; gap: 1px; padding: 3px 7px 3px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-sunken); color: var(--muted); font-size: 11px; }
+.stage-rate:focus-within { border-color: var(--blue); }
+/* Wide enough for `0.75` plus the datalist indicator Chromium paints inside the field. */
+.stage-rate input { width: 54px; padding: 0; border: 0; background: transparent; color: var(--fg); font: inherit; font-family: var(--font-mono); }
+.stage-rate input:disabled { opacity: .42; }
 .stage-fullscreen-button { display: grid; width: 31px; height: 31px; flex: none; place-items: center; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-raised); color: var(--fg-soft); transition: transform 130ms var(--ease-out), border-color 130ms ease, background-color 130ms ease, color 130ms ease; }
 .stage-fullscreen-button:active:not(:disabled) { transform: scale(.97); }
 .stage-fullscreen-button:disabled { opacity: .42; }

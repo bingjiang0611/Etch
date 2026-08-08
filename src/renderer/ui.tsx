@@ -4,13 +4,22 @@ import { POOL_BY_STAGE, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
 import type { ProviderId, StageId } from '../shared/task-schema'
 import { clearPlaybackPosition, loadPlaybackPosition, savePlaybackPosition } from './playback-position'
+import {
+  MAX_PLAYBACK_RATE,
+  MIN_PLAYBACK_RATE,
+  PLAYBACK_RATE_PRESETS,
+  SEEK_STEP_SECONDS,
+  parsePlaybackRate,
+  playbackRateLabel,
+  seekTarget
+} from './playback-controls'
 import { TimelineWindowCoordinator, type TimelineRequestIdentity } from './timeline-window-coordinator'
 
 export const pools = ['download', 'whisper', 'agent', 'audit', 'ffmpeg'] as const
 
 export type SubtitlePreset = AppSettings['subtitlePreset']
 type StageState = TaskDetail['manifest']['pipeline']['stages'][string]
-type IconName = 'queue' | 'glossary' | 'settings' | 'plus' | 'play' | 'pause' | 'back' | 'link' | 'local' | 'search' | 'chevron' | 'warning' | 'refresh' | 'empty' | 'check' | 'folder' | 'record-remove' | 'trash' | 'fullscreen' | 'fullscreen-exit'
+type IconName = 'queue' | 'glossary' | 'settings' | 'plus' | 'play' | 'pause' | 'seek-back' | 'seek-forward' | 'back' | 'link' | 'local' | 'search' | 'chevron' | 'warning' | 'refresh' | 'empty' | 'check' | 'folder' | 'record-remove' | 'trash' | 'fullscreen' | 'fullscreen-exit'
 
 export const providerNames: Record<ProviderId, string> = {
   claude: 'Claude Code',
@@ -84,6 +93,20 @@ export function Icon({ name }: { name: IconName }): React.JSX.Element {
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <rect x="7" y="5" width="3.5" height="14" rx="1" />
         <rect x="13.5" y="5" width="3.5" height="14" rx="1" />
+      </svg>
+    )
+  if (name === 'seek-back')
+    return (
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M11.5 6.5v11L4 12z" />
+        <path d="M20 6.5v11L12.5 12z" />
+      </svg>
+    )
+  if (name === 'seek-forward')
+    return (
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M4 6.5v11L11.5 12z" />
+        <path d="M12.5 6.5v11L20 12z" />
       </svg>
     )
   if (name === 'back')
@@ -327,6 +350,7 @@ export function VideoPreview({
   const [isPlaying, setIsPlaying] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [subtitlePreview, setSubtitlePreview] = useState(true)
+  const [rateInput, setRateInput] = useState(playbackRateLabel(1))
   const [timelineWindow, setTimelineWindow] = useState<ReviewTimelineWindow>()
   const stageRef = useRef<HTMLDivElement>(null)
   const currentTimeRef = useRef<HTMLSpanElement>(null)
@@ -334,6 +358,7 @@ export function VideoPreview({
   const scrubberRef = useRef<HTMLInputElement>(null)
   const lastPlaybackPositionRef = useRef<number | undefined>(undefined)
   const lastPersistedSecondRef = useRef(-1)
+  const playbackRateRef = useRef(1)
   const timelineWindowRef = useRef<ReviewTimelineWindow | undefined>(undefined)
   const detailRef = useRef(detail)
   const syncPlaybackRef = useRef<(video: HTMLVideoElement) => void>(() => undefined)
@@ -421,6 +446,9 @@ export function VideoPreview({
 
   useEffect(() => {
     setSubtitlePreview(true)
+    setRateInput(playbackRateLabel(1))
+    playbackRateRef.current = 1
+    if (videoRef.current) videoRef.current.playbackRate = 1
   }, [detail.manifest.taskId])
 
   useEffect(() => {
@@ -429,6 +457,22 @@ export function VideoPreview({
       unsubscribe()
       void window.etch.setVideoFullscreen(false).catch(() => undefined)
     }
+  }, [])
+
+  // Arrow keys only drive the preview when nothing else owns them: typing in the cue editor, an
+  // open dialog and the focused scrubber all keep their native behaviour.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.defaultPrevented) return
+      if (!videoRef.current) return
+      if ((event.target as HTMLElement | null)?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('dialog[open]')) return
+      event.preventDefault()
+      seekBy(event.key === 'ArrowLeft' ? -SEEK_STEP_SECONDS : SEEK_STEP_SECONDS)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
   useEffect(() => {
@@ -460,6 +504,24 @@ export function VideoPreview({
     if (video.paused) void video.play().catch(() => undefined)
     else video.pause()
   }
+  const seekBy = (deltaSeconds: number): void => {
+    const video = videoRef.current
+    if (!video) return
+    const duration = Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration
+      : (detailRef.current.manifest.runtime.durationSeconds ?? 0)
+    video.currentTime = seekTarget(video.currentTime, deltaSeconds, duration)
+  }
+  const changePlaybackRate = (value: string): void => {
+    setRateInput(value)
+    const parsed = parsePlaybackRate(value)
+    if (parsed === undefined) return
+    playbackRateRef.current = parsed
+    if (videoRef.current) videoRef.current.playbackRate = parsed
+  }
+  const commitPlaybackRate = (): void => {
+    setRateInput(playbackRateLabel(playbackRateRef.current))
+  }
   const persistPlayback = (video: HTMLVideoElement, force = false): void => {
     const seconds = video.currentTime
     lastPlaybackPositionRef.current = seconds
@@ -473,6 +535,7 @@ export function VideoPreview({
     }
   }
   const restorePlayback = (video: HTMLVideoElement): void => {
+    video.playbackRate = playbackRateRef.current
     try {
       const restored = loadPlaybackPosition(window.localStorage, detail.manifest.taskId, video.duration)
       if (restored !== undefined) {
@@ -552,8 +615,28 @@ export function VideoPreview({
         )}
       </div>
       <div className="stage-toolbar">
+        <button
+          className="stage-seek-button"
+          type="button"
+          disabled={!detail.mediaUrl}
+          aria-label={`后退 ${SEEK_STEP_SECONDS} 秒`}
+          title={`后退 ${SEEK_STEP_SECONDS} 秒（←）`}
+          onClick={() => seekBy(-SEEK_STEP_SECONDS)}
+        >
+          <Icon name="seek-back" />
+        </button>
         <button className="stage-play-button" type="button" disabled={!detail.mediaUrl} aria-label={isPlaying ? '暂停视频' : '播放视频'} onClick={togglePlayback}>
           <Icon name={isPlaying ? 'pause' : 'play'} />
+        </button>
+        <button
+          className="stage-seek-button"
+          type="button"
+          disabled={!detail.mediaUrl}
+          aria-label={`前进 ${SEEK_STEP_SECONDS} 秒`}
+          title={`前进 ${SEEK_STEP_SECONDS} 秒（→）`}
+          onClick={() => seekBy(SEEK_STEP_SECONDS)}
+        >
+          <Icon name="seek-forward" />
         </button>
         <span className="stage-time mono">
           <span ref={currentTimeRef}>0:00</span>
@@ -578,6 +661,24 @@ export function VideoPreview({
               if (duration) video.currentTime = (Number(event.currentTarget.value) / 1000) * duration
             }}
           />
+        </label>
+        <label className="stage-rate" title={`播放倍速 ${MIN_PLAYBACK_RATE}–${MAX_PLAYBACK_RATE}×`}>
+          <span className="sr-only">播放倍速</span>
+          <input
+            className="mono"
+            type="text"
+            list="stage-rate-presets"
+            inputMode="decimal"
+            spellCheck={false}
+            aria-label={`播放倍速 ${MIN_PLAYBACK_RATE}–${MAX_PLAYBACK_RATE}×`}
+            disabled={!detail.mediaUrl}
+            value={rateInput}
+            onChange={(event) => changePlaybackRate(event.target.value)}
+            onBlur={commitPlaybackRate}
+          />
+          <datalist id="stage-rate-presets">
+            {PLAYBACK_RATE_PRESETS.map((rate) => <option value={playbackRateLabel(rate)} key={rate} />)}
+          </datalist>
         </label>
         {showingBurnedFinal ? (
           <span className="preview-mode-badge">硬字幕成片</span>
