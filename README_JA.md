@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.26/Etch-0.1.26-arm64.dmg"><strong>v0.1.26 DMG をダウンロード</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.29/Etch-0.1.29-arm64.dmg"><strong>v0.1.29 DMG をダウンロード</strong></a>
   ·
   <a href="#3-ステップで開始">3 ステップで開始</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.26 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 入力 · 公開 DMG に Bilibili 投稿機能を収録</sub>
+  <sub>v0.1.29 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 入力 · 公開 DMG に Bilibili 投稿機能を収録</sub>
 </p>
 
 ## 確認でき、途中から再開できる動画制作フロー
@@ -45,7 +45,7 @@ Etch は、長尺動画の翻訳を中身の見えない一度きりの「AI 生
 
 ### 1. インストール
 
-1. [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) から `Etch-0.1.26-arm64.dmg` をダウンロードします。
+1. [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) から `Etch-0.1.29-arm64.dmg` をダウンロードします。
 2. DMG を開き、`Etch.app` を `Applications` にドラッグします。
 3. 初回起動時に Gatekeeper でブロックされた場合は、Finder で Etch を右クリックして「開く」を選択します。それでも開けない場合は、「システム設定 → プライバシーとセキュリティ」から「このまま開く」を選びます。
 
@@ -67,7 +67,7 @@ Etch は起動時に、実行ファイル、バージョン、必要な機能、
 
 タスクキューに 1～50 件の HTTP(S) 動画 URL を貼り付け、Provider を選び、必要に応じて翻訳スタイルを入力します。実行中のタスクは停止でき、最後に確定した段階から再開できます。
 
-現在のバージョンは `0.1.26` です。入力は **HTTP(S) URL のみ**で、ローカルファイルの取り込みはまだ計画段階です。GitHub Releases から Apple Silicon 用 DMG を配布しています。
+現在のバージョンは `0.1.29` です。入力は **HTTP(S) URL のみ**で、ローカルファイルの取り込みはまだ計画段階です。GitHub Releases から Apple Silicon 用 DMG を配布しています。
 
 ## Bilibili へ投稿
 
@@ -117,7 +117,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` は `dist/mac-arm64/Etch.app` を構築・検証し、`npm run dist:mac` は `dist/Etch-0.1.26-arm64.dmg` を構築、マウント、検証します。DMG 検証では、ボリューム内の allowlist、App の署名、entitlements、arm64 アーキテクチャ、バージョン、最低 macOS バージョンに加え、固定版 `biliup` sidecar のアーキテクチャ、バージョン、実行権限、SHA-256 を確認します。
+`npm run pack` は `dist/mac-arm64/Etch.app` を構築・検証し、`npm run dist:mac` は `dist/Etch-0.1.29-arm64.dmg` を構築、マウント、検証します。DMG 検証では、ボリューム内の allowlist、App の署名、entitlements、arm64 アーキテクチャ、バージョン、最低 macOS バージョンに加え、固定版 `biliup` sidecar のアーキテクチャ、バージョン、実行権限、SHA-256 を確認します。
 
 </details>
 
