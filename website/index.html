@@ -156,12 +156,7 @@
     box-shadow:0 40px 90px -40px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.02) inset;
     aspect-ratio:16/10;
   }
-  .router{position:absolute;inset:0;padding:20px;display:flex;flex-direction:column}
-  .router-head{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--faint);font:11px var(--font-mono);letter-spacing:.06em;text-transform:uppercase}
-  .router-status{display:inline-flex;align-items:center;gap:7px;color:var(--ok)}
-  .router-status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px rgba(108,199,154,.5)}
-  .router-url{margin-top:18px;padding:12px 14px;border:1px solid var(--line-strong);border-radius:10px;background:rgba(8,11,15,.72);color:var(--fg-soft);font:12px/1.4 var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .router-label{margin:18px 0 9px;color:var(--faint);font:10px var(--font-mono);letter-spacing:.1em;text-transform:uppercase}
+  .router{position:absolute;inset:0;padding:20px;display:flex;flex-direction:column;justify-content:center}
   .router-options{display:grid;gap:8px}
   .router-option{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:11px;padding:10px 12px;border:1px solid var(--line-shell);border-radius:11px;background:rgba(17,20,25,.82)}
   .router-option.active{border-color:#304967;background:rgba(28,41,59,.72);box-shadow:0 0 0 1px rgba(67,140,245,.08) inset}
@@ -300,8 +295,6 @@
     .hero{padding-top:52px}
     .hero h1{font-size:clamp(38px,12vw,54px)}
     .router{padding:14px}
-    .router-url{margin-top:12px}
-    .router-label{margin-top:12px}
     .router-option{grid-template-columns:30px minmax(0,1fr);padding:8px 10px}
     .router-option .route-icon{width:30px;height:30px}
     .router-option .state{display:none}
@@ -414,9 +407,6 @@
     <!-- signature: truthful URL routing preview -->
     <div class="frame" data-od-id="hero-preview" aria-label="Etch 将 URL 分流到三类可恢复任务">
       <div class="router">
-        <div class="router-head"><span>URL ROUTER · 0.2.14</span><span class="router-status">ready</span></div>
-        <div class="router-url">https://example.com/source</div>
-        <div class="router-label">choose a deliverable</div>
         <div class="router-options">
           <div class="router-option active"><span class="route-icon">SRT</span><div><strong>双语硬字幕</strong><small>平台分流 · 逐批翻译 · 成片验证</small></div><span class="state">recoverable</span></div>
           <div class="router-option"><span class="route-icon">A/B/C</span><div><strong>视频总结</strong><small>真实 research · 证据账本 · 隔离配图</small></div><span class="state">evidence</span></div>
