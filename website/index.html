@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Etch &#x2014; &#x4ECE;&#x82F1;&#x6587;&#x89C6;&#x9891;&#x5230;&#x53CC;&#x8BED;&#x6210;&#x7247;&#xFF0C;&#x518D;&#x5230; B&#x7AD9;&#x6295;&#x7A3F;</title>
-<meta name="description" content="Etch &#x662F; Apple Silicon Mac &#x4E0A;&#x7684;&#x672C;&#x5730;&#x53CC;&#x8BED;&#x8BD1;&#x5236;&#x5DE5;&#x4F5C;&#x7AD9;&#xFF1A;&#x4ECE;&#x89C6;&#x9891; URL &#x5230;&#x53EF;&#x6821;&#x5BF9;&#x7684;&#x53CC;&#x8BED;&#x786C;&#x5B57;&#x5E55;&#x6210;&#x7247;&#xFF1B;v0.2.13 &#x652F;&#x6301;&#x7531;&#x672C;&#x673A;&#x76F4;&#x8FDE; B&#x7AD9;&#x7684;&#x624B;&#x52A8;&#x4E0E;&#x81EA;&#x52A8;&#x6295;&#x7A3F;&#x3002;" />
+<title>Etch &#x2014; &#x672C;&#x5730;&#x89C6;&#x9891;&#x4E0E;&#x7F51;&#x9875;&#x5185;&#x5BB9;&#x7FFB;&#x8BD1;&#x5DE5;&#x4F5C;&#x7AD9;</title>
+<meta name="description" content="Etch &#x662F; Apple Silicon Mac &#x4E0A;&#x7684;&#x672C;&#x5730;&#x89C6;&#x9891;&#x4E0E;&#x7F51;&#x9875;&#x5185;&#x5BB9;&#x7FFB;&#x8BD1;&#x5DE5;&#x4F5C;&#x7AD9;&#xFF1A;&#x628A; URL &#x5206;&#x6D41;&#x4E3A;&#x53CC;&#x8BED;&#x786C;&#x5B57;&#x5E55;&#x3001;&#x8BC1;&#x636E;&#x53EF;&#x8FFD;&#x6EAF;&#x7684;&#x89C6;&#x9891;&#x603B;&#x7ED3;&#x6216;&#x7ED3;&#x6784;&#x4FDD;&#x771F;&#x7684;&#x4E2D;&#x6587;&#x6587;&#x6863;&#xFF0C;&#x5E76;&#x4ECE; checkpoint &#x6062;&#x590D;&#x3002;" />
 <meta name="theme-color" content="#0b0d10" />
 <link rel="canonical" href="https://etch-d0q.pages.dev/" />
 <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-<meta property="og:title" content="Etch &#xB7; &#x672C;&#x5730;&#x53CC;&#x8BED;&#x8BD1;&#x5236;&#x4E0E; B&#x7AD9;&#x6295;&#x7A3F;" />
-<meta property="og:description" content="&#x4ECE;&#x82F1;&#x6587;&#x89C6;&#x9891;&#x94FE;&#x63A5;&#xFF0C;&#x5230;&#x53EF;&#x6821;&#x5BF9;&#x7684;&#x53CC;&#x8BED;&#x786C;&#x5B57;&#x5E55;&#xFF0C;&#x518D;&#x7531;&#x672C;&#x673A;&#x76F4;&#x8FDE; B&#x7AD9;&#x6295;&#x7A3F;&#x3002;" />
+<meta property="og:title" content="Etch &#xB7; &#x672C;&#x5730;&#x89C6;&#x9891;&#x4E0E;&#x7F51;&#x9875;&#x5185;&#x5BB9;&#x7FFB;&#x8BD1;&#x5DE5;&#x4F5C;&#x7AD9;" />
+<meta property="og:description" content="&#x4E00;&#x4E2A; URL&#xFF0C;&#x5206;&#x6D41;&#x4E3A;&#x53CC;&#x8BED;&#x786C;&#x5B57;&#x5E55;&#x3001;&#x8BC1;&#x636E;&#x53EF;&#x8FFD;&#x6EAF;&#x7684;&#x89C6;&#x9891;&#x603B;&#x7ED3;&#x6216;&#x7ED3;&#x6784;&#x4FDD;&#x771F;&#x7684;&#x4E2D;&#x6587;&#x6587;&#x6863;&#x3002;" />
 <meta property="og:type" content="website" />
 <meta property="og:locale" content="zh_CN" />
 <meta property="og:url" content="https://etch-d0q.pages.dev/" />
@@ -22,9 +22,9 @@
   "name": "Etch",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "macOS 13.5 or later, Apple Silicon",
-  "softwareVersion": "0.2.13",
-  "downloadUrl": "https://github.com/bingjiang0611/Etch/releases/download/v0.2.13/Etch-0.2.13-arm64.dmg",
-  "description": "本地英中双语硬字幕工作站"
+  "softwareVersion": "0.1.2",
+  "downloadUrl": "https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg",
+  "description": "本地视频与网页内容翻译工作站"
 }
 </script>
 <style>
@@ -59,11 +59,10 @@
     --r:14px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html{scroll-behavior:smooth}
+  html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
   body{
     background:var(--bg);color:var(--fg);
     font:16px/1.6 var(--font-body);
-    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
     overflow-x:hidden;
   }
   ::selection{background:rgba(67,140,245,.28);color:#fff}
@@ -80,7 +79,7 @@
   .eyebrow::before{content:"";width:22px;height:1px;background:var(--accent);opacity:.7}
   section{position:relative}
   .sec-head{max-width:640px;margin:0 0 44px}
-  .sec-head h2{font-family:var(--font-display);font-weight:600;font-size:clamp(28px,3.4vw,40px);letter-spacing:-.02em;line-height:1.1}
+  .sec-head h2{font-family:var(--font-display);font-weight:600;font-size:clamp(28px,3.4vw,40px);letter-spacing:-.02em;line-height:1.1;text-wrap:balance}
   .sec-head p{color:var(--muted);margin-top:14px;font-size:16.5px;text-wrap:pretty}
 
   /* ---------- background grain / structure ---------- */
@@ -108,22 +107,22 @@
   .brand-icon{width:28px;height:28px;flex:none;filter:drop-shadow(0 5px 10px rgba(0,0,0,.28))}
   .brand .ipa{font-family:var(--font-mono);font-size:12px;color:var(--faint);letter-spacing:.04em}
   .nav-links{display:flex;gap:4px;margin-left:14px}
-  .nav-links a{padding:7px 12px;border-radius:8px;color:var(--muted);font-size:14.5px;transition:color 160ms ease,background-color 160ms ease}
+  .nav-links a{display:inline-flex;align-items:center;min-height:40px;padding:7px 12px;border-radius:8px;color:var(--muted);font-size:14.5px;transition:color 160ms ease,background-color 160ms ease}
   .nav-right{margin-left:auto;display:flex;align-items:center;gap:12px}
-  .ghost{display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border-radius:9px;border:1px solid var(--line-strong);color:var(--fg-soft);font-size:14px;transition:transform 140ms cubic-bezier(.23,1,.32,1),border-color 160ms ease,color 160ms ease,background-color 160ms ease}
+  .ghost{display:inline-flex;align-items:center;justify-content:center;min-height:44px;gap:8px;padding:8px 13px;border-radius:9px;border:1px solid var(--line-strong);color:var(--fg-soft);font-size:14px;transition:transform 140ms cubic-bezier(.23,1,.32,1),border-color 160ms ease,color 160ms ease,background-color 160ms ease}
   .btn{
-    display:inline-flex;align-items:center;gap:9px;padding:9px 17px;border-radius:10px;
+    display:inline-flex;align-items:center;justify-content:center;min-height:44px;gap:9px;padding:9px 15px 9px 17px;border-radius:10px;
     background:var(--accent);color:#fff;font-weight:560;font-size:14.5px;
     border:1px solid rgba(159,196,255,.35);
     box-shadow:0 1px 0 rgba(255,255,255,.18) inset,0 8px 24px -10px rgba(67,140,245,.7);
     white-space:nowrap;transition:transform 140ms cubic-bezier(.23,1,.32,1),background-color 160ms ease;
   }
-  .btn:active,.ghost:active{transform:scale(.97)}
+  .btn:active,.ghost:active{transform:scale(.96)}
   .btn svg,.ghost svg{width:16px;height:16px;stroke:currentColor;stroke-width:1.7;fill:none}
 
   /* ---------- hero ---------- */
   .hero{position:relative;z-index:1;padding:78px 0 34px}
-  .hero-grid{display:grid;grid-template-columns:1.02fr .98fr;gap:58px;align-items:center}
+  .hero-grid{display:grid;grid-template-columns:1.04fr .96fr;gap:58px;align-items:center}
   .hero h1{
     font-family:var(--font-display);font-weight:600;letter-spacing:-.032em;line-height:1.02;
     font-size:clamp(40px,5.6vw,68px);margin:22px 0 0;text-wrap:balance;
@@ -140,7 +139,7 @@
     animation:sweep 4.6s ease-in-out infinite;
   }
   @keyframes sweep{0%,72%{transform:translateX(-120%)}86%,100%{transform:translateX(120%)}}
-  .hero .lede{color:var(--fg-soft);font-size:18px;margin-top:22px;max-width:520px;text-wrap:pretty}
+  .hero .lede{color:var(--fg-soft);font-size:18px;margin-top:22px;max-width:560px;text-wrap:pretty}
   .hero .lede b{color:var(--fg);font-weight:560}
   .hero-cta{display:flex;gap:13px;margin-top:30px;flex-wrap:wrap}
   .hero-cta .btn{padding:12px 22px;font-size:15.5px}
@@ -148,7 +147,7 @@
   .spec-line .dot{width:3px;height:3px;border-radius:50%;background:var(--line-strong)}
   .spec-line b{color:var(--muted);font-weight:500}
 
-  /* signature: burned bilingual frame */
+  /* signature: URL router */
   .frame{
     position:relative;border-radius:var(--r);overflow:hidden;
     border:1px solid var(--line-strong);
@@ -157,27 +156,19 @@
     box-shadow:0 40px 90px -40px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.02) inset;
     aspect-ratio:16/10;
   }
-  .frame .scan{position:absolute;inset:0;background:linear-gradient(180deg,transparent,rgba(67,140,245,.10) 46%,transparent 54%);animation:scan 5.5s linear infinite;mix-blend-mode:screen}
-  @keyframes scan{0%{transform:translateY(-60%)}100%{transform:translateY(160%)}}
-  .frame .chip-row{position:absolute;top:14px;left:16px;display:flex;gap:7px}
-  .frame .chip{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;color:var(--fg-soft);background:rgba(8,11,15,.7);border:1px solid var(--line);padding:4px 9px;border-radius:7px}
-  .frame .chip.rec{color:var(--run)}
-  .frame .chip.rec::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--run);margin-right:6px;vertical-align:middle;box-shadow:0 0 8px var(--run)}
-  .burn{position:absolute;left:0;right:0;bottom:0;padding:0 0 30px;text-align:center}
-  .burn .en{
-    font-family:var(--font-display);font-weight:600;color:#fff;font-size:clamp(18px,2.3vw,27px);letter-spacing:-.01em;
-    text-shadow:0 2px 10px rgba(0,0,0,.85),0 0 1px rgba(0,0,0,.9);
-  }
-  .burn .cn{
-    margin-top:8px;font-weight:600;font-size:clamp(19px,2.5vw,29px);letter-spacing:.01em;
-    color:#dbe8ff;
-    text-shadow:0 2px 12px rgba(0,0,0,.9),0 0 20px rgba(67,140,245,.35);
-  }
-  .frame .track{position:absolute;left:24px;right:24px;bottom:16px;height:2px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
-  .frame .track i{position:absolute;left:0;top:0;bottom:0;width:38%;background:linear-gradient(90deg,transparent,var(--accent));animation:play 5.5s cubic-bezier(.4,0,.2,1) infinite}
-  @keyframes play{0%{width:6%}100%{width:97%}}
-  .frame .stack{position:absolute;right:14px;bottom:34px;display:flex;flex-direction:column;gap:5px;align-items:flex-end}
-  .frame .stack .lbl{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
+  .router{position:absolute;inset:0;padding:20px;display:flex;flex-direction:column}
+  .router-head{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--faint);font:11px var(--font-mono);letter-spacing:.06em;text-transform:uppercase}
+  .router-status{display:inline-flex;align-items:center;gap:7px;color:var(--ok)}
+  .router-status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px rgba(108,199,154,.5)}
+  .router-url{margin-top:18px;padding:12px 14px;border:1px solid var(--line-strong);border-radius:10px;background:rgba(8,11,15,.72);color:var(--fg-soft);font:12px/1.4 var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .router-label{margin:18px 0 9px;color:var(--faint);font:10px var(--font-mono);letter-spacing:.1em;text-transform:uppercase}
+  .router-options{display:grid;gap:8px}
+  .router-option{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:11px;padding:10px 12px;border:1px solid var(--line-shell);border-radius:11px;background:rgba(17,20,25,.82)}
+  .router-option.active{border-color:#304967;background:rgba(28,41,59,.72);box-shadow:0 0 0 1px rgba(67,140,245,.08) inset}
+  .router-option .route-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;background:var(--surface-sunken);color:var(--blue);font:11px var(--font-mono)}
+  .router-option strong{display:block;font-size:13px;font-weight:600;color:var(--fg-soft)}
+  .router-option small{display:block;margin-top:1px;color:var(--faint);font-size:10.5px;line-height:1.35;text-wrap:pretty}
+  .router-option .state{color:var(--ok);font:9.5px var(--font-mono);letter-spacing:.05em;text-transform:uppercase}
 
   /* ---------- logo strip / flow ---------- */
   .flow{position:relative;z-index:1;padding:22px 0 8px}
@@ -205,6 +196,19 @@
   .card .ic svg{width:20px;height:20px;stroke:var(--accent);stroke-width:1.6;fill:none}
   .card h3{font-family:var(--font-display);font-weight:600;font-size:17.5px;letter-spacing:-.01em}
   .card p{color:var(--muted);font-size:14.5px;margin-top:9px;text-wrap:pretty}
+
+  /* ---------- three workflows ---------- */
+  .workflow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .workflow-card{display:flex;flex-direction:column;min-width:0;padding:24px;border:1px solid var(--line-shell);border-radius:18px;background:linear-gradient(180deg,var(--surface),var(--surface-sunken));box-shadow:0 18px 60px -48px rgba(0,0,0,.95)}
+  .workflow-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .workflow-id{color:var(--blue);font:11px var(--font-mono);letter-spacing:.12em}
+  .workflow-state{padding:4px 8px;border-radius:999px;background:rgba(108,199,154,.08);color:var(--ok);font:9.5px var(--font-mono);letter-spacing:.06em;text-transform:uppercase}
+  .workflow-card h3{margin-top:22px;font:600 22px/1.15 var(--font-display);letter-spacing:-.02em;text-wrap:balance}
+  .workflow-card>p{margin-top:10px;color:var(--muted);font-size:14px;text-wrap:pretty}
+  .proof-list{display:grid;gap:10px;margin-top:22px;padding-top:18px;border-top:1px solid var(--line-shell);list-style:none}
+  .proof-list li{display:grid;grid-template-columns:14px 1fr;gap:9px;color:var(--fg-soft);font-size:12.5px;line-height:1.5;text-wrap:pretty}
+  .proof-list li::before{content:"";width:6px;height:6px;margin-top:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(67,140,245,.1)}
+  .workflow-foot{margin-top:auto;padding-top:22px;color:var(--faint);font:10.5px/1.5 var(--font-mono)}
 
   /* ---------- pipeline ---------- */
   .pipe-wrap{border:1px solid var(--line-shell);border-radius:18px;background:linear-gradient(180deg,var(--surface),var(--surface-sunken));padding:30px 30px 26px;position:relative;overflow:hidden}
@@ -242,7 +246,7 @@
   .publish-fact span{display:block;margin-top:2px;color:var(--faint);font-size:12.5px;line-height:1.55}
   .publish-shot{min-width:0}
   .publish-shot-frame{overflow:hidden;border:1px solid var(--line-strong);border-radius:16px;background:var(--surface);box-shadow:0 42px 90px -44px rgba(0,0,0,.9)}
-  .publish-shot img{display:block;width:100%;height:auto}
+  .publish-shot img{display:block;width:100%;height:auto;outline:1px solid oklch(1 0 0 / .1);outline-offset:-1px}
   .publish-shot figcaption{margin-top:12px;color:var(--faint);font-size:11.5px;line-height:1.6;text-align:right}
   .publish-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:42px}
   .publish-step{padding:18px;border:1px solid var(--line-shell);border-radius:11px;background:rgba(17,20,25,.7)}
@@ -273,11 +277,11 @@
     .nav-links a:hover{color:var(--fg-soft);background:var(--surface-raised)}
     .ghost:hover{border-color:var(--accent);color:#fff}
     .btn:hover{background:#5197f7;transform:translateY(-1px)}
-    .card:hover{border-color:var(--line-strong);background:var(--surface-raised);transform:translateY(-2px)}
   }
   @media (max-width:900px){
     .hero-grid{grid-template-columns:1fr;gap:36px}
     .cards{grid-template-columns:1fr 1fr}
+    .workflow-grid{grid-template-columns:1fr}
     .tools{grid-template-columns:1fr 1fr}
     .nav-links{display:none}
     .pipe-rail{grid-template-columns:repeat(5,1fr);gap:6px 0;row-gap:22px}
@@ -293,6 +297,14 @@
     .nav-right .ghost{width:38px;justify-content:center;padding:8px}
     .nav-right .ghost span{display:none}
     .nav-right .btn{padding:9px 12px}
+    .hero{padding-top:52px}
+    .hero h1{font-size:clamp(38px,12vw,54px)}
+    .router{padding:14px}
+    .router-url{margin-top:12px}
+    .router-label{margin-top:12px}
+    .router-option{grid-template-columns:30px minmax(0,1fr);padding:8px 10px}
+    .router-option .route-icon{width:30px;height:30px}
+    .router-option .state{display:none}
     .pipe-rail{grid-template-columns:repeat(2,1fr)}
     .flow-arrow{display:none}
     .flow-rail{gap:12px 18px}
@@ -358,8 +370,9 @@
       Etch <span class="ipa">/etʃ/</span>
     </a>
     <nav class="nav-links">
-      <a href="#product">产品</a>
-      <a href="#pipeline">流水线</a>
+      <a href="#workflows">三类任务</a>
+      <a href="#product">恢复机制</a>
+      <a href="#pipeline">硬字幕流水线</a>
       <a href="#publish">B站投稿</a>
       <a href="#runtime">运行环境</a>
     </nav>
@@ -368,9 +381,9 @@
         <svg viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
         <span>GitHub</span>
       </a>
-      <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.13/Etch-0.2.13-arm64.dmg" data-od-id="nav-download">
+      <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg" data-od-id="nav-download">
         <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
-        下载 v0.2.13
+        下载 v0.1.2
       </a>
     </div>
   </div>
@@ -383,36 +396,33 @@
 <section class="hero" data-od-id="hero">
   <div class="wrap hero-grid">
     <div>
-      <span class="eyebrow">本地优先 · 人工可控 · v0.2.13 支持 B站投稿</span>
-      <h1>把英文视频，<br><span class="etch">刻</span>成可校对的双语成片。</h1>
-      <p class="lede">一个 URL 进，<b>可校对的双语硬字幕成片</b>出。Etch 把视频获取、本地转写、Agent CLI 翻译、术语审计、人工校对与 FFmpeg 压制组织成一条<b>可恢复的十阶段流水线</b>；验证完成后，还能由本机直连 B站，手动确认或按模板自动投稿。</p>
+      <span class="eyebrow">v0.2.14 · 三类 URL 任务 · 全程可恢复</span>
+      <h1>把视频与网页，<br><span class="etch">刻</span>成可信的中文内容。</h1>
+      <p class="lede">粘贴一个 URL，选择<b>双语硬字幕、视频总结或网页文档</b>。Etch 把下载、转写、研究、翻译、校对与发布组织成可检查的本地流水线；长任务会在关键 checkpoint 停下，也会从已提交批次继续。</p>
       <div class="hero-cta">
-        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.13/Etch-0.2.13-arm64.dmg" data-od-id="hero-download">
-          <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
-          下载 v0.2.13 · DMG
+        <a class="btn" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener" data-od-id="hero-source">
+          <svg viewBox="0 0 24 24"><path d="M8 9 4 12l4 3M16 9l4 3-4 3M14 5l-4 14"/></svg>
+          查看 v0.2.14 源码
         </a>
+        <a class="ghost" href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg" data-od-id="hero-download">下载已发布版 v0.1.2</a>
       </div>
       <div class="spec-line mono">
-        <b>Apple Silicon</b><span class="dot"></span><b>macOS 13.5+</b><span class="dot"></span><b>仅支持 HTTP(S) URL</b><span class="dot"></span><b>v0.2.13</b>
+        <b>Apple Silicon</b><span class="dot"></span><b>macOS 13.5+</b><span class="dot"></span><b>仅支持 HTTP(S) URL</b><span class="dot"></span><b>本页对应 0.2.14 源码</b>
       </div>
     </div>
 
-    <!-- signature: burned bilingual frame -->
-    <div class="frame" data-od-id="hero-preview" aria-label="双语硬字幕压制帧预览">
-      <div class="scan"></div>
-      <div class="chip-row">
-        <span class="chip rec">压制中 · burn</span>
-        <span class="chip mono">1080p</span>
+    <!-- signature: truthful URL routing preview -->
+    <div class="frame" data-od-id="hero-preview" aria-label="Etch 将 URL 分流到三类可恢复任务">
+      <div class="router">
+        <div class="router-head"><span>URL ROUTER · 0.2.14</span><span class="router-status">ready</span></div>
+        <div class="router-url">https://example.com/source</div>
+        <div class="router-label">choose a deliverable</div>
+        <div class="router-options">
+          <div class="router-option active"><span class="route-icon">SRT</span><div><strong>双语硬字幕</strong><small>平台分流 · 逐批翻译 · 成片验证</small></div><span class="state">recoverable</span></div>
+          <div class="router-option"><span class="route-icon">A/B/C</span><div><strong>视频总结</strong><small>真实 research · 证据账本 · 隔离配图</small></div><span class="state">evidence</span></div>
+          <div class="router-option"><span class="route-icon">MD</span><div><strong>网页文档</strong><small>normal / refined · 离线 HTML</small></div><span class="state">publish</span></div>
+        </div>
       </div>
-      <div class="stack">
-        <span class="lbl">EN track</span>
-        <span class="lbl">CN track</span>
-      </div>
-      <div class="burn">
-        <div class="en">Review every line. Publish when it is ready.</div>
-        <div class="cn">逐句确认，成片就绪后再发布。</div>
-      </div>
-      <div class="track"><i></i></div>
     </div>
   </div>
 </section>
@@ -421,30 +431,79 @@
 <section class="flow" data-od-id="flow-strip">
   <div class="wrap">
     <div class="flow-rail mono">
-      <span class="flow-node"><span class="k">01</span> 视频 URL</span>
+      <span class="flow-node"><span class="k">01</span> URL</span>
       <span class="flow-arrow"></span>
-      <span class="flow-node"><span class="k">→</span> 获取 / 本地转写</span>
+      <span class="flow-node"><span class="k">→</span> 识别 / 分流</span>
       <span class="flow-arrow"></span>
-      <span class="flow-node"><span class="k">→</span> Agent 翻译</span>
+      <span class="flow-node"><span class="k">→</span> 字幕 / 总结 / 文档</span>
       <span class="flow-arrow"></span>
-      <span class="flow-node"><span class="k">→</span> 术语审计</span>
+      <span class="flow-node"><span class="k">→</span> Agent 处理</span>
       <span class="flow-arrow"></span>
-      <span class="flow-node"><span class="k">→</span> 人工校对</span>
+      <span class="flow-node"><span class="k">→</span> checkpoint</span>
       <span class="flow-arrow"></span>
-      <span class="flow-node"><span class="k">→</span> 压制 / 验证</span>
+      <span class="flow-node"><span class="k">→</span> 校对 / 验证</span>
       <span class="flow-arrow"></span>
-      <span class="flow-node new"><span class="k">可选</span> B站投稿</span>
+      <span class="flow-node new"><span class="k">输出</span> 视频 / Markdown / HTML</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ THREE WORKFLOWS ============ -->
+<section class="band" id="workflows" data-od-id="workflows">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">0.2.14 · 一个入口，三种交付</span>
+      <h2>先识别内容，再走真正属于它的流水线。</h2>
+      <p>视频媒体与普通网页在进入处理链前就会分流。三类任务共用可恢复的阶段状态与任务归档，但不会把网页误送进视频逻辑，也不会用同一套产物冒充不同交付。</p>
+    </div>
+    <div class="workflow-grid">
+      <article class="workflow-card">
+        <div class="workflow-top"><span class="workflow-id">01 · SUBTITLE</span><span class="workflow-state">implemented</span></div>
+        <h3>双语硬字幕成片</h3>
+        <p>面向 YouTube、Vimeo 与 X / Twitter 视频 URL，按来源选择获取方式；缺英文字幕时转入本地 Whisper。</p>
+        <ul class="proof-list">
+          <li>媒体格式与字幕 fallback 分开处理</li>
+          <li>超过批次门槛时显示 cue 与批次数，等待成本确认</li>
+          <li>每批译文独立持久化；重启后复用已验证批次</li>
+          <li>校对后生成双语 SRT，再压制并用 ffprobe 验证</li>
+        </ul>
+        <div class="workflow-foot">OUTPUT · bilingual.srt + burned video</div>
+      </article>
+      <article class="workflow-card">
+        <div class="workflow-top"><span class="workflow-id">02 · SUMMARY</span><span class="workflow-state">implemented</span></div>
+        <h3>有证据的视频总结</h3>
+        <p>从字幕生成素材分析包，核验可外查的事实，再让三个隔离会话分别成稿、评分与融合；核验不可用时会明确标记。</p>
+        <ul class="proof-list">
+          <li>真实 research 阶段产出可追溯的外部证据账本</li>
+          <li>A / B / C 三稿独立生成，附六项评分与遗漏清单</li>
+          <li>配图使用独立工具会话，不污染研究与写作上下文</li>
+          <li>先选 Agent、验收封面，再逐张保存其余配图</li>
+        </ul>
+        <div class="workflow-foot">OUTPUT · summary.md + images/</div>
+      </article>
+      <article class="workflow-card">
+        <div class="workflow-top"><span class="workflow-id">03 · DOCUMENT</span><span class="workflow-state">implemented</span></div>
+        <h3>结构保真的网页文档</h3>
+        <p>把普通网页与支持的单条 X 内容清洗为 Markdown，可仅转换，也可选择 normal 或 refined 翻译并进入双栏校对。</p>
+        <ul class="proof-list">
+          <li>静态图片本地化，结构完整性不通过就退回校对</li>
+          <li>长文按批翻译并保存进度，refined 增加精修与终检</li>
+          <li>四个视觉方向独立预览，不覆盖 Markdown 权威产物</li>
+          <li>发布为可离线打开、资源内嵌的单文件 HTML</li>
+        </ul>
+        <div class="workflow-foot">OUTPUT · Markdown + standalone HTML</div>
+      </article>
     </div>
   </div>
 </section>
 
 <!-- ============ VALUE ============ -->
-<section class="band" id="product" data-od-id="value">
+<section class="band alt" id="product" data-od-id="value">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">Why the name</span>
-      <h2>Etch 是“刻蚀、镌刻”的意思。</h2>
-      <p><span class="mono">Etch /etʃ/</span>。校对完成的中英字幕会被压进视频画面，和成片一起保存。名字直接来自这个动作。</p>
+      <span class="eyebrow">可检查，不靠猜</span>
+      <h2>长任务的关键状态，都有落点。</h2>
+      <p><span class="mono">Etch /etʃ/</span> 是“刻蚀、镌刻”。这里不只指把字幕压进画面，也指把来源、阶段、人工决定与最终产物留在任务记录里。</p>
     </div>
     <div class="cards">
       <article class="card" data-od-id="value-local">
@@ -454,8 +513,8 @@
       </article>
       <article class="card" data-od-id="value-recover">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg></div>
-        <h3>可恢复</h3>
-        <p>异常退出后从 task.json、durable run registry 和阶段产物恢复，不把退出码 0 当作成功证明。</p>
+        <h3>阶段与批次可恢复</h3>
+        <p>异常退出后从 task.json、durable run registry 和已提交产物恢复；字幕与长文翻译会逐批保存，不必从头重跑。</p>
       </article>
       <article class="card" data-od-id="value-term">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg></div>
@@ -469,25 +528,25 @@
       </article>
       <article class="card" data-od-id="value-human">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/><path d="M3 20h18" opacity=".4"/></svg></div>
-        <h3>人工可控</h3>
-        <p>逐句中英对照、视频定位、自动保存、审核 checkpoint，可重新生成 SRT 与成片。</p>
+        <h3>人工 checkpoint</h3>
+        <p>翻译成本、字幕歧义、文档校对、外部核验与配图 Agent 等关键决定，会停下来等待明确选择。</p>
       </article>
       <article class="card" data-od-id="value-bilibili">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M7 5 4 2M17 5l3-3M5 7h14a2 2 0 0 1 2 2v10H3V9a2 2 0 0 1 2-2Z"/><path d="M8 13h.01M16 13h.01"/></svg></div>
-        <h3>验证后投稿</h3>
-        <p>Etch v0.2.13 可手动或按模板自动投稿到 B站。凭据由 macOS 安全存储加密，上传由本机直连平台。</p>
+        <h3>任务分类</h3>
+        <p>为字幕、总结与文档任务设置自定义分类；分类只是归档，不会改写任务流水线或阶段状态。</p>
       </article>
     </div>
   </div>
 </section>
 
 <!-- ============ PIPELINE ============ -->
-<section class="band alt" id="pipeline" data-od-id="pipeline">
+<section class="band" id="pipeline" data-od-id="pipeline">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">十阶段流水线</span>
+      <span class="eyebrow">硬字幕 · 十阶段流水线</span>
       <h2>一条可以在任意节点<br>停下、检查、继续的流水线。</h2>
-      <p>抓取到验证，十个阶段各自带状态、进度和重试计数。本地工具负责媒体处理，你选择的 Agent CLI 负责翻译。</p>
+      <p>硬字幕从抓取到验证共十个阶段，各自带状态、进度和重试计数。视频总结与网页文档会复用同一套调度约束，但跳过不属于自己的阶段。</p>
     </div>
     <div class="pipe-wrap" data-od-id="pipeline-rail">
       <div class="edge"></div>
@@ -509,19 +568,19 @@
         <span class="lg"><span class="s" style="background:var(--warn)"></span>校对 checkpoint</span>
         <span class="lg"><span class="s" style="background:var(--line-strong)"></span>等待中</span>
       </div>
-      <p class="pipe-note"><b>无字幕时</b>使用 mlx_whisper（whisper-large-v3-turbo）本地转写；<b>翻译</b>交给你选定的 Agent CLI 分批处理；<b>校对</b>是一个正式的暂停点，全局术语修改在这里一次性应用。</p>
+      <p class="pipe-note"><b>无字幕时</b>使用 mlx_whisper（whisper-large-v3-turbo）本地转写；<b>超过批次门槛时</b>先确认 cue 与批次数；<b>处理中</b>每一批通过本地校验后单独提交；<b>校对</b>是正式暂停点，全局术语修改在这里一次性应用。</p>
     </div>
   </div>
 </section>
 
 <!-- ============ BILIBILI PUBLICATION ============ -->
-<section class="band" id="publish" data-od-id="bilibili">
+<section class="band alt" id="publish" data-od-id="bilibili">
   <div class="wrap">
     <div class="publish-grid">
       <div class="publish-copy">
-        <span class="eyebrow">验证后 · 可选投稿 sidecar</span>
+        <span class="eyebrow">v0.2.14 源码 · 可选投稿 sidecar</span>
         <h2>成片验证通过，<br>直投 B站。</h2>
-        <p>使用具备投稿权限的 B站账号扫码连接。Etch 只让验证通过的成片进入本地投稿队列；每次提交前，你仍然掌握标题、分区、标签、简介、版权类型、转载来源与封面。</p>
+        <p>使用具备投稿权限的 B站账号扫码连接。Etch 只让验证通过的成片进入本地投稿队列；每次提交前，你仍然掌握标题、分区、标签、简介、版权类型、转载来源与封面。此能力已进入当前源码，公开 v0.1.2 安装包尚不包含。</p>
         <div class="publish-facts">
           <div class="publish-fact"><span class="num">01</span><div><strong>手动确认，或默认关闭的自动投稿</strong><span>新建任务时可按需开启；账号、默认分区和标签不完整时不会误启用。</span></div></div>
           <div class="publish-fact"><span class="num">02</span><div><strong>凭据由 macOS 安全存储加密</strong><span>投稿时由本机内置 biliup 直连 B站，不经过 Etch 自建云端或中转服务。</span></div></div>
@@ -546,7 +605,7 @@
 </section>
 
 <!-- ============ RUNTIME ============ -->
-<section class="band alt" id="runtime" data-od-id="runtime">
+<section class="band" id="runtime" data-od-id="runtime">
   <div class="wrap">
     <div class="rt-head">
       <div class="sec-head" style="margin-bottom:0">
@@ -562,10 +621,10 @@
       <div class="tool" data-od-id="tool-ffprobe"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">ffprobe</div><div class="role">成片验证</div></div></div>
       <div class="tool" data-od-id="tool-python"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">python</div><div class="role">本地脚本运行时</div></div></div>
       <div class="tool" data-od-id="tool-whisper"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">mlx_whisper</div><div class="role">本地英文转写</div></div></div>
-      <div class="tool" data-od-id="tool-claude"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">claude</div><div class="role">翻译 Provider</div></div></div>
-      <div class="tool" data-od-id="tool-codex"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">codex</div><div class="role">翻译 Provider</div></div></div>
-      <div class="tool" data-od-id="tool-qoder"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">qoder</div><div class="role">翻译 Provider</div></div></div>
-      <div class="tool" data-od-id="tool-opencode"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">opencode</div><div class="role">翻译 Provider</div></div></div>
+      <div class="tool" data-od-id="tool-claude"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">claude</div><div class="role">翻译与写作 Provider</div></div></div>
+      <div class="tool" data-od-id="tool-codex"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">codex</div><div class="role">翻译、写作、研究与配图</div></div></div>
+      <div class="tool" data-od-id="tool-qoder"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">qoder</div><div class="role">翻译、写作与配图</div></div></div>
+      <div class="tool" data-od-id="tool-opencode"><span class="chk"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span><div class="txt"><div class="nm">opencode</div><div class="role">翻译与写作 Provider</div></div></div>
     </div>
   </div>
 </section>
@@ -573,7 +632,7 @@
 </main>
 
 <footer>
-  <div class="wrap footer-inner"><strong>Etch · 本地双语译制工作站</strong><span>© <span id="year">2026</span> Etch · Apple Silicon macOS</span></div>
+  <div class="wrap footer-inner"><strong>Etch · 本地视频与网页内容翻译工作站</strong><span>© <span id="year">2026</span> Etch · Apple Silicon macOS</span></div>
 </footer>
 
 <script>

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.13/Etch-0.2.13-arm64.dmg"><strong>Download the v0.2.13 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg"><strong>Download the public v0.1.2 DMG</strong></a>
   ·
   <a href="#start-in-3-steps">Start in 3 steps</a>
   ·
@@ -21,8 +21,10 @@
 </p>
 
 <p align="center">
-  <sub>v0.2.13 · Apple Silicon · macOS 13.5+ · HTTP(S) URL input · public DMG includes Bilibili publishing</sub>
+  <sub>Source v0.2.14 · public DMG v0.1.2 · Apple Silicon · macOS 13.5+ · HTTP(S) URL input</sub>
 </p>
+
+> The current source is `v0.2.14`. The latest public installer is still `v0.1.2` and does not include the new task types described below; run from source to use them.
 
 ## A reviewable, recoverable video pipeline
 
@@ -47,7 +49,7 @@ Web translation uses a separate pipeline: safely fetch a normal webpage or one X
 
 ### 1. Install
 
-1. Download `Etch-0.2.13-arm64.dmg` from [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest).
+1. Download `Etch-0.1.2-arm64.dmg` from the verified [v0.1.2 GitHub Release](https://github.com/bingjiang0611/Etch/releases/tag/v0.1.2).
 2. Open the DMG and drag `Etch.app` into `Applications`.
 3. If Gatekeeper blocks the first launch, right-click Etch in Finder and choose **Open**. If it is still blocked, use **System Settings → Privacy & Security → Open Anyway**.
 
@@ -71,9 +73,11 @@ If a tool is not on the normal `PATH`, set its absolute executable path in Setti
 
 Paste 1–50 HTTPS video URLs from a supported platform, or HTTP(S) normal webpage / X status URLs, choose the task type, and optionally describe the translation style. A task can be stopped and later resumed from its last committed stage.
 
-Current source version: `0.2.14`. Input is limited to **HTTP(S) URLs**; local file import remains planned. GitHub Releases provides an Apple Silicon DMG.
+Current source version: `0.2.14`. Input is limited to **HTTP(S) URLs**; local file import remains planned. GitHub Releases currently provides the older `v0.1.2` Apple Silicon DMG.
 
 ## Publish to Bilibili
+
+This workflow is implemented in the current source. It is not included in the public `v0.1.2` installer.
 
 <p align="center">
   <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch Bilibili publication dialog with title, category, tags, copyright type, source, description, and cover fields">
@@ -106,7 +110,7 @@ The publishing path requires no Bilibili Open Platform application and does not 
 | Implemented | Webpage / X to Markdown and HTML | Normal webpages and one X status, body cleanup, static-image localization, recoverable normal/refined translation or conversion only, side-by-side review, structural verification, Markdown export, and offline single-file HTML publication after a four-direction preview. Full threads, quotes, polls, and X video are not expanded yet. |
 | Implemented | Recoverable tasks | `task.json` is authoritative; artifact commits are guarded by lease, revision, and fingerprint checks. |
 | Partial | Video summary (three-draft long-form article with illustrations) | New tasks can be created as "video summary": subtitle extraction, an analysis pack, an external-evidence ledger, three scored drafts merged into one final Chinese article, and 8-12 illustrations that can be previewed in the workbench and exported. Illustration requires the user to pick the verified Qoder or Codex path at a checkpoint; after the cover passes review, each remaining image is generated and committed independently. Real-video L3 summarization remains unverified. |
-| Implemented | Direct Bilibili publishing | The public v0.1.11 DMG includes single-account QR login, manual/automatic publishing, one concurrent publication, and verifiable receipts. Real-account L3 publishing remains unverified. |
+| Implemented | Direct Bilibili publishing | Current source implements single-account QR login, manual/automatic publishing, one concurrent publication, and verifiable receipts. The public `v0.1.2` installer does not include it; real-account L3 publishing remains unverified. |
 | Partial | Providers, long media, and public distribution | Automated tests cover all four Provider protocols, but real accounts and current server behavior require on-machine verification. There is no global disk budget, Developer ID signing, notarization, or auto-update. |
 | Planned | Local file import | The schema reserves this input type, but the UI, APFS clone/copy, space checks, and recovery path are not implemented. |
 

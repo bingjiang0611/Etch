@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+  <title id="title">Etch 的三条内容工作流与统一恢复边界</title>
+  <desc id="desc">视频可以生成双语硬字幕或带外部证据的中文长文；网页和单条 X 内容可以生成 Markdown 与离线 HTML。所有阶段经 task.json checkpoint 验证后提交。</desc>
+
+  <rect width="1200" height="560" rx="24" fill="#0B0D10"/>
+  <rect x="1" y="1" width="1198" height="558" rx="23" fill="none" stroke="#252B33" stroke-width="2"/>
+
+  <g id="heading" transform="translate(48 42)">
+    <text x="0" y="0" fill="#F2F4F7" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="38" font-weight="720">三条工作流，一个恢复模型</text>
+    <text x="0" y="36" fill="#88919D" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="20">每一步先形成候选产物，经过校验后才写回 task.json。</text>
+  </g>
+
+  <g id="subtitle-lane" transform="translate(48 118)">
+    <text x="0" y="29" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="27" font-weight="750">01</text>
+    <text x="50" y="29" fill="#F2F4F7" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="27" font-weight="700">双语硬字幕</text>
+    <g transform="translate(230 0)" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="19" text-anchor="middle">
+      <rect width="150" height="52" rx="8" fill="#111419" stroke="#343C46"/><text x="75" y="33" fill="#C5CAD1">视频 URL</text>
+      <path d="M158 26h28" stroke="#365F8F" stroke-width="2"/><path d="m180 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(196 0)"><rect width="170" height="52" rx="8" fill="#111419" stroke="#343C46"/><text x="85" y="33" fill="#C5CAD1">字幕 / Whisper</text></g>
+      <path d="M374 26h28" stroke="#365F8F" stroke-width="2"/><path d="m396 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(412 0)"><rect width="150" height="52" rx="8" fill="#0F1B2A" stroke="#365F8F"/><text x="75" y="33" fill="#9FC4FF">翻译 + 审计</text></g>
+      <path d="M570 26h28" stroke="#365F8F" stroke-width="2"/><path d="m592 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(608 0)"><rect width="140" height="52" rx="8" fill="#19150F" stroke="#6E5838"/><text x="70" y="33" fill="#E0B872">人工校对</text></g>
+      <path d="M756 26h28" stroke="#365F8F" stroke-width="2"/><path d="m778 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(794 0)"><rect width="120" height="52" rx="8" fill="#101C16" stroke="#3E6C55"/><text x="60" y="33" fill="#99E5BD">MP4 ✓</text></g>
+    </g>
+  </g>
+
+  <path d="M48 190H1152" stroke="#252B33"/>
+
+  <g id="summary-lane" transform="translate(48 216)">
+    <text x="0" y="29" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="27" font-weight="750">02</text>
+    <text x="50" y="29" fill="#F2F4F7" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="27" font-weight="700">视频总结</text>
+    <g transform="translate(230 0)" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="19" text-anchor="middle">
+      <rect width="150" height="52" rx="8" fill="#111419" stroke="#343C46"/><text x="75" y="33" fill="#C5CAD1">字幕素材包</text>
+      <path d="M158 26h28" stroke="#365F8F" stroke-width="2"/><path d="m180 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(196 0)"><rect width="170" height="52" rx="8" fill="#0F1B2A" stroke="#365F8F"/><text x="85" y="33" fill="#9FC4FF">外部证据账本</text></g>
+      <path d="M374 26h28" stroke="#365F8F" stroke-width="2"/><path d="m396 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(412 0)"><rect width="150" height="52" rx="8" fill="#0F1B2A" stroke="#365F8F"/><text x="75" y="33" fill="#9FC4FF">A/B/C 三稿</text></g>
+      <path d="M570 26h28" stroke="#365F8F" stroke-width="2"/><path d="m592 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(608 0)"><rect width="140" height="52" rx="8" fill="#19150F" stroke="#6E5838"/><text x="70" y="33" fill="#E0B872">封面确认</text></g>
+      <path d="M756 26h28" stroke="#365F8F" stroke-width="2"/><path d="m778 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(794 0)"><rect width="120" height="52" rx="8" fill="#101C16" stroke="#3E6C55"/><text x="60" y="33" fill="#99E5BD">MD + 图</text></g>
+    </g>
+  </g>
+
+  <path d="M48 288H1152" stroke="#252B33"/>
+
+  <g id="document-lane" transform="translate(48 314)">
+    <text x="0" y="29" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="27" font-weight="750">03</text>
+    <text x="50" y="29" fill="#F2F4F7" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="27" font-weight="700">网页翻译</text>
+    <g transform="translate(230 0)" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="19" text-anchor="middle">
+      <rect width="150" height="52" rx="8" fill="#111419" stroke="#343C46"/><text x="75" y="33" fill="#C5CAD1">网页 / X</text>
+      <path d="M158 26h28" stroke="#365F8F" stroke-width="2"/><path d="m180 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(196 0)"><rect width="170" height="52" rx="8" fill="#111419" stroke="#343C46"/><text x="85" y="33" fill="#C5CAD1">结构化 + 图片</text></g>
+      <path d="M374 26h28" stroke="#365F8F" stroke-width="2"/><path d="m396 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(412 0)"><rect width="150" height="52" rx="8" fill="#0F1B2A" stroke="#365F8F"/><text x="75" y="33" fill="#9FC4FF">normal/refined</text></g>
+      <path d="M570 26h28" stroke="#365F8F" stroke-width="2"/><path d="m592 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(608 0)"><rect width="140" height="52" rx="8" fill="#19150F" stroke="#6E5838"/><text x="70" y="33" fill="#E0B872">双栏校对</text></g>
+      <path d="M756 26h28" stroke="#365F8F" stroke-width="2"/><path d="m778 20 8 6-8 6" fill="none" stroke="#6BA6FF" stroke-width="2"/>
+      <g transform="translate(794 0)"><rect width="120" height="52" rx="8" fill="#101C16" stroke="#3E6C55"/><text x="60" y="33" fill="#99E5BD">MD + HTML</text></g>
+    </g>
+  </g>
+
+  <g id="recovery-spine" transform="translate(48 420)">
+    <rect width="1104" height="94" rx="12" fill="#111419" stroke="#343C46"/>
+    <circle cx="34" cy="47" r="13" fill="#0F1B2A" stroke="#438CF5" stroke-width="2"/>
+    <path d="M34 39v8l6 4" fill="none" stroke="#7FB2FF" stroke-width="2" stroke-linecap="round"/>
+    <text x="64" y="39" fill="#F2F4F7" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="23" font-weight="700">task.json 恢复脊柱</text>
+    <text x="64" y="68" fill="#88919D" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18">stage lease  ·  revision + fingerprint CAS  ·  verified artifact commit</text>
+    <path d="M820 47h170" stroke="#365F8F" stroke-width="2"/>
+    <circle cx="820" cy="47" r="7" fill="#438CF5"/>
+    <circle cx="990" cy="47" r="7" fill="#6CC79A"/>
+    <text x="1012" y="54" fill="#6CC79A" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" font-weight="750">RESUME</text>
+  </g>
+</svg>

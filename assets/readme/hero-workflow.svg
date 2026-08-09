@@ -1,77 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg"
-     width="1200" height="420" viewBox="0 0 1200 420"
-     role="img" aria-labelledby="title desc">
-  <title id="title">Etch — 从英文视频到双语成片，再到 B站投稿</title>
-  <desc id="desc">一条连贯的本地工作流：输入视频链接，翻译并人工校对，验证双语成片，再选择是否投稿到 B站。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Etch — 本地视频与网页内容工作站</title>
+  <desc id="desc">Etch 把公开视频与网页变成可审阅、可恢复、可交付的双语硬字幕、带证据长文和离线文档。</desc>
 
-  <defs>
-    <linearGradient id="background" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1200" y2="420">
-      <stop offset="0" stop-color="#11161d"/>
-      <stop offset="0.58" stop-color="#0b0d10"/>
-      <stop offset="1" stop-color="#0d1219"/>
-    </linearGradient>
-    <linearGradient id="logo-accent" gradientUnits="userSpaceOnUse" x1="1030" y1="72" x2="1112" y2="154">
-      <stop offset="0" stop-color="#438cf5"/>
-      <stop offset="1" stop-color="#7fb2ff"/>
-    </linearGradient>
-  </defs>
+  <rect width="1200" height="420" rx="24" fill="#0B0D10"/>
+  <rect x="1" y="1" width="1198" height="418" rx="23" fill="none" stroke="#252B33" stroke-width="2"/>
 
-  <rect width="1200" height="420" rx="30" fill="url(#background)"/>
-  <rect x="1" y="1" width="1198" height="418" rx="29" fill="none" stroke="#2b333d" stroke-width="2"/>
-
-  <g transform="translate(62 58)">
-    <text x="0" y="0" fill="#7fb2ff"
-          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-          font-size="18" font-weight="650" letter-spacing="2">LOCAL BILINGUAL VIDEO WORKSTATION</text>
-    <text x="0" y="84" fill="#f2f4f7"
-          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
-          font-size="82" font-weight="720" letter-spacing="-3">Etch</text>
-    <text x="0" y="132" fill="#c5cad1"
-          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
-          font-size="29" font-weight="520">英文视频 → 可校对双语成片 → 可选 B站投稿</text>
-    <text x="0" y="176" fill="#7f8996"
-          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-          font-size="18">APPLE SILICON  ·  macOS 13.5+  ·  LOCAL-FIRST</text>
+  <g id="title-block" transform="translate(56 54)">
+    <text x="0" y="0" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18" font-weight="700" letter-spacing="2">LOCAL CONTENT WORKSTATION</text>
+    <text x="0" y="92" fill="#F2F4F7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="88" font-weight="760" letter-spacing="-3">Etch</text>
+    <text x="0" y="148" fill="#E8EAED" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="35" font-weight="650">把公开视频与网页，变成</text>
+    <text x="0" y="194" fill="#E8EAED" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="35" font-weight="650">可审阅、可恢复、可交付的中文成果。</text>
+    <text x="0" y="248" fill="#88919D" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="21">为需要长期处理英文内容的创作者与研究者而做</text>
   </g>
 
-  <g transform="translate(1026 58)">
-    <rect width="112" height="112" rx="28" fill="#101721" stroke="#344154" stroke-width="2"/>
-    <rect x="27" y="25" width="18" height="62" rx="9" fill="url(#logo-accent)"/>
-    <rect x="27" y="25" width="59" height="18" rx="9" fill="#e8f0ff"/>
-    <rect x="27" y="47" width="43" height="18" rx="9" fill="#6ba6ff"/>
-    <rect x="27" y="69" width="59" height="18" rx="9" fill="#315f9f"/>
-  </g>
+  <g id="output-proof" transform="translate(718 44)">
+    <text x="0" y="12" fill="#88919D" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18" font-weight="650" letter-spacing="1.4">THREE DELIVERY FORMATS</text>
 
-  <g>
-    <path d="M148 306 H412" fill="none" stroke="#69a5ff" stroke-width="6" stroke-linecap="round"/>
-    <path d="M452 306 H716" fill="none" stroke="#69a5ff" stroke-width="6" stroke-linecap="round"/>
-    <path d="M756 306 H1036" fill="none" stroke="#6cc79a" stroke-width="6" stroke-linecap="round" stroke-dasharray="12 12"/>
-
-    <text x="896" y="268" fill="#6cc79a" text-anchor="middle"
-          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-          font-size="17" font-weight="650" letter-spacing="1.4">可选投稿</text>
-
-    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" text-anchor="middle">
-      <g transform="translate(128 306)">
-        <circle r="24" fill="#0f1b2a" stroke="#7fb2ff" stroke-width="4"/>
-        <text x="0" y="5" fill="#b7d3ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="750">URL</text>
-        <text x="0" y="63" fill="#c5cad1" font-size="22" font-weight="560">视频链接</text>
-      </g>
-      <g transform="translate(432 306)">
-        <circle r="24" fill="#0f1b2a" stroke="#7fb2ff" stroke-width="4"/>
-        <text x="0" y="7" fill="#b7d3ff" font-size="22" font-weight="750">译</text>
-        <text x="0" y="63" fill="#c5cad1" font-size="22" font-weight="560">翻译与校对</text>
-      </g>
-      <g transform="translate(736 306)">
-        <circle r="24" fill="#0f1b2a" stroke="#7fb2ff" stroke-width="4"/>
-        <text x="0" y="7" fill="#b7d3ff" font-size="22" font-weight="750">片</text>
-        <text x="0" y="63" fill="#c5cad1" font-size="22" font-weight="560">验证成片</text>
-      </g>
-      <g transform="translate(1056 306)">
-        <circle r="24" fill="#101c16" stroke="#6cc79a" stroke-width="4"/>
-        <text x="0" y="7" fill="#99e5bd" font-size="22" font-weight="750">投</text>
-        <text x="0" y="63" fill="#b8dcc8" font-size="22" font-weight="560">B站投稿</text>
-      </g>
+    <g transform="translate(0 38)">
+      <rect width="426" height="82" rx="10" fill="#111419" stroke="#343C46"/>
+      <text x="20" y="31" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18" font-weight="700">01  双语硬字幕</text>
+      <text x="20" y="59" fill="#C5CAD1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">bilingual.srt  +  final.mp4</text>
+      <circle cx="391" cy="41" r="13" fill="#101C16" stroke="#3E6C55"/>
+      <path d="M385 41l4 4 8-10" fill="none" stroke="#6CC79A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
     </g>
+
+    <g transform="translate(0 132)">
+      <rect width="426" height="82" rx="10" fill="#111419" stroke="#343C46"/>
+      <text x="20" y="31" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18" font-weight="700">02  带证据长文</text>
+      <text x="20" y="59" fill="#C5CAD1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">summary.md  +  research.json</text>
+      <rect x="376" y="28" width="30" height="26" rx="6" fill="#0F1B2A" stroke="#365F8F"/>
+      <text x="391" y="47" fill="#7FB2FF" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" font-weight="750">ABC</text>
+    </g>
+
+    <g transform="translate(0 226)">
+      <rect width="426" height="82" rx="10" fill="#111419" stroke="#343C46"/>
+      <text x="20" y="31" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18" font-weight="700">03  离线文档</text>
+      <text x="20" y="59" fill="#C5CAD1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19">translation.md + translation.html</text>
+    </g>
+  </g>
+
+  <g id="recovery-rail" transform="translate(56 366)">
+    <circle cx="8" cy="18" r="8" fill="#438CF5"/>
+    <path d="M20 18H1074" stroke="#365F8F" stroke-width="2"/>
+    <circle cx="1074" cy="18" r="8" fill="#6CC79A"/>
+    <text x="30" y="7" fill="#88919D" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18">task.json  →  checkpoint  →  verified artifact</text>
+    <text x="1054" y="7" fill="#6CC79A" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18" font-weight="700">COMMITTED</text>
   </g>
 </svg>
