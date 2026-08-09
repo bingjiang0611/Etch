@@ -58,7 +58,7 @@ try {
   }
 
   run(process.execPath, [verifier, appPath])
-  console.log(`Etch DMG 验证通过：${basename(dmgPath)}，卷内 App 为 arm64 ad-hoc hardened runtime`)
+  console.log(`Etch DMG 验证通过：${basename(dmgPath)}，卷内 App 为 arm64 Apple Development hardened runtime`)
 } catch (error) {
   failure = error
 }

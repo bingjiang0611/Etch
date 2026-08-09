@@ -9,18 +9,17 @@ const website = readFileSync(resolve(projectRoot, 'website/index.html'), 'utf8')
 const readme = readFileSync(resolve(projectRoot, 'README.md'), 'utf8')
 const readmeEn = readFileSync(resolve(projectRoot, 'README_EN.md'), 'utf8')
 const readmeJa = readFileSync(resolve(projectRoot, 'README_JA.md'), 'utf8')
-const publicReleaseVersion = '0.1.2'
+const publicReleaseVersion = packageJson.version
 const publicDmgUrl = `https://github.com/bingjiang0611/Etch/releases/download/v${publicReleaseVersion}/Etch-${publicReleaseVersion}-arm64.dmg`
 
 describe('documentation capability contract', () => {
-  it('keeps the source version and public release identities explicit', () => {
+  it('derives the public release identity from package.json', () => {
     expect(website).toContain(`"softwareVersion": "${publicReleaseVersion}"`)
-    expect(website).toContain(`本页对应 ${packageJson.version} 源码`)
-    expect(website).toContain('"description": "本地英中双语硬字幕工作站，支持 B站投稿"')
-    expect(readme).toContain(`当前源码 \`v${packageJson.version}\``)
+    expect(website).toContain(`公开版 ${packageJson.version}`)
+    expect(website).toContain('"description": "本地视频与网页内容工作站，支持双语硬字幕、视频总结、网页翻译与 B站投稿"')
+    expect(readme).toContain(`当前公开版 \`v${packageJson.version}\``)
     expect(website).toContain(publicDmgUrl)
     expect(readme).toContain(`Etch-${publicReleaseVersion}-arm64.dmg`)
-    expect(readme).toContain(`公开安装包仍为 \`v${publicReleaseVersion}\``)
   })
 
   it('keeps the public input and release scope truthful', () => {
@@ -30,15 +29,18 @@ describe('documentation capability contract', () => {
     expect(readme).toContain('| Implemented |')
     expect(readme).toContain('| Partial |')
     expect(readme).toContain('| Planned |')
-    expect(readme).toContain(`公开安装包仍为 \`v${publicReleaseVersion}\``)
     expect(readme).toContain('未经 Apple 公证')
   })
 
-  it('keeps public Bilibili publishing distinct from source-only task additions', () => {
+  it('keeps all three task types in the public release contract', () => {
+    expect(website).toContain(`公开版 v${publicReleaseVersion} 提供<b>双语硬字幕、视频总结和网页翻译</b>`)
+    expect(readme).toContain('**双语硬字幕**')
+    expect(readme).toContain('**视频总结**')
+    expect(readme).toContain('**网页翻译**')
+    expect(readmeEn).toContain('bilingual hard subtitles, video summaries, and web translation')
+    expect(readmeJa).toContain('英中ハード字幕、動画要約、Web 翻訳の 3 種類のタスク')
     expect(website).toContain(`公开 v${publicReleaseVersion} 已包含`)
-    expect(website).toContain('不含视频总结与网页翻译')
-    expect(website).toContain('真实视频的完整 L3 尚未执行')
-    expect(website).not.toContain('<strong>交付</strong>summary.md<br>research.json')
+    expect(website).toContain('真实视频与真实 Provider 的完整 L3 尚未执行')
     expect(readme).toContain(`公开 \`v${publicReleaseVersion}\` 已包含该投稿流程`)
     expect(readmeEn).toContain(`included in the public \`v${publicReleaseVersion}\` installer`)
     expect(readmeJa).toContain(`公開 \`v${publicReleaseVersion}\` インストーラーに含まれて`)

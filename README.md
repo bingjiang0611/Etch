@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.2/Etch-0.1.2-arm64.dmg"><strong>下载公开版 v0.1.2 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.14/Etch-0.2.14-arm64.dmg"><strong>下载公开版 v0.2.14 DMG</strong></a>
   ·
   <a href="#第一次使用">第一次使用</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 > [!IMPORTANT]
-> 本页描述当前源码 `v0.2.14`。公开安装包仍为 `v0.1.2`，不含本页新增的任务类型；要使用当前能力，请按“从源码运行”启动。
+> 当前公开版 `v0.2.14` 包含双语硬字幕、视频总结和网页翻译三类任务。
 
 ## 先看真实工作台
 
@@ -90,7 +90,7 @@ X 首版支持单条帖子与 X Article 的正文、作者和静态图片；线�
 
 ### 1. 安装
 
-1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/tag/v0.1.2) 下载 `Etch-0.1.2-arm64.dmg`。
+1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/tag/v0.2.14) 下载 `Etch-0.2.14-arm64.dmg`。
 2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
 3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
 
@@ -130,7 +130,7 @@ Etch 启动后会检测可执行文件、版本、关键能力和登录状态。
   <sub>真实投稿确认界面，使用隔离测试数据；尚未用真实 B站账号完成 L3 投稿验证。</sub>
 </p>
 
-公开 `v0.1.2` 已包含 B站投稿。字幕成片验证完成后，可以在本机直接投稿；先在“设置 → B站投稿”扫码登录并填写默认分区、标签和简介模板，再选择自动投稿或在工作台手动确认。
+公开 `v0.2.14` 已包含 B站投稿。字幕成片验证完成后，可以在本机直接投稿；先在“设置 → B站投稿”扫码登录并填写默认分区、标签和简介模板，再选择自动投稿或在工作台手动确认。
 
 凭证通过 Electron `safeStorage` 加密；上传结果没有可验证回执时，Etch 会标记为“结果未知”，要求先到 B站创作中心确认，避免重复投稿。V1 只支持单账号、单投稿并发，不支持定时、多账号、审核轮询或稿件管理。
 
@@ -142,7 +142,7 @@ Etch 启动后会检测可执行文件、版本、关键能力和登录状态。
 | Implemented | 网页 / X 到 Markdown 与 HTML | 普通网页、单条 X status 与 X Article；静态图片本地化、normal/refined 可恢复翻译、双栏校对、结构验证、Markdown 导出与离线单文件 HTML。完整线程、引用帖、投票和 X 视频未展开。 |
 | Implemented | 可恢复任务与分类 | `task.json` 权威状态、durable run registry、lease + revision/fingerprint 提交；分类不改变任务执行状态。 |
 | Partial | 带证据的视频总结与配图 | research ledger、三稿评分融合、配图 checkpoint 和导出已有自动化覆盖；真实视频与真实 Provider 的完整 L3 尚未验证。 |
-| Implemented | B站直连投稿 | 当前源码已实现扫码登录、手动 / 自动投稿、单并发与回执状态；公开 `v0.1.2` 已包含该投稿流程，真实账号 L3 尚未验证。 |
+| Implemented | B站直连投稿 | 当前源码已实现扫码登录、手动 / 自动投稿、单并发与回执状态；公开 `v0.2.14` 已包含该投稿流程，真实账号 L3 尚未验证。 |
 | Partial | Provider、长媒体与公开发行 | 四端协议有自动化覆盖，但真实账号 / 服务端需当机验证；尚无全局磁盘预算、Developer ID、公证或自动更新。 |
 | Planned | 本地文件导入 | Schema 已预留；UI、APFS clone/copy、空间检查与恢复链路尚未实现。 |
 
