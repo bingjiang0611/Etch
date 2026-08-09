@@ -1,0 +1,23 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "Etch 网页翻译工作流": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-08-09T05:30:32.678Z",
+          "status": "needs-review",
+          "subtitle": "新建任务、网页/X 对照校对与失败状态",
+          "viewport": {
+            "width": 1360,
+            "height": 860
+          }
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-08-09T05:30:32.679Z",
+  "updatedAt": "2026-08-09T05:30:32.679Z"
+}

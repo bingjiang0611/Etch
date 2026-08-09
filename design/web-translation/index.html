@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b0d10">
+  <title>Etch · 网页翻译工作流设计稿</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-queue" viewBox="0 0 24 24">
+      <line x1="4" y1="7" x2="20" y2="7"></line>
+      <line x1="4" y1="12" x2="20" y2="12"></line>
+      <line x1="4" y1="17" x2="14" y2="17"></line>
+    </symbol>
+    <symbol id="icon-book" viewBox="0 0 24 24">
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5z"></path>
+      <line x1="8" y1="8" x2="16" y2="8"></line>
+      <line x1="8" y1="12" x2="16" y2="12"></line>
+      <line x1="8" y1="16" x2="12" y2="16"></line>
+    </symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24">
+      <line x1="12" y1="5" x2="12" y2="19"></line>
+      <line x1="5" y1="12" x2="19" y2="12"></line>
+    </symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24">
+      <path d="M9 15l6-6M11 6l1-1a3.5 3.5 0 0 1 5 5l-1 1M13 18l-1 1a3.5 3.5 0 0 1-5-5l1-1"></path>
+    </symbol>
+    <symbol id="icon-file" viewBox="0 0 24 24">
+      <path d="M6 3h8l4 4v14H6z"></path>
+      <path d="M14 3v5h5M9 12h6M9 16h6"></path>
+    </symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24">
+      <path d="M5 4l14 16M19 4 5 20"></path>
+    </symbol>
+    <symbol id="icon-video" viewBox="0 0 24 24">
+      <rect x="3.5" y="5" width="13" height="14" rx="2"></rect>
+      <path d="m16.5 10 4-2v8l-4-2z"></path>
+    </symbol>
+    <symbol id="icon-spark" viewBox="0 0 24 24">
+      <path d="m12 3 1.3 4.1L17 9l-3.7 1.9L12 15l-1.3-4.1L7 9l3.7-1.9z"></path>
+      <path d="m18.5 15 .7 2.2 2.3.8-2.3.8-.7 2.2-.7-2.2-2.3-.8 2.3-.8z"></path>
+    </symbol>
+    <symbol id="icon-back" viewBox="0 0 24 24">
+      <polyline points="15 6 9 12 15 18"></polyline>
+    </symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24">
+      <path d="M14 5h5v5M19 5l-8 8"></path>
+      <path d="M18 13v6H5V6h6"></path>
+    </symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24">
+      <path d="M12 4v11"></path>
+      <polyline points="7 11 12 16 17 11"></polyline>
+      <path d="M5 20h14"></path>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24">
+      <polyline points="4 12 10 18 20 6"></polyline>
+    </symbol>
+    <symbol id="icon-warning" viewBox="0 0 24 24">
+      <path d="M12 3 2 20h20z"></path>
+      <line x1="12" y1="9" x2="12" y2="14"></line>
+      <circle cx="12" cy="17" r=".7" fill="currentColor" stroke="none"></circle>
+    </symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24">
+      <path d="M19 8a8 8 0 1 0 1 7"></path>
+      <polyline points="19 3 19 8 14 8"></polyline>
+    </symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24">
+      <rect x="8" y="8" width="11" height="12" rx="2"></rect>
+      <path d="M16 8V4H5v12h3"></path>
+    </symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24">
+      <polyline points="9 6 15 12 9 18"></polyline>
+    </symbol>
+    <symbol id="icon-globe" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M3 12h18M12 3c2.3 2.5 3.4 5.5 3.4 9s-1.1 6.5-3.4 9c-2.3-2.5-3.4-5.5-3.4-9S9.7 5.5 12 3z"></path>
+    </symbol>
+  </svg>
+
+  <div class="app-shell" id="app-shell" data-source="web">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand" aria-label="Etch 首页">Etch</div>
+      <nav>
+        <button class="nav-item is-active" type="button" data-action="show-queue">
+          <svg aria-hidden="true"><use href="#icon-queue"></use></svg>
+          任务队列
+          <span class="nav-count">4</span>
+        </button>
+        <button class="nav-item" type="button">
+          <svg aria-hidden="true"><use href="#icon-book"></use></svg>
+          统一术语表
+        </button>
+      </nav>
+      <div class="runtime-state">
+        <span class="status-dot" data-status="ready" aria-hidden="true"></span>
+        <div>
+          <strong>环境 9/9 可用</strong>
+          <span>arm64 · 设计稿</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="content-stage">
+      <section class="screen queue-screen is-visible" id="queue-screen" data-screen-label="新建网页翻译任务">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">本地内容翻译流水线</p>
+            <h1>任务队列</h1>
+          </div>
+          <button class="primary-button" id="new-task-trigger" type="button" data-action="open-new-task">
+            <svg aria-hidden="true"><use href="#icon-plus"></use></svg>
+            新建任务
+          </button>
+        </header>
+
+        <section class="queue-section" aria-labelledby="queue-title">
+          <div class="queue-heading">
+            <h2 class="sr-only" id="queue-title">全部任务</h2>
+            <div class="category-tabs" role="tablist" aria-label="任务分类">
+              <button class="category-tab" type="button" aria-selected="true">全部 <span>4</span></button>
+              <button class="category-tab" type="button">未分类 <span>2</span></button>
+              <button class="category-tab" type="button">技术资料 <span>2</span></button>
+            </div>
+          </div>
+
+          <div class="task-grid">
+            <article class="task-card" tabindex="0" data-action="show-web">
+              <div class="document-cover cover-web">
+                <div class="cover-domain"><svg aria-hidden="true"><use href="#icon-globe"></use></svg> example.com</div>
+                <strong>如何构建可靠的网页转 Markdown 流水线</strong>
+                <span>ARTICLE / ZH-CN</span>
+                <div class="cover-lines" aria-hidden="true"><i></i><i></i><i></i></div>
+              </div>
+              <div class="task-card-body">
+                <div class="task-card-overline"><span>网页翻译</span><span>·</span><span>Codex</span></div>
+                <strong>如何构建可靠的网页转 Markdown 流水线</strong>
+                <p>结构与媒体已核验，可继续校对或导出 Markdown。</p>
+                <div class="task-card-tags"><span class="src-chip">WEB</span><span class="task-tag">技术资料</span><span class="pill" data-status="completed">已完成</span></div>
+                <div class="task-progress"><i style="width: 100%"></i></div>
+              </div>
+            </article>
+
+            <article class="task-card" tabindex="0" data-action="show-x">
+              <div class="document-cover cover-x">
+                <span class="x-glyph" aria-hidden="true">𝕏</span>
+                <div>
+                  <span>X ARTICLE</span>
+                  <strong>Preserve the details users never think about</strong>
+                </div>
+              </div>
+              <div class="task-card-body">
+                <div class="task-card-overline"><span>网页翻译</span><span>·</span><span>X 专用解析</span></div>
+                <strong>把用户从未想过的细节保留下来</strong>
+                <p>正文与静态图片已归档；检测到未导入的视频。</p>
+                <div class="task-card-tags"><span class="src-chip">X ARTICLE</span><span class="pill" data-status="checkpoint">有警告</span></div>
+                <div class="task-progress is-warning"><i style="width: 100%"></i></div>
+              </div>
+            </article>
+
+            <article class="task-card task-card-muted" tabindex="0">
+              <div class="document-cover cover-video">
+                <svg aria-hidden="true"><use href="#icon-video"></use></svg>
+                <span>VIDEO / BILINGUAL</span>
+              </div>
+              <div class="task-card-body">
+                <div class="task-card-overline"><span>双语硬字幕</span><span>·</span><span>Claude Code</span></div>
+                <strong>Building a Local-First Desktop App</strong>
+                <p>正在分批翻译，完成后进入术语审计。</p>
+                <div class="task-card-tags"><span class="src-chip">VIDEO</span><span class="pill" data-status="running">翻译中</span></div>
+                <div class="task-progress"><i style="width: 48%"></i></div>
+              </div>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section class="screen workbench-screen" id="workbench-screen" data-screen-label="网页翻译对照工作台">
+        <div class="workbench-view">
+          <header class="workbench-header">
+            <button class="back-link" type="button" data-action="show-queue">
+              <svg aria-hidden="true"><use href="#icon-back"></use></svg>
+              任务队列
+            </button>
+            <div class="workbench-title-row">
+              <div class="workbench-title">
+                <span class="provider-tag"><span class="only-web">Codex · 网页解析</span><span class="only-x">Codex · X 专用解析</span></span>
+                <h1 class="only-web">如何构建可靠的网页转 Markdown 流水线</h1>
+                <h1 class="only-x">把用户从未想过的细节保留下来</h1>
+              </div>
+              <div class="workbench-actions">
+                <button class="secondary-button" type="button" data-action="open-source">
+                  <svg aria-hidden="true"><use href="#icon-external"></use></svg>
+                  打开原网页
+                </button>
+                <button class="primary-button" type="button" data-action="export-markdown">
+                  <svg aria-hidden="true"><use href="#icon-download"></use></svg>
+                  导出 Markdown
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <details class="pipeline-collapse" open>
+            <summary>
+              <svg class="chevron" aria-hidden="true"><use href="#icon-chevron"></use></svg>
+              <span class="pipeline-title">处理流水线</span>
+              <span class="pipeline-mini"><span>5 / 5 · 等待确认</span><span class="mini-bar"><i></i></span><span class="pipeline-ok">结构对齐通过</span></span>
+            </summary>
+            <div class="pipeline-body">
+              <div class="rail" role="list" aria-label="网页翻译阶段">
+                <div class="rail-node" data-status="completed" role="listitem">
+                  <span class="rail-dot"><svg aria-hidden="true"><use href="#icon-check"></use></svg></span>
+                  <span class="rail-label">抓取</span>
+                  <span class="rail-sub only-web">静态网页</span><span class="rail-sub only-x">X Article</span>
+                </div>
+                <div class="rail-node" data-status="completed" role="listitem">
+                  <span class="rail-dot"><svg aria-hidden="true"><use href="#icon-check"></use></svg></span>
+                  <span class="rail-label">正文与媒体</span>
+                  <span class="rail-sub only-web">噪音已清理</span><span class="rail-sub only-x">结构已还原</span>
+                </div>
+                <div class="rail-node" data-status="completed" role="listitem">
+                  <span class="rail-dot"><svg aria-hidden="true"><use href="#icon-check"></use></svg></span>
+                  <span class="rail-label">翻译</span>
+                  <span class="rail-sub">精翻 · zh-CN</span>
+                </div>
+                <div class="rail-node" data-status="checkpoint" role="listitem">
+                  <span class="rail-dot">04</span>
+                  <span class="rail-label">人工校对</span>
+                  <span class="rail-sub">等待确认</span>
+                </div>
+                <div class="rail-node" data-status="completed" role="listitem">
+                  <span class="rail-dot"><svg aria-hidden="true"><use href="#icon-check"></use></svg></span>
+                  <span class="rail-label">完整性验证</span>
+                  <span class="rail-sub">结构一致</span>
+                </div>
+              </div>
+              <div class="verification-strip">
+                <span class="source-route only-web"><svg aria-hidden="true"><use href="#icon-globe"></use></svg>普通网页</span>
+                <span class="source-route only-x"><svg aria-hidden="true"><use href="#icon-x"></use></svg>X Article</span>
+                <span>EN → ZH-CN</span>
+                <span>标题 3 → 3</span>
+                <span>图片 1 → 1</span>
+                <span>代码块 1 → 1</span>
+                <strong><svg aria-hidden="true"><use href="#icon-check"></use></svg>对齐通过</strong>
+              </div>
+            </div>
+          </details>
+
+          <aside class="workbench-warning only-x" role="status">
+            <svg aria-hidden="true"><use href="#icon-warning"></use></svg>
+            <div><strong>检测到 1 段视频，本版不归档 X 视频</strong><span>正文、封面与静态图片可继续校对和导出；完整 Thread、Quote 与 Poll 也暂不支持。</span></div>
+          </aside>
+
+          <section class="document-workbench">
+            <div class="workbench-tabs" role="tablist" aria-label="网页翻译工作台">
+              <button class="workbench-tab is-active" type="button" role="tab" aria-selected="true" data-tab="compare">对照校对</button>
+              <button class="workbench-tab" type="button" role="tab" aria-selected="false" data-tab="preview">中文预览</button>
+              <button class="workbench-tab" type="button" role="tab" aria-selected="false" data-tab="info">任务信息</button>
+              <span class="autosave-state"><span class="status-dot" data-status="ready" aria-hidden="true"></span>修改自动保存</span>
+            </div>
+
+            <div class="tab-panel is-visible" id="compare-panel" role="tabpanel">
+              <div class="document-columns">
+                <section class="document-pane source-pane" aria-labelledby="source-pane-title">
+                  <header class="document-pane-header">
+                    <div><span>原文</span><strong id="source-pane-title" class="only-web">example.com · 英文</strong><strong class="only-x">@etch_demo · 英文</strong></div>
+                    <span class="pane-meta">清洗后 Markdown</span>
+                  </header>
+                  <article class="article-body source-article only-web" data-sync-scroll="source">
+                    <p class="demo-flag">设计稿示例内容</p>
+                    <h1>Building a reliable web-to-Markdown pipeline</h1>
+                    <p class="source-link"><a href="https://example.com/articles/reliable-markdown" target="_blank" rel="noreferrer">Source: example.com/articles/reliable-markdown</a></p>
+                    <p>Converting a page is the easy part. Preserving its structure, media, citations, and reading order is the real work.</p>
+                    <h2>Clean before translating</h2>
+                    <p>A dependable workflow isolates the article body, removes navigation and subscription chrome, then creates a media manifest before translation begins.</p>
+                    <figure class="article-figure"><div class="figure-placeholder"><svg aria-hidden="true"><use href="#icon-file"></use></svg><span>正文图片 · 已本地化</span></div><figcaption>Each image keeps its original position in the article.</figcaption></figure>
+                    <h2>Verify every block</h2>
+                    <p>Every heading, paragraph, list, code block, and image receives a stable block id. The translated document is complete only when every block aligns with its source.</p>
+                    <pre><code>source blocks  = 12
+translated     = 12
+missing media  = 0</code></pre>
+                  </article>
+                  <article class="article-body source-article only-x" data-sync-scroll="source">
+                    <p class="demo-flag">设计稿示例内容</p>
+                    <div class="x-author-card">
+                      <span class="x-avatar">E</span>
+                      <div><strong>Etch 演示账号</strong><span>@etch_demo · 设计稿日期</span></div>
+                      <span class="x-type">X ARTICLE</span>
+                    </div>
+                    <h1>Preserve the details users never think about</h1>
+                    <p>Small tools feel reliable when they preserve the details users never have to think about.</p>
+                    <h2>Structure is part of the content</h2>
+                    <p>A heading is not just a larger sentence. An image is not just a URL. Their order and role must survive extraction and translation.</p>
+                    <figure class="article-figure"><div class="figure-placeholder x-figure"><span>𝕏</span><strong>封面图片 · 本地副本</strong></div><figcaption>Cover media remains visible at the top of the translated article.</figcaption></figure>
+                    <h2>Warnings must stay visible</h2>
+                    <p>If a video, quote, or poll is not supported, the task should say so instead of silently pretending the import is complete.</p>
+                    <pre><code>cover media     = 1
+body images    = 0
+remote images  = 0</code></pre>
+                  </article>
+                </section>
+
+                <section class="document-pane translation-pane" aria-labelledby="translation-pane-title">
+                  <header class="document-pane-header">
+                    <div><span>译文</span><strong id="translation-pane-title">简体中文 · 精翻</strong></div>
+                    <span class="pane-meta">translated.zh-CN.md</span>
+                  </header>
+                  <article class="article-body translated-article only-web" data-sync-scroll="translation" contenteditable="true" spellcheck="false">
+                    <p class="demo-flag" contenteditable="false">设计稿示例内容</p>
+                    <h1>如何构建可靠的网页转 Markdown 流水线</h1>
+                    <p class="source-link" contenteditable="false"><a href="https://example.com/articles/reliable-markdown" target="_blank" rel="noreferrer">原文：example.com/articles/reliable-markdown</a></p>
+                    <p>把网页转换成文本并不难。真正困难的是保留原文结构、媒体、引用与阅读顺序。</p>
+                    <h2>先清洗，再翻译</h2>
+                    <p>可靠的工作流会先识别正文，移除导航和订阅模块，再建立媒体清单；完成这些步骤后，翻译才会开始。</p>
+                    <figure class="article-figure" contenteditable="false"><div class="figure-placeholder"><svg aria-hidden="true"><use href="#icon-file"></use></svg><span>正文图片 · 已本地化</span></div><figcaption>每张图片都保留在文章中的原始位置。</figcaption></figure>
+                    <h2>逐块核验</h2>
+                    <p>每个标题、段落、列表、代码块和图片都有稳定的 block id。只有当译文中的每个 block 都与原文对齐，任务才算完成。</p>
+                    <pre contenteditable="false"><code>原文 block 数 = 12
+译文 block 数 = 12
+缺失媒体数    = 0</code></pre>
+                  </article>
+                  <article class="article-body translated-article only-x" data-sync-scroll="translation" contenteditable="true" spellcheck="false">
+                    <p class="demo-flag" contenteditable="false">设计稿示例内容</p>
+                    <div class="x-author-card" contenteditable="false">
+                      <span class="x-avatar">E</span>
+                      <div><strong>Etch 演示账号</strong><span>@etch_demo · 设计稿日期</span></div>
+                      <span class="x-type">X ARTICLE</span>
+                    </div>
+                    <h1>把用户从未想过的细节保留下来</h1>
+                    <p>小工具之所以让人觉得可靠，是因为它把那些用户从不需要操心的细节都处理好了。</p>
+                    <h2>结构也是内容的一部分</h2>
+                    <p>标题不只是字号更大的句子，图片也不只是一个 URL。提取与翻译之后，它们的顺序和作用必须保持不变。</p>
+                    <figure class="article-figure" contenteditable="false"><div class="figure-placeholder x-figure"><span>𝕏</span><strong>封面图片 · 本地副本</strong></div><figcaption>封面媒体会继续显示在译文顶部。</figcaption></figure>
+                    <h2>所有缺失都必须显式说明</h2>
+                    <p>如果当前还不支持视频、Quote 或 Poll，任务应该明确提示，而不是静默丢弃内容后假装导入完整。</p>
+                    <pre contenteditable="false"><code>封面媒体数   = 1
+正文图片数   = 0
+远程图片残留 = 0</code></pre>
+                  </article>
+                </section>
+              </div>
+              <footer class="review-footer">
+                <div><strong>校对 checkpoint</strong><span>完成前可继续编辑；确认后执行最终完整性验证。</span></div>
+                <button class="primary-button" type="button" data-action="complete-review"><svg aria-hidden="true"><use href="#icon-check"></use></svg>完成校对</button>
+              </footer>
+            </div>
+
+            <div class="tab-panel" id="preview-panel" role="tabpanel" hidden>
+              <article class="preview-article only-web">
+                <p class="demo-flag">设计稿示例内容</p>
+                <h1>如何构建可靠的网页转 Markdown 流水线</h1>
+                <p class="source-link"><a href="https://example.com/articles/reliable-markdown" target="_blank" rel="noreferrer">原文：example.com/articles/reliable-markdown</a></p>
+                <p>把网页转换成文本并不难。真正困难的是保留原文结构、媒体、引用与阅读顺序。</p>
+                <h2>先清洗，再翻译</h2>
+                <p>可靠的工作流会先识别正文，移除导航和订阅模块，再建立媒体清单；完成这些步骤后，翻译才会开始。</p>
+                <div class="preview-rule"></div>
+                <h2>逐块核验</h2>
+                <p>只有当译文中的每个 block 都与原文对齐，任务才算完成。</p>
+              </article>
+              <article class="preview-article only-x">
+                <p class="demo-flag">设计稿示例内容</p>
+                <div class="x-author-card"><span class="x-avatar">E</span><div><strong>Etch 演示账号</strong><span>@etch_demo · 设计稿日期</span></div><span class="x-type">X ARTICLE</span></div>
+                <h1>把用户从未想过的细节保留下来</h1>
+                <p>小工具之所以让人觉得可靠，是因为它把那些用户从不需要操心的细节都处理好了。</p>
+                <h2>结构也是内容的一部分</h2>
+                <p>提取与翻译之后，标题、图片、引用和列表的顺序及作用必须保持不变。</p>
+                <div class="preview-rule"></div>
+                <h2>所有缺失都必须显式说明</h2>
+                <p>不支持的视频、Quote 或 Poll 必须明确提示，不能静默丢弃。</p>
+              </article>
+            </div>
+
+            <div class="tab-panel" id="info-panel" role="tabpanel" hidden>
+              <div class="info-layout">
+                <section class="info-section">
+                  <h2>来源与翻译</h2>
+                  <dl class="info-grid">
+                    <dt>内容类型</dt><dd class="only-web">普通网页</dd><dd class="only-x">X Article</dd>
+                    <dt>来源</dt><dd class="only-web">example.com</dd><dd class="only-x">x.com/@etch_demo</dd>
+                    <dt>解析路径</dt><dd class="only-web">通用网页解析</dd><dd class="only-x">X 专用解析</dd>
+                    <dt>语言</dt><dd>英文 → 简体中文</dd>
+                    <dt>翻译质量</dt><dd>精翻</dd>
+                    <dt>Provider</dt><dd>Codex · CLI 默认模型</dd>
+                  </dl>
+                </section>
+                <section class="info-section">
+                  <h2>完整性核验</h2>
+                  <ul class="check-list">
+                    <li><svg aria-hidden="true"><use href="#icon-check"></use></svg><span>标题层级与段落顺序一致</span><strong>通过</strong></li>
+                    <li><svg aria-hidden="true"><use href="#icon-check"></use></svg><span>图片已本地化且位置不变</span><strong>1 → 1</strong></li>
+                    <li><svg aria-hidden="true"><use href="#icon-check"></use></svg><span>代码块未被翻译破坏</span><strong>1 → 1</strong></li>
+                    <li class="only-x is-warning"><svg aria-hidden="true"><use href="#icon-warning"></use></svg><span>视频不在 V1 归档范围</span><strong>1 个</strong></li>
+                  </ul>
+                </section>
+                <section class="info-section x-snapshot only-x">
+                  <div><h2>X 互动快照</h2><span>设计稿未载入真实数据</span></div>
+                  <dl><div><dt>回复</dt><dd>—</dd></div><div><dt>转发</dt><dd>—</dd></div><div><dt>点赞</dt><dd>—</dd></div><div><dt>浏览</dt><dd>—</dd></div></dl>
+                </section>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen error-screen" id="error-screen" data-screen-label="网页抓取失败状态">
+        <div class="workbench-view">
+          <header class="workbench-header">
+            <button class="back-link" type="button" data-action="show-queue"><svg aria-hidden="true"><use href="#icon-back"></use></svg>任务队列</button>
+            <div class="workbench-title-row">
+              <div class="workbench-title"><span class="provider-tag is-danger">抓取失败 · 未生成正文</span><h1>需要登录的网页</h1></div>
+              <div class="workbench-actions"><button class="secondary-button" type="button" data-action="open-source"><svg aria-hidden="true"><use href="#icon-external"></use></svg>打开原网页</button><button class="primary-button" type="button" data-action="retry"><svg aria-hidden="true"><use href="#icon-refresh"></use></svg>重试抓取</button></div>
+            </div>
+          </header>
+          <details class="pipeline-collapse" open>
+            <summary><svg class="chevron" aria-hidden="true"><use href="#icon-chevron"></use></svg><span class="pipeline-title">处理流水线</span><span class="pipeline-mini"><span>0 / 5 · 抓取失败</span><span class="mini-bar is-failed"><i></i></span><span class="pipeline-danger">需要处理</span></span></summary>
+            <div class="pipeline-body">
+              <div class="rail error-rail" role="list" aria-label="失败的网页翻译阶段">
+                <div class="rail-node" data-status="failed" role="listitem"><span class="rail-dot">!</span><span class="rail-label">抓取</span><span class="rail-sub">LOGIN_REQUIRED</span></div>
+                <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">02</span><span class="rail-label">正文与媒体</span><span class="rail-sub"></span></div>
+                <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">03</span><span class="rail-label">翻译</span><span class="rail-sub"></span></div>
+                <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">04</span><span class="rail-label">人工校对</span><span class="rail-sub"></span></div>
+                <div class="rail-node" data-status="pending" role="listitem"><span class="rail-dot">05</span><span class="rail-label">完整性验证</span><span class="rail-sub"></span></div>
+              </div>
+            </div>
+          </details>
+          <section class="failure-panel" role="alert">
+            <div class="failure-icon"><svg aria-hidden="true"><use href="#icon-warning"></use></svg></div>
+            <div class="failure-copy">
+              <p class="eyebrow">LOGIN_REQUIRED</p>
+              <h2>Etch 没有读取到文章正文</h2>
+              <p>这个页面要求登录、触发了验证码，或只在浏览器脚本运行后生成正文。Etch 已保留原始 URL，没有创建空白译稿。</p>
+              <dl><dt>已保留</dt><dd>原始 URL、任务记录、失败原因</dd><dt>未生成</dt><dd>source.md、译文、媒体清单</dd></dl>
+              <div><button class="primary-button" type="button" data-action="retry"><svg aria-hidden="true"><use href="#icon-refresh"></use></svg>重试抓取</button><button class="secondary-button" type="button" data-action="open-source">在浏览器检查</button></div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="new-task-dialog" id="new-task-dialog" aria-labelledby="new-task-title">
+    <form class="new-task-form" id="new-task-form">
+      <header class="new-task-heading">
+        <div><p class="eyebrow">添加内容</p><h2 id="new-task-title">新建任务</h2></div>
+        <button class="new-task-close" type="button" aria-label="关闭新建任务" data-action="close-new-task">×</button>
+      </header>
+      <p class="new-task-copy" id="new-task-copy">粘贴普通网页、X 单条帖子或 X Article。Etch 会自动识别来源并选择解析方式。</p>
+      <div class="new-task-kind" role="radiogroup" aria-label="任务类型">
+        <label class="new-task-kind-option">
+          <input type="radio" name="task-kind" value="subtitle">
+          <span><svg aria-hidden="true"><use href="#icon-video"></use></svg><strong>双语硬字幕</strong><small>翻译、校对、压制成片</small></span>
+        </label>
+        <label class="new-task-kind-option">
+          <input type="radio" name="task-kind" value="summary">
+          <span><svg aria-hidden="true"><use href="#icon-spark"></use></svg><strong>视频总结</strong><small>三稿择优长文 + 配图</small></span>
+        </label>
+        <label class="new-task-kind-option" data-selected="true">
+          <input type="radio" name="task-kind" value="document" checked>
+          <span><svg aria-hidden="true"><use href="#icon-file"></use></svg><strong>网页翻译</strong><small>网页 / X → 中文 Markdown</small></span>
+        </label>
+      </div>
+      <label class="new-task-field" for="content-url">
+        <span>网页或 X 链接 <small id="entered-url-count">自动识别来源</small></span>
+        <textarea class="field-area new-task-urls" id="content-url" name="content-url" rows="4" inputmode="url" spellcheck="false">https://www.anthropic.com/research/coding-agents-social-sciences</textarea>
+      </label>
+      <div class="route-preview" id="route-preview" aria-live="polite"></div>
+      <div class="new-task-fields-row">
+        <label class="new-task-field" for="provider"><span>翻译 Provider <small>本机 CLI</small></span><select class="field-select" id="provider"><option>Codex</option><option>Claude Code</option><option>Qoder</option><option>OpenCode</option></select></label>
+        <label class="new-task-field" for="processing-mode"><span>处理方式 <small>推荐自动</small></span><select class="field-select" id="processing-mode"><option>自动：英文精翻，中文仅转换</option><option>仅转换为 Markdown</option><option>统一翻译为简体中文</option></select></label>
+      </div>
+      <label class="new-task-field" for="translation-note"><span>翻译要求 <small>选填</small></span><textarea class="field-area" id="translation-note" rows="2" placeholder="例如：术语保留英文，中文表达简洁自然"></textarea></label>
+      <aside class="scope-note"><svg aria-hidden="true"><use href="#icon-warning"></use></svg><span><strong>X V1 范围</strong>支持单条帖子与 X Article；暂不归档完整 Thread、Quote、Poll 和视频。</span></aside>
+      <p class="form-error" id="new-task-error" role="alert" hidden></p>
+      <footer class="new-task-actions"><button class="secondary-button" type="button" data-action="close-new-task">取消</button><button class="primary-button" type="submit">创建并开始</button></footer>
+    </form>
+  </dialog>
+
+  <div class="prototype-controls" role="toolbar" aria-label="设计稿视图">
+    <span>设计稿</span>
+    <button type="button" data-demo-view="new-task" aria-pressed="true">新建任务</button>
+    <button type="button" data-demo-view="web" aria-pressed="false">网页工作台</button>
+    <button type="button" data-demo-view="x" aria-pressed="false">X Article</button>
+    <button type="button" data-demo-view="error" aria-pressed="false">失败状态</button>
+    <button type="button" data-action="toggle-theme" aria-label="切换明暗主题">◐</button>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="prototype.js"></script>
+</body>
+</html>
