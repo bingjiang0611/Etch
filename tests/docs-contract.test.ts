@@ -16,6 +16,7 @@ describe('documentation capability contract', () => {
   it('keeps the source version and public release identities explicit', () => {
     expect(website).toContain(`"softwareVersion": "${publicReleaseVersion}"`)
     expect(website).toContain(`本页对应 ${packageJson.version} 源码`)
+    expect(website).toContain('"description": "本地英中双语硬字幕工作站，支持 B站投稿"')
     expect(readme).toContain(`当前源码 \`v${packageJson.version}\``)
     expect(website).toContain(publicDmgUrl)
     expect(readme).toContain(`Etch-${publicReleaseVersion}-arm64.dmg`)
@@ -33,14 +34,14 @@ describe('documentation capability contract', () => {
     expect(readme).toContain('未经 Apple 公证')
   })
 
-  it('keeps source-only Bilibili publishing out of the public release contract', () => {
-    expect(website).toContain(`公开 v${publicReleaseVersion} 安装包尚不包含`)
-    expect(website).not.toContain('发行说明')
-    expect(website).not.toContain('release-note')
-    expect(website).not.toContain('final-cta')
-    expect(website).not.toContain('先把下一条英文视频')
-    expect(website).not.toContain('在 GitHub 查看源码')
-    expect(readme).toContain(`公开 \`v${publicReleaseVersion}\` 不含此能力`)
+  it('keeps public Bilibili publishing distinct from source-only task additions', () => {
+    expect(website).toContain(`公开 v${publicReleaseVersion} 已包含`)
+    expect(website).toContain('不含视频总结与网页翻译')
+    expect(website).toContain('真实视频的完整 L3 尚未执行')
+    expect(website).not.toContain('<strong>交付</strong>summary.md<br>research.json')
+    expect(readme).toContain(`公开 \`v${publicReleaseVersion}\` 已包含该投稿流程`)
+    expect(readmeEn).toContain(`included in the public \`v${publicReleaseVersion}\` installer`)
+    expect(readmeJa).toContain(`公開 \`v${publicReleaseVersion}\` インストーラーに含まれて`)
   })
 
   it('keeps social-card metadata safe for chunked preview crawlers', () => {

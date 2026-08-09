@@ -27,7 +27,7 @@
     <g transform="translate(0 132)">
       <rect width="426" height="82" rx="10" fill="#111419" stroke="#343C46"/>
       <text x="20" y="31" fill="#6BA6FF" font-family="ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', monospace" font-size="18" font-weight="700">02  带证据长文</text>
-      <text x="20" y="59" fill="#C5CAD1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">summary.md  +  research.json</text>
+      <text x="20" y="59" fill="#C5CAD1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19">summary.md  +  images/ (optional)</text>
       <rect x="376" y="28" width="30" height="26" rx="6" fill="#0F1B2A" stroke="#365F8F"/>
       <text x="391" y="47" fill="#7FB2FF" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" font-weight="750">ABC</text>
     </g>

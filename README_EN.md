@@ -77,14 +77,14 @@ Current source version: `0.2.14`. Input is limited to **HTTP(S) URLs**; local fi
 
 ## Publish to Bilibili
 
-This workflow is implemented in the current source. It is not included in the public `v0.1.2` installer.
+This workflow is included in the public `v0.1.2` installer and remains available in the current source.
 
 <p align="center">
   <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch Bilibili publication dialog with title, category, tags, copyright type, source, description, and cover fields">
 </p>
 
 <p align="center">
-  <sub>Real publication UI from v0.1.11, shown with a hermetic fixture; it does not prove an end-to-end publication with a real Bilibili account.</sub>
+  <sub>Real publication UI shown with isolated test data; real-account L3 publishing remains unverified.</sub>
 </p>
 
 First connect a Bilibili account with publishing permission via QR code under **Settings → Bilibili publishing**, then configure the default category, tags, and description template. You can then:
@@ -110,7 +110,7 @@ The publishing path requires no Bilibili Open Platform application and does not 
 | Implemented | Webpage / X to Markdown and HTML | Normal webpages and one X status, body cleanup, static-image localization, recoverable normal/refined translation or conversion only, side-by-side review, structural verification, Markdown export, and offline single-file HTML publication after a four-direction preview. Full threads, quotes, polls, and X video are not expanded yet. |
 | Implemented | Recoverable tasks | `task.json` is authoritative; artifact commits are guarded by lease, revision, and fingerprint checks. |
 | Partial | Video summary (three-draft long-form article with illustrations) | New tasks can be created as "video summary": subtitle extraction, an analysis pack, an external-evidence ledger, three scored drafts merged into one final Chinese article, and 8-12 illustrations that can be previewed in the workbench and exported. Illustration requires the user to pick the verified Qoder or Codex path at a checkpoint; after the cover passes review, each remaining image is generated and committed independently. Real-video L3 summarization remains unverified. |
-| Implemented | Direct Bilibili publishing | Current source implements single-account QR login, manual/automatic publishing, one concurrent publication, and verifiable receipts. The public `v0.1.2` installer does not include it; real-account L3 publishing remains unverified. |
+| Implemented | Direct Bilibili publishing | Current source implements single-account QR login, manual/automatic publishing, one concurrent publication, and verifiable receipts. The public `v0.1.2` installer includes this workflow; real-account L3 publishing remains unverified. |
 | Partial | Providers, long media, and public distribution | Automated tests cover all four Provider protocols, but real accounts and current server behavior require on-machine verification. There is no global disk budget, Developer ID signing, notarization, or auto-update. |
 | Planned | Local file import | The schema reserves this input type, but the UI, APFS clone/copy, space checks, and recovery path are not implemented. |
 
