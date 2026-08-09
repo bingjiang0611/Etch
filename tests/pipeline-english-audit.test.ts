@@ -509,16 +509,94 @@ describe('TaskPipeline English source audit', () => {
     const failed = await task.store.load(task.directory)
     expect(failed.pipeline.stages.translate).toMatchObject({ status: 'failed', attempt: 1 })
     expect(failed.translation.sessionGenerations[0].externalSessionId).toBe(codexSessionId('durable-translation-session'))
+    expect(failed.translation.batches[0]).toMatchObject({
+      id: 'batch-001',
+      status: 'verified',
+      artifact: expect.objectContaining({ valid: true })
+    })
+    expect(await readFile(join(task.directory, failed.translation.batches[0].artifact!.relativePath), 'utf8')).toContain('1\t译文')
 
     await task.pipeline.start(task.directory)
 
     const completed = await task.store.load(task.directory)
     expect(completed.pipeline.stages.translate).toMatchObject({ status: 'completed', attempt: 2 })
     expect(completed.translation.sessionGenerations[0].externalSessionId).toBe(codexSessionId('durable-translation-session'))
-    expect(args).toHaveLength(6)
+    // 第一个已验证批次从 manifest 内联 artifact 恢复，重试只调用剩余三批。
+    expect(args).toHaveLength(5)
     expect(args[0].join(' ')).not.toContain('resume')
     expect(args.slice(1).every((invocation) => invocation.join(' ').includes('resume'))).toBe(true)
     expect(args.slice(1).every((invocation) => invocation.includes(codexSessionId('durable-translation-session')))).toBe(true)
+  })
+
+  it('reuses every verified translation batch after recoverInterrupted replaces the Provider generation', async () => {
+    const task = await cuesTask('manual', 151)
+    const before = await task.store.load(task.directory)
+    before.pipeline.stages.translate.status = 'ready'
+    await task.store.create(task.directory, before)
+    runProcessMock.mockImplementation(async (spec: { stdin?: string }) => providerResult(
+      `${translationCueIds(spec.stdin).map((cueId) => `${cueId}\t译文`).join('\n')}\n`,
+      'before-restart-session'
+    ))
+
+    await task.pipeline.start(task.directory)
+
+    const firstRun = await task.store.load(task.directory)
+    const originalGenerationId = firstRun.translation.activeGenerationId
+    const originalBatchFingerprints = firstRun.translation.batches.map((batch) => batch.inputFingerprint)
+    expect(firstRun.translation.batches).toHaveLength(4)
+    expect(firstRun.translation.batches.every((batch) => batch.status === 'verified')).toBe(true)
+
+    const reset = await task.store.mutate(task.directory, (manifest) => {
+      manifest.pipeline.stages.translate.status = 'ready'
+      manifest.pipeline.stages.translate.progress = 0
+      delete manifest.pipeline.stages.translate.errorCode
+      delete manifest.artifacts.translationGlossary
+      delete manifest.artifacts.chineseCues
+    })
+    await task.store.acquireLease(task.directory, 'translate', 'f'.repeat(64), undefined, reset.revision)
+    const recovered = await task.store.recoverInterrupted(task.directory)
+    expect(recovered.pipeline.stages.translate.errorCode).toContain(PROVIDER_SESSION_CONTAMINATED_PREFIX)
+
+    runProcessMock.mockClear()
+    await task.pipeline.start(task.directory)
+
+    const completed = await task.store.load(task.directory)
+    expect(runProcessMock).not.toHaveBeenCalled()
+    expect(completed.pipeline.stages.translate.status).toBe('completed')
+    expect(completed.translation.batches.map((batch) => batch.inputFingerprint)).toEqual(originalBatchFingerprints)
+    expect(completed.translation.batches.every((batch) => batch.status === 'verified')).toBe(true)
+    expect(completed.translation.sessionGenerations.find((generation) => generation.id === originalGenerationId)?.status).toBe('lost')
+    expect(completed.translation.sessionGenerations.at(-1)).toMatchObject({
+      status: 'active',
+      reason: 'resume-replacement'
+    })
+    expect(completed.translation.sessionGenerations.at(-1)?.externalSessionId).toBeUndefined()
+  })
+
+  it('checkpoints more than 800 cues before any translation Provider call', async () => {
+    const task = await cuesTask('manual', 801)
+    const before = await task.store.load(task.directory)
+    before.pipeline.stages.translate.status = 'ready'
+    await task.store.create(task.directory, before)
+
+    await task.pipeline.start(task.directory)
+
+    const checkpoint = await task.store.load(task.directory)
+    expect(runProcessMock).not.toHaveBeenCalled()
+    expect(checkpoint.pipeline.stages.translate).toMatchObject({
+      status: 'checkpoint',
+      checkpointId: checkpoint.video.checkpoint?.checkpointId
+    })
+    expect(checkpoint.video.checkpoint).toMatchObject({
+      kind: 'large-translation',
+      stage: 'translate',
+      metrics: { cueCount: 801, batchCount: expect.any(Number) }
+    })
+    expect(checkpoint.translation.batches.length).toBeGreaterThan(1)
+
+    const accepted = await task.pipeline.resolveVideoCheckpoint(task.directory, checkpoint.revision, 'accept')
+    expect(accepted.pipeline.stages.translate.status).toBe('ready')
+    expect(accepted.video.decisions.at(-1)).toMatchObject({ kind: 'large-translation', decision: 'accept' })
   })
 
   it('stops at an English ambiguity checkpoint and resolves every decision into immutable corrected artifacts', async () => {

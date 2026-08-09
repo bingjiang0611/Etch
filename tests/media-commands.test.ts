@@ -3,6 +3,7 @@ import {
   WHISPER_MODEL,
   browserCookiesUnavailable,
   burnArgs,
+  genericSourceDownloadArgs,
   normalizeDownloadedMediaArgs,
   sourceDownloadArgs,
   sourceDownloadFallbackArgs,
@@ -61,6 +62,8 @@ describe('media command builders', () => {
   })
   it('downloads the platform thumbnail with the source media', () => {
     const args = sourceDownloadArgs('https://youtube.com/watch?v=x', '/opt/ffmpeg')
+    expect(args).toContain('--no-playlist')
+    expect(args).toContain('--max-filesize')
     expect(args).toContain('--write-thumbnail')
     expect(args).toContain('/opt/ffmpeg')
     expect(args).not.toContain('--write-subs')
@@ -72,6 +75,18 @@ describe('media command builders', () => {
     expect(args).toContain('--remux-video')
     expect(args).toContain('bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/b')
     expect(args).not.toContain('--write-subs')
+  })
+  it('builds generic downloads without YouTube authentication or extractor options', () => {
+    const args = genericSourceDownloadArgs('https://example.com/video', '/opt/ffmpeg')
+    expect(args).toContain('/opt/ffmpeg')
+    expect(args).toContain('--write-thumbnail')
+    expect(args).toContain('--no-playlist')
+    expect(args).toContain('--max-filesize')
+    expect(args.at(-1)).toBe('https://example.com/video')
+    expect(args).not.toContain('--cookies-from-browser')
+    expect(args).not.toContain('--remote-components')
+    expect(args).not.toContain('--extractor-args')
+    expect(args.join(' ')).not.toContain('youtube:')
   })
   it('extracts a bounded fallback thumbnail frame', () => {
     expect(thumbnailFrameArgs('source.mp4', 'thumbnail.jpg', -5)).toEqual([

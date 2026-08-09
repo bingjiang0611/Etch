@@ -9,7 +9,7 @@ export function parseTaskUrls(value: string): string[] {
     try {
       parsed = new URL(candidate)
     } catch {
-      throw new Error(`第 ${index + 1} 行不是有效的视频链接`)
+      throw new Error(`第 ${index + 1} 行不是有效的内容链接`)
     }
     if (!['http:', 'https:'].includes(parsed.protocol)) {
       throw new Error(`第 ${index + 1} 行只支持 http 或 https 链接`)
@@ -20,7 +20,7 @@ export function parseTaskUrls(value: string): string[] {
       urls.push(normalized)
     }
   }
-  if (!urls.length) throw new Error('请至少输入一个视频链接')
+  if (!urls.length) throw new Error('请至少输入一个内容链接')
   if (urls.length > 50) throw new Error('一次最多新建 50 个任务')
   return urls
 }

@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { BilibiliAccount } from '../shared/bilibili'
 import type { GlossaryApplyResult, GlossaryImpactPreview, ChromeCookieAccess, PipelineActivity, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
 import { POOL_BY_STAGE, POOL_LABELS, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
-import { taskInputName, type StageId } from '../shared/task-schema'
+import { SHARED_STAGE_IDS, lastStageForKind, taskInputName, type ProviderId, type StageId } from '../shared/task-schema'
 import { AuditGlossary, type GlossaryEdit } from './AuditGlossary'
 import { IllustrationCheckpointEditor, SummaryDraftsPanel, SummaryPanel, useSummaryPage } from './SummaryPanel'
 import { recoveredToolForStageFailure } from './tool-health'
+import { DEFAULT_PROVIDER, PROVIDER_IDS, providerAvailability } from './provider-availability'
 import {
   Icon,
   PresetDemo,
@@ -25,6 +26,7 @@ import {
   stageLabels,
   stageSubLabel,
   subtitleKindLabel,
+  taskStages,
   type SubtitlePreset,
 } from './ui'
 
@@ -43,6 +45,7 @@ function auditTextError(value: string, sourceAudit: boolean): string | undefined
 
 interface WorkbenchViewProps {
   selected: TaskDetail | undefined
+  relatedOutput: TaskDetail | undefined
   settings: AppSettings
   settingsLoaded: boolean
   taskActionError: string
@@ -65,6 +68,7 @@ interface WorkbenchViewProps {
   activity: PipelineActivity
   selectedIsPaused: boolean
   stoppingTask: boolean
+  creatingCompanion: boolean
   publicationActionBusy: boolean
   bilibiliAccount: BilibiliAccount
   needsRebuild: boolean
@@ -72,6 +76,8 @@ interface WorkbenchViewProps {
   toolHealth: readonly ToolHealthSnapshot[]
   videoRef: RefObject<HTMLVideoElement | null>
   onBack: () => void
+  onOpenOutput: (taskId: string) => Promise<void>
+  onCreateCompanion: (provider: ProviderId, styleNote: string) => Promise<void>
   onStart: () => Promise<void>
   onStop: () => Promise<void>
   onOpenPermissionGuide: () => void
@@ -81,6 +87,8 @@ interface WorkbenchViewProps {
   onOpenCreatorCenter: () => Promise<void>
   onResolveAudit: (decisions: AuditDecision[]) => Promise<void>
   resolvingIllustration: boolean
+  onResolveVideoCheckpoint: (decision: Parameters<typeof window.etch.resolveVideoCheckpoint>[2]) => Promise<void>
+  onResolveResearchCheckpoint: (decision: Parameters<typeof window.etch.resolveResearchCheckpoint>[2]) => Promise<void>
   onResolveIllustrationAgent: (choice: Parameters<typeof window.etch.resolveIllustrationAgent>[2]) => Promise<void>
   onResolveIllustrationCover: (decision: Parameters<typeof window.etch.resolveIllustrationCover>[2]) => Promise<void>
   onCompleteReview: () => Promise<void>
@@ -93,6 +101,34 @@ interface WorkbenchViewProps {
   onPreviewGlossaryImpact: (taskId: string, expectedRevision: number, edits: GlossaryEdit[]) => Promise<GlossaryImpactPreview>
   onApplyGlossaryToCues: (taskId: string, expectedRevision: number, impactFingerprint: string, edits: GlossaryEdit[]) => Promise<GlossaryApplyResult>
   onGlossaryBusyChange: (busy: boolean) => void
+}
+
+function StageRail({ detail, stages, numberOffset = 0 }: { detail: TaskDetail; stages: readonly StageId[]; numberOffset?: number }): React.JSX.Element {
+  return (
+    <div
+      className="rail branch-rail"
+      style={{ '--rail-columns': stages.length } as CSSProperties}
+      role="list"
+      aria-label={`${detail.manifest.kind === 'subtitle' ? '双语硬字幕' : '视频总结'}阶段`}
+    >
+      {stages.map((id, index) => {
+        const stage = getStage(detail, id)
+        return (
+          <div className="rail-node" data-status={stage.status} data-done={isStageDone(stage) ? 'true' : undefined} role="listitem" key={id}>
+            {stage.attempt > 1 && <span className="rail-attempt">×{stage.attempt}</span>}
+            <span className="rail-dot">{stage.status === 'completed' ? <Icon name="check" /> : String(index + numberOffset + 1).padStart(2, '0')}</span>
+            <span className="rail-label">{stageLabels[id]}</span>
+            <span className="rail-sub" title={stageSubLabel(detail, id, stage) || undefined}>{stageSubLabel(detail, id, stage)}</span>
+            {stage.status === 'running' && (
+              <span className="rail-progress">
+                <i style={{ width: `${Math.round((stage.progress ?? 0) * 100)}%` }} />
+              </span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 interface AuditCheckpointEditorProps {
@@ -263,6 +299,7 @@ function AuditCheckpointEditor({ checkpoint, sourceAudit, resolvingAudit, onReso
 
 export function WorkbenchView({
   selected,
+  relatedOutput,
   settings,
   settingsLoaded,
   taskActionError,
@@ -285,6 +322,7 @@ export function WorkbenchView({
   activity,
   selectedIsPaused,
   stoppingTask,
+  creatingCompanion,
   publicationActionBusy,
   bilibiliAccount,
   needsRebuild,
@@ -292,6 +330,8 @@ export function WorkbenchView({
   toolHealth,
   videoRef,
   onBack,
+  onOpenOutput,
+  onCreateCompanion,
   onStart,
   onStop,
   onOpenPermissionGuide,
@@ -301,6 +341,8 @@ export function WorkbenchView({
   onOpenCreatorCenter,
   onResolveAudit,
   resolvingIllustration,
+  onResolveVideoCheckpoint,
+  onResolveResearchCheckpoint,
   onResolveIllustrationAgent,
   onResolveIllustrationCover,
   onCompleteReview,
@@ -317,11 +359,18 @@ export function WorkbenchView({
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('review')
   const [pipelineExpanded, setPipelineExpanded] = useState(true)
   const [activeCueId, setActiveCueId] = useState<number>()
+  const [companionOpen, setCompanionOpen] = useState(false)
+  const [companionProvider, setCompanionProvider] = useState<ProviderId>(DEFAULT_PROVIDER)
+  const [companionStyleNote, setCompanionStyleNote] = useState('')
+  const companionDialogRef = useRef<HTMLDialogElement>(null)
   const guidedReviewCheckpointRef = useRef<string | undefined>(undefined)
   const isSummaryTask = selected?.manifest.kind === 'summary'
   const summary = useSummaryPage(isSummaryTask ? selected?.manifest.taskId : undefined, selected?.manifest.revision ?? 0)
   const illustrateStage = selected ? getStage(selected, 'illustrate') : undefined
   const illustrationCheckpoint = illustrateStage?.status === 'checkpoint' ? illustrateStage.checkpointId : undefined
+  const videoCheckpoint = selected?.manifest.video.checkpoint
+  const researchCheckpoint = selected?.manifest.pipeline.stages.research?.status === 'checkpoint'
+    && selected.manifest.summary.research.status === 'checkpoint'
   const selectedProvider = selected?.manifest.translation.selectedProvider
   const selectedStage = selected ? activeStageId(selected) : undefined
   const selectedCompletedCount = selected ? completedStageCount(selected) : 0
@@ -340,7 +389,9 @@ export function WorkbenchView({
   const reviewCheckpoint = reviewStage?.status === 'checkpoint' && reviewStage.checkpointId === 'manual-review'
   const reviewCheckpointKey = reviewCheckpoint && reviewStage ? `${selected?.manifest.taskId}:${reviewStage.checkpointId}:${reviewStage.attempt}` : undefined
   const sourceStage = selected ? getStage(selected, 'source') : undefined
-  const showChromeLoginHelp = sourceStage?.status === 'failed' && chromeCookieAccess !== 'granted'
+  const showChromeLoginHelp = sourceStage?.status === 'failed'
+    && selected?.manifest.video.sourcePlatform === 'youtube'
+    && chromeCookieAccess !== 'granted'
   const verifyCompleted = selected ? getStage(selected, isSummaryTask ? 'illustrate' : 'verify').status === 'completed' : false
   const waitingPool = selectedWaitingStage ? POOL_BY_STAGE[selectedWaitingStage] : undefined
   const waitingOccupancy = waitingPool ? activity.pools[waitingPool] : undefined
@@ -357,10 +408,27 @@ export function WorkbenchView({
           ? publicationActionBusy ? '正在继续投稿…' : '继续 B站投稿'
           : bilibiliAccount.status === 'connected' ? '投稿到 B站' : '连接 B站并投稿'
   const activeStage = selected && selectedStage ? getStage(selected, selectedStage) : undefined
-  const overallProgress = Math.min(1, (selectedCompletedCount + (activeStage?.status === 'running' ? (activeStage.progress ?? 0) : 0)) / STAGE_ORDER.length)
+  const stages = selected ? taskStages(selected) : STAGE_ORDER
+  const outputs = selected
+    ? [selected, ...(relatedOutput && relatedOutput.manifest.taskId !== selected.manifest.taskId ? [relatedOutput] : [])]
+        .sort((left, right) => left.manifest.kind === right.manifest.kind ? 0 : left.manifest.kind === 'subtitle' ? -1 : 1)
+    : []
+  const sharedCompletedCount = selected
+    ? SHARED_STAGE_IDS.filter((stage) => getStage(selected, stage).status === 'completed').length
+    : 0
+  const sharedReady = sharedCompletedCount === SHARED_STAGE_IDS.length
+  const companionKind = selected?.manifest.kind === 'subtitle' ? 'summary' : 'subtitle'
+  const companionLabel = companionKind === 'subtitle' ? '双语硬字幕' : '视频总结'
+  // 字幕任务不该看到配图池，总结任务也不该看到压制池。
+  const taskPools = pools.filter((pool) => stages.some((id) => POOL_BY_STAGE[id] === pool))
+  const overallProgress = Math.min(1, (selectedCompletedCount + (activeStage?.status === 'running' ? (activeStage.progress ?? 0) : 0)) / stages.length)
   const saveStateText = autoSaveBlocked ? '自动保存失败，需处理' : savingCues ? '正在自动保存…' : dirtyCount ? '等待自动保存…' : cueSaveNotice || '已自动保存'
   const primaryActionLabel = checkpoint
     ? '等待审计裁决'
+    : videoCheckpoint
+      ? '等待视频质量确认'
+    : researchCheckpoint
+      ? '等待外部核验决策'
     : illustrationCheckpoint
       ? '等待配图确认'
     : reviewCheckpoint
@@ -373,10 +441,12 @@ export function WorkbenchView({
           ? '继续处理'
         : needsRebuild
           ? '重新生成成片'
-          : verifyCompleted ? '成片已是最新' : '开始处理'
+          : verifyCompleted ? (isSummaryTask ? '总结已完成' : '成片已是最新') : '开始处理'
   const reviewCompletionBlocked = completingReview || savingCues || autoSaveBlocked || Boolean(dirtyCount) || glossaryBusy || reviewLoading || reviewPage?.availability !== 'ready' || reviewPage.revision !== selected?.manifest.revision
   const primaryActionDisabled = checkpoint
     ? true
+    : videoCheckpoint || researchCheckpoint
+      ? true
     : illustrationCheckpoint
       ? true
     : reviewCheckpoint
@@ -390,6 +460,11 @@ export function WorkbenchView({
     video.currentTime = startMs / 1000
     video.dispatchEvent(new Event('timeupdate'))
     if (play) void video.play().catch(() => undefined)
+  }
+  const openCompanionDialog = (): void => {
+    setCompanionProvider(selectedProvider ?? DEFAULT_PROVIDER)
+    setCompanionStyleNote('')
+    setCompanionOpen(true)
   }
 
   useEffect(() => {
@@ -407,13 +482,25 @@ export function WorkbenchView({
   }, [checkpoint])
 
   useEffect(() => {
+    if (videoCheckpoint || researchCheckpoint) setPipelineExpanded(true)
+  }, [videoCheckpoint, researchCheckpoint])
+
+  useEffect(() => {
     if (selectedIsRunning) setPipelineExpanded(true)
   }, [selectedIsRunning])
 
   useEffect(() => {
+    const dialog = companionDialogRef.current
+    if (!dialog) return
+    if (companionOpen && !dialog.open) dialog.showModal()
+    else if (!companionOpen && dialog.open) dialog.close()
+  }, [companionOpen])
+
+  useEffect(() => {
     if (!reviewCheckpointKey || reviewPage?.availability !== 'ready' || guidedReviewCheckpointRef.current === reviewCheckpointKey) return
     guidedReviewCheckpointRef.current = reviewCheckpointKey
-    setPipelineExpanded(true)
+    // 人工校对是高频编辑区：状态仍保留在折叠摘要里，把垂直空间优先还给术语与 cue。
+    setPipelineExpanded(false)
     setWorkspaceTab(reviewPage.glossaryState === 'ready' ? 'glossary' : 'review')
   }, [reviewCheckpointKey, reviewPage?.availability, reviewPage?.glossaryState])
 
@@ -435,7 +522,7 @@ export function WorkbenchView({
 
   const taskSource = taskInputName(selected.manifest.input)
   const taskId = selected.manifest.taskId
-  const failedStage = STAGE_ORDER.find((id) => getStage(selected, id).status === 'failed')
+  const failedStage = stages.find((id) => getStage(selected, id).status === 'failed')
   const failedErrorCode = failedStage ? getStage(selected, failedStage).errorCode : undefined
   const recoveredTool = selectedIsRunning || selectedWaitingStage ? undefined : recoveredToolForStageFailure(failedErrorCode, toolHealth)
   const glossaryCount = reviewPage?.glossaryState === 'ready' ? reviewPage.glossary.length : undefined
@@ -487,16 +574,6 @@ export function WorkbenchView({
                 {publicationActionLabel}
               </button>
             )}
-            {!isSummaryTask && (
-              <button
-                className="secondary-button"
-                type="button"
-                aria-controls="workbench-panel-glossary"
-                onClick={() => setWorkspaceTab((current) => (current === 'glossary' ? 'review' : 'glossary'))}
-              >
-                {workspaceTab === 'glossary' ? '返回字幕校对' : '查看审计术语表'}
-              </button>
-            )}
             <button
               className={selectedIsRunning || selectedWaitingStage ? 'danger-button wb-stop-button' : 'primary-button'}
               type="button"
@@ -509,6 +586,26 @@ export function WorkbenchView({
               {primaryActionLabel}
             </button>
           </div>
+        </div>
+        <div className="wb-output-tabs" role="group" aria-label="视频成果">
+          {outputs.map((output) => {
+            const active = output.manifest.taskId === selected.manifest.taskId
+            const complete = getStage(output, lastStageForKind(output.manifest.kind)).status === 'completed'
+            return (
+              <button
+                className={active ? 'is-active' : ''}
+                type="button"
+                aria-pressed={active}
+                aria-label={`切换到${output.manifest.kind === 'subtitle' ? '双语硬字幕' : '视频总结'}`}
+                disabled={active}
+                onClick={() => { void onOpenOutput(output.manifest.taskId) }}
+                key={output.manifest.taskId}
+              >
+                <span>{output.manifest.kind === 'subtitle' ? '双语硬字幕' : '视频总结'}</span>
+                <small>{complete ? '已完成' : output.manifest.runtime.currentMessage}</small>
+              </button>
+            )
+          })}
         </div>
         {taskActionError && (
           <p className="task-action-error" role="alert">
@@ -615,7 +712,7 @@ export function WorkbenchView({
             <span className="pc-title">处理流水线</span>
             <span className="pc-mini">
               <span>
-                {selectedCompletedCount} / {STAGE_ORDER.length} · {selected.manifest.runtime.currentMessage}
+                {sharedCompletedCount} / {SHARED_STAGE_IDS.length} 共享 · {outputs.length} / 2 个成果 · {selected.manifest.runtime.currentMessage}
               </span>
               <span
                 className="mini-bar"
@@ -643,26 +740,56 @@ export function WorkbenchView({
           </summary>
           <div className="pc-body">
             <section className="pipeline" aria-label="处理流水线详情">
-              <div className="rail" role="list" aria-label="流水线阶段">
-                {STAGE_ORDER.map((id, index) => {
-                  const stage = getStage(selected, id)
+              <div className="shared-pipeline">
+                <div className="pipeline-section-label">
+                  <span>共享底稿</span>
+                  <small>两个成果只执行一次</small>
+                </div>
+                <StageRail detail={selected} stages={SHARED_STAGE_IDS} />
+              </div>
+              <div className="pipeline-branch" aria-hidden="true"><i /></div>
+              <div className="output-lanes">
+                {outputs.map((output) => {
+                  const active = output.manifest.taskId === selected.manifest.taskId
+                  const outputStages = taskStages(output).filter((stage) => !(SHARED_STAGE_IDS as readonly string[]).includes(stage))
+                  const complete = getStage(output, lastStageForKind(output.manifest.kind)).status === 'completed'
                   return (
-                    <div className="rail-node" data-status={stage.status} data-done={isStageDone(stage) ? 'true' : undefined} role="listitem" key={id}>
-                      {stage.attempt > 1 && <span className="rail-attempt">×{stage.attempt}</span>}
-                      <span className="rail-dot">{stage.status === 'completed' ? <Icon name="check" /> : String(index + 1).padStart(2, '0')}</span>
-                      <span className="rail-label">{stageLabels[id]}</span>
-                      <span className="rail-sub" title={stageSubLabel(selected, id, stage) || undefined}>{stageSubLabel(selected, id, stage)}</span>
-                      {stage.status === 'running' && (
-                        <span className="rail-progress">
-                          <i style={{ width: `${Math.round((stage.progress ?? 0) * 100)}%` }} />
+                    <article className="output-lane" data-active={active || undefined} key={output.manifest.taskId}>
+                      <button
+                        className="output-lane-head"
+                        type="button"
+                        aria-label={`切换到${output.manifest.kind === 'subtitle' ? '双语硬字幕' : '视频总结'}成果`}
+                        disabled={active}
+                        onClick={() => { void onOpenOutput(output.manifest.taskId) }}
+                      >
+                        <span className="output-lane-mark" data-kind={output.manifest.kind}>{output.manifest.kind === 'subtitle' ? '译' : '总'}</span>
+                        <span>
+                          <strong>{output.manifest.kind === 'subtitle' ? '双语硬字幕' : '视频总结'}</strong>
+                          <small>{complete ? '已完成' : output.manifest.runtime.currentMessage}</small>
                         </span>
-                      )}
-                    </div>
+                        {active && <em>当前</em>}
+                      </button>
+                      <StageRail detail={output} stages={outputStages} numberOffset={SHARED_STAGE_IDS.length} />
+                    </article>
                   )
                 })}
+                {!relatedOutput && (
+                  <button
+                    className="output-lane output-lane-empty"
+                    type="button"
+                    disabled={!sharedReady || creatingCompanion}
+                    onClick={openCompanionDialog}
+                  >
+                    <span className="output-lane-mark"><Icon name="plus" /></span>
+                    <span>
+                      <strong>追加{companionLabel}</strong>
+                      <small>{sharedReady ? `直接复用前 4 步，只新增 ${companionKind === 'summary' ? 4 : 6} 步` : '等待共享底稿完成'}</small>
+                    </span>
+                  </button>
+                )}
               </div>
               <div className="pipeline-pools">
-                {pools.map((pool) => {
+                {taskPools.map((pool) => {
                   const status = poolState(selected, pool)
                   const queued = pool === waitingPool
                   return (
@@ -692,10 +819,50 @@ export function WorkbenchView({
               />
             )}
 
+            {videoCheckpoint && (
+              <section className="audit-checkpoint" role="region" aria-labelledby="video-checkpoint-title" aria-busy={resolvingIllustration}>
+                <div className="head">
+                  <Icon name="warning" />
+                  <span id="video-checkpoint-title">
+                    {videoCheckpoint.kind === 'low-resolution'
+                      ? '源视频低于 720p'
+                      : videoCheckpoint.kind === 'whisper-quality'
+                        ? 'Whisper 转录质量需要确认'
+                        : '大批量翻译需要确认成本'}
+                  </span>
+                </div>
+                <p className="illustration-copy">{videoCheckpoint.summary}</p>
+                <div className="audit-actions">
+                  <button className="secondary-button" type="button" disabled={resolvingIllustration} onClick={() => { void onResolveVideoCheckpoint('cancel') }}>暂停任务</button>
+                  {videoCheckpoint.kind !== 'large-translation' && (
+                    <button className="secondary-button" type="button" disabled={resolvingIllustration} onClick={() => { void onResolveVideoCheckpoint('retry') }}>重新执行</button>
+                  )}
+                  <button className="primary-button" type="button" disabled={resolvingIllustration} onClick={() => { void onResolveVideoCheckpoint('accept') }}>
+                    {resolvingIllustration ? '正在提交…' : videoCheckpoint.kind === 'large-translation' ? '确认成本并开始' : '接受并继续'}
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {researchCheckpoint && (
+              <section className="audit-checkpoint" role="region" aria-labelledby="research-checkpoint-title" aria-busy={resolvingIllustration}>
+                <div className="head"><Icon name="warning" /><span id="research-checkpoint-title">外部核验能力暂不可用</span></div>
+                <p className="illustration-copy">{getStage(selected, 'research').errorCode}</p>
+                <div className="audit-actions">
+                  <button className="secondary-button" type="button" disabled={resolvingIllustration} onClick={() => { void onResolveResearchCheckpoint('cancel') }}>暂停任务</button>
+                  <button className="secondary-button" type="button" disabled={resolvingIllustration} onClick={() => { void onResolveResearchCheckpoint('retry') }}>重试核验</button>
+                  <button className="primary-button" type="button" disabled={resolvingIllustration} onClick={() => { void onResolveResearchCheckpoint('continue-unverified') }}>
+                    {resolvingIllustration ? '正在提交…' : '继续并标记未核验'}
+                  </button>
+                </div>
+              </section>
+            )}
+
             {illustrationCheckpoint && (
               <IllustrationCheckpointEditor
                 detail={selected}
                 capabilities={summary.page?.imageCapabilities ?? []}
+                toolHealth={toolHealth}
                 busy={resolvingIllustration}
                 onResolveAgent={onResolveIllustrationAgent}
                 onResolveCover={onResolveIllustrationCover}
@@ -972,6 +1139,62 @@ export function WorkbenchView({
           </aside>
         </div>
       </div>
+      <dialog
+        className="new-task-dialog companion-dialog"
+        ref={companionDialogRef}
+        aria-labelledby="companion-dialog-title"
+        onClose={() => setCompanionOpen(false)}
+      >
+        <form
+          className="new-task-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (creatingCompanion || !providerAvailability(companionProvider, toolHealth).available) return
+            void onCreateCompanion(companionProvider, companionStyleNote).then(() => setCompanionOpen(false))
+          }}
+        >
+          <header className="new-task-heading">
+            <div>
+              <p className="eyebrow">追加成果</p>
+              <h2 id="companion-dialog-title">生成{companionLabel}</h2>
+            </div>
+            <button className="new-task-close" type="button" aria-label="关闭追加成果" disabled={creatingCompanion} onClick={() => setCompanionOpen(false)}>×</button>
+          </header>
+          <p className="new-task-copy">同一条视频不需要重新抓取和清理。Etch 会复用已经审计过的英文底稿，只运行新成果需要的阶段。</p>
+          <div className="companion-reuse-card">
+            <strong><Icon name="check" />直接复用 4 个已完成阶段</strong>
+            <div>{SHARED_STAGE_IDS.map((stage) => <span key={stage}>{stageLabels[stage]}</span>)}</div>
+            <small>本次只新增 {companionKind === 'summary' ? '素材分析、外部核验、长文整理、配图' : '翻译、术语审计、人工校对、SRT、压制、验证'}</small>
+          </div>
+          <label className="new-task-field" htmlFor="companion-provider">
+            <span>{companionKind === 'summary' ? '总结 Provider' : '翻译 Provider'} <small>{providerAvailability(companionProvider, toolHealth).summary}</small></span>
+            <select className="field-select" id="companion-provider" value={companionProvider} disabled={creatingCompanion} onChange={(event) => setCompanionProvider(event.target.value as ProviderId)}>
+              {PROVIDER_IDS.map((providerId) => {
+                const availability = providerAvailability(providerId, toolHealth)
+                return <option value={providerId} disabled={!availability.available} key={providerId}>{providerNames[providerId]}{!availability.available ? `（${availability.summary}）` : ''}</option>
+              })}
+            </select>
+          </label>
+          <label className="new-task-field" htmlFor="companion-style-note">
+            <span>{companionKind === 'summary' ? '总结要求' : '翻译风格'} <small>选填</small></span>
+            <textarea
+              className="field-area"
+              id="companion-style-note"
+              maxLength={1000}
+              placeholder={companionKind === 'summary' ? '例如：重点写商业模式与数字，多保留对话锋芒' : '例如：简洁自然，术语沿用统一术语表'}
+              value={companionStyleNote}
+              disabled={creatingCompanion}
+              onChange={(event) => setCompanionStyleNote(event.target.value)}
+            />
+          </label>
+          <footer className="new-task-actions">
+            <button className="secondary-button" type="button" disabled={creatingCompanion} onClick={() => setCompanionOpen(false)}>取消</button>
+            <button className="primary-button" type="submit" disabled={creatingCompanion || !providerAvailability(companionProvider, toolHealth).available}>
+              {creatingCompanion ? '正在复用底稿…' : settings.queuePaused ? `加入暂停队列 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步` : `开始处理 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步`}
+            </button>
+          </footer>
+        </form>
+      </dialog>
     </section>
   )
 }

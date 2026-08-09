@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TaskThumbnailService } from '../src/main/task-thumbnail'
-import type { TaskManifest } from '../src/shared/task-schema'
+import { createTaskManifest, taskThumbnailArtifact, type TaskManifest } from '../src/shared/task-schema'
 
 type Artifact = TaskManifest['artifacts'][string]
 
@@ -31,6 +31,28 @@ function artifact(relativePath: string, bytes: Buffer): Artifact {
 }
 
 describe('TaskThumbnailService', () => {
+  it('prefers an explicit thumbnail and limits the legacy media fallback to X documents', () => {
+    const manifest = createTaskManifest(
+      { kind: 'url', url: 'https://example.com/article' },
+      'Document',
+      undefined,
+      '',
+      'standard',
+      false,
+      'document'
+    )
+    const documentMedia = artifact('media-001.png', png)
+    manifest.artifacts['documentMedia:media-001'] = documentMedia
+
+    expect(taskThumbnailArtifact(manifest)).toBeUndefined()
+    manifest.document.resolvedSource = 'x-article'
+    expect(taskThumbnailArtifact(manifest)).toBe(documentMedia)
+
+    const explicit = artifact('thumbnail.png', png)
+    manifest.artifacts.thumbnail = explicit
+    expect(taskThumbnailArtifact(manifest)).toBe(explicit)
+  })
+
   it('returns a validated image data URL and caches it by task and hash', async () => {
     const directory = await taskDirectory()
     const image = artifact('thumbnail.png', png)

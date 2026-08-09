@@ -146,6 +146,62 @@ describe('TaskStore CAS', () => {
     expect(committed.pipeline.stages.cues.status).toBe('completed')
   })
 
+  it('atomically persists partial stage progress and renews the active lease', async () => {
+    const directory = await taskDirectory()
+    const store = new TaskStore()
+    const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/video' }, '', 'codex')
+    await store.create(directory, manifest)
+    const input = fingerprint('translate', 1, { source: 'cues-v1' })
+    const lease = await store.acquireLease(directory, 'translate', input)
+
+    const persisted = await store.persistLeaseProgress(directory, lease, input, (draft) => {
+      draft.translation.batches = [{
+        id: 'batch-001',
+        startCue: 1,
+        endCue: 50,
+        inputFingerprint: 'a'.repeat(64),
+        status: 'verified',
+        attempt: 1,
+        artifact: {
+          relativePath: '.etch-artifacts/translate/run/batch-001.tsv',
+          sha256: 'b'.repeat(64),
+          size: 128,
+          valid: true,
+          producer: 'test',
+          inputFingerprint: 'a'.repeat(64)
+        }
+      }]
+      draft.pipeline.stages.translate.progress = 0.5
+    })
+
+    expect(persisted.manifest.revision).toBe(2)
+    expect(persisted.lease.manifestRevision).toBe(2)
+    expect(persisted.manifest.pipeline.stages.translate).toMatchObject({
+      status: 'running',
+      progress: 0.5,
+      activeLease: persisted.lease
+    })
+    expect(persisted.manifest.translation.batches[0]).toMatchObject({ status: 'verified', attempt: 1 })
+    const committed = await store.commitLease(directory, persisted.lease, input, () => undefined)
+    expect(committed.pipeline.stages.translate.status).toBe('completed')
+  })
+
+  it('rejects partial progress from a stale lease after a concurrent manifest change', async () => {
+    const directory = await taskDirectory()
+    const store = new TaskStore()
+    await store.create(directory, createTaskManifest({ kind: 'url', url: 'https://example.com/video' }))
+    const input = fingerprint('translate', 1, { source: 'cues-v1' })
+    const lease = await store.acquireLease(directory, 'translate', input)
+    await store.mutate(directory, (draft) => { draft.title = 'concurrent update' })
+
+    await expect(store.persistLeaseProgress(
+      directory,
+      lease,
+      input,
+      (draft) => { draft.pipeline.stages.translate.progress = 0.5 }
+    )).rejects.toBeInstanceOf(StaleStepError)
+  })
+
   it('rejects session drift while a lease is active', async () => {
     const directory = await taskDirectory()
     const store = new TaskStore()

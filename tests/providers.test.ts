@@ -330,6 +330,45 @@ describe('provider adapters', () => {
     ].map((item) => JSON.stringify(item)).join('\n')
     expect(codexTextOnlyProtocolViolations(jsonl)).toEqual([])
   })
+  it('accepts only the exact pre-turn Codex code-mode fail-closed diagnostic', () => {
+    const diagnostic = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.'
+    const lifecycle = (message: string, afterTurn = false) => [
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      ...(afterTurn
+        ? [
+            { type: 'turn.started' },
+            { type: 'item.completed', item: { id: 'item_0', type: 'error', message } }
+          ]
+        : [
+            { type: 'item.completed', item: { id: 'item_0', type: 'error', message } },
+            { type: 'turn.started' }
+          ]),
+      { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'OK' } },
+      {
+        type: 'turn.completed',
+        usage: {
+          input_tokens: 1,
+          cached_input_tokens: 0,
+          cache_write_input_tokens: 0,
+          output_tokens: 1,
+          reasoning_output_tokens: 0
+        }
+      }
+    ].map((item) => JSON.stringify(item)).join('\n')
+
+    const accepted = inspect('codex', lifecycle(diagnostic))
+    expect(accepted).toMatchObject({
+      text: 'OK',
+      errors: [diagnostic],
+      tools: [],
+      securityViolations: [],
+      protocolViolations: []
+    })
+    expect(codexTextOnlyProtocolViolations(lifecycle(`${diagnostic} unexpected`)))
+      .toContain('line 2: unapproved error item message')
+    expect(codexTextOnlyProtocolViolations(lifecycle(diagnostic, true)))
+      .toContain('line 3: code mode fail-closed diagnostic is not allowed in state turn-preamble')
+  })
   it('accepts a bounded multiline Cloudflare 403 retry from Codex', () => {
     const jsonl = [
       { type: 'thread.started', thread_id: CODEX_SESSION_ID },

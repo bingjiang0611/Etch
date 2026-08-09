@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.29/Etch-0.1.29-arm64.dmg"><strong>下载 v0.1.29 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.13/Etch-0.2.13-arm64.dmg"><strong>下载 v0.2.13 DMG</strong></a>
   ·
   <a href="#3-步开始">3 步开始</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.29 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 输入 · 公开 DMG 已含 B站投稿</sub>
+  <sub>v0.2.13 · Apple Silicon · macOS 13.5+ · HTTP(S) URL 输入 · 公开 DMG 已含 B站投稿</sub>
 </p>
 
 ## 一条可审阅、可恢复的成片流水线
@@ -41,11 +41,13 @@ Etch 不把长视频翻译伪装成一次不可见的“AI 生成”。每个任
 3. 在视频旁逐句校对，预览术语修改的影响，然后生成双语 SRT。
 4. 用 FFmpeg 压制硬字幕，经 ffprobe 验证后才视为成片；B站投稿是成片之后的独立可选步骤。
 
+网页翻译任务走一条独立流水线：安全抓取普通网页或单条 X status，清洗为结构化 Markdown、本地化静态图片，以 normal/refined 模式逐批翻译并恢复，在原文/成品双栏校对后执行结构与媒体完整性验证。通过验证的 Markdown 还能独立发布为离线单文件 HTML，先预览四个风格方向，再做桌面与移动浏览器验收。X 首版支持单条帖子与 X Article；线程、引用帖、投票和视频会明确标记为未展开。
+
 ## 3 步开始
 
 ### 1. 安装
 
-1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.1.29-arm64.dmg`。
+1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest) 下载 `Etch-0.2.13-arm64.dmg`。
 2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
 3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
 
@@ -53,7 +55,7 @@ Etch 不把长视频翻译伪装成一次不可见的“AI 生成”。每个任
 
 ### 2. 检查本地工具
 
-Etch 启动后会自动检测可执行文件、版本、关键能力和登录状态。开始任务前至少需要：
+Etch 启动后会自动检测可执行文件、版本、关键能力和登录状态。视频任务需要：
 
 - Apple Silicon Mac，macOS 13.5+
 - `yt-dlp`
@@ -61,13 +63,15 @@ Etch 启动后会自动检测可执行文件、版本、关键能力和登录状
 - Python 3.12 与 `mlx_whisper`
 - 至少一个已安装并登录的 `claude`、`codex`、`qodercli` 或 `opencode`
 
+网页“只转 Markdown”不需要视频工具或 Provider；网页翻译模式仍需要一个已登录的 Agent CLI。
+
 工具不在常规 `PATH` 时，可在设置页指定绝对路径 override。
 
 ### 3. 创建任务
 
-在任务队列粘贴 1–50 个 HTTP(S) 视频 URL，选择 Provider，并按需填写翻译风格。任务可以停止，之后从最后已提交阶段继续。
+在任务队列粘贴 1–50 个受支持平台的 HTTPS 视频，或 HTTP(S) 普通网页 / X status URL，选择任务类型，并按需填写翻译风格。任务可以停止，之后从最后已提交阶段继续。
 
-当前版本：`0.1.29`。当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。GitHub Release 提供 Apple Silicon DMG。
+当前源码版本：`0.2.14`。当前输入：**仅支持 HTTP(S) URL**；本地文件导入仍处于规划阶段。GitHub Release 提供 Apple Silicon DMG。
 
 ## 投稿到 B站
 
@@ -99,7 +103,9 @@ Etch 启动后会自动检测可执行文件、版本、关键能力和登录状
 | 状态 | 能力 | 当前边界 |
 | --- | --- | --- |
 | Implemented | URL 到双语硬字幕成片 | 字幕获取/本地转写、四个 Agent CLI、术语审计、逐句校对、双语 SRT、FFmpeg 压制与 ffprobe 验证。 |
+| Implemented | 网页 / X 到 Markdown 与 HTML | 普通网页与单条 X status 抓取、正文清洗、静态图片本地化、normal/refined 可恢复翻译或仅转换、双栏校对、结构验证、Markdown 导出，以及四方向预览后的离线单文件 HTML 发布；完整线程、引用帖、投票和 X 视频尚未展开。 |
 | Implemented | 可恢复任务 | `task.json` 是权威状态；产物提交受 lease、revision 与 fingerprint 约束。 |
+| Partial | 视频总结（三稿择优长文 + 配图） | 新建任务时可选“视频总结”：抽字幕 → 素材分析包 → 外部证据账本 → A/B/C 三稿评分融合 → 中文长文 + 8-12 张配图，可在工作台预览并导出。配图必须由用户在 checkpoint 选定经实测的 Qoder 或 Codex，封面验收通过后才逐张生成并持久化其余配图；真实视频的 L3 总结尚未验证。 |
 | Implemented | B站直连投稿 | 公开 DMG 已包含 B站投稿：v0.1.11 支持单账号扫码登录、手动/自动投稿、单并发和可验证回执；真实账号 L3 投稿尚未验证。 |
 | Partial | Provider、长媒体与公开发行 | 四端协议有自动化覆盖，但真实账号/服务端仍需当机验证；尚无全局磁盘预算、Developer ID、公证或自动更新。 |
 | Planned | 本地文件导入 | Schema 已预留，但 UI、APFS clone/copy、空间检查和恢复链路尚未实现。 |
@@ -117,7 +123,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.1.29-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
+`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.2.14-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限和 SHA-256。
 
 </details>
 

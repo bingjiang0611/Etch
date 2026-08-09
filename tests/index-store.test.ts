@@ -16,6 +16,7 @@ describe('IndexStore', () => {
     ])
 
     expect(store.all().map((task) => task.taskId)).toEqual([newer.taskId, older.taskId])
+    expect(store.get(newer.taskId)).toMatchObject({ rootTaskId: newer.taskId })
     expect(store.list(1, 1)).toEqual([expect.objectContaining({ taskId: older.taskId })])
     expect(store.list()).toEqual([
       expect.objectContaining({ taskId: newer.taskId }),

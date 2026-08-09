@@ -45,6 +45,7 @@ async function fixture(): Promise<{
     location: taskDirectory,
     title: manifest.title,
     kind: manifest.kind,
+    category: manifest.category,
     revision: manifest.revision,
     status: 'pending',
     updatedAt: manifest.updatedAt
@@ -174,6 +175,7 @@ describe('moveTaskToTrash', () => {
       location: linkedTask,
       title: manifest.title,
       kind: manifest.kind,
+      category: manifest.category,
       revision: manifest.revision,
       status: 'pending',
       updatedAt: manifest.updatedAt

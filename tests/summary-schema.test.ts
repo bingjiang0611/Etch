@@ -11,7 +11,8 @@ import {
 } from '../src/shared/task-schema'
 
 const SUBTITLE_ONLY = ['translate', 'audit', 'review', 'srt', 'burn', 'verify'] as const
-const SUMMARY_ONLY = ['digest', 'summary', 'illustrate'] as const
+const SUMMARY_ONLY = ['digest', 'research', 'summary', 'illustrate'] as const
+const DOCUMENT_STAGES = ['source', 'inspect', 'translate', 'review', 'verify'] as const
 
 describe('任务类型与阶段集合', () => {
   it('字幕任务把总结阶段直接标为 skipped', () => {
@@ -32,15 +33,27 @@ describe('任务类型与阶段集合', () => {
 
   it('每个阶段都能判定所属任务类型，最后一个阶段随类型变化', () => {
     for (const stage of STAGE_IDS) {
-      expect(stageBelongsToKind(stage, 'subtitle') || stageBelongsToKind(stage, 'summary')).toBe(true)
+      expect(stageBelongsToKind(stage, 'subtitle') || stageBelongsToKind(stage, 'summary') || stageBelongsToKind(stage, 'document')).toBe(true)
     }
     expect(lastStageForKind('subtitle')).toBe('verify')
     expect(lastStageForKind('summary')).toBe('illustrate')
+    expect(lastStageForKind('document')).toBe('verify')
+  })
+
+  it('网页翻译只启用五个文档阶段且禁止投稿', () => {
+    const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/article' }, '', 'codex', '', 'standard', true, 'document', '', 'convert')
+    expect(manifest.kind).toBe('document')
+    expect(manifest.document.processingMode).toBe('convert')
+    expect(manifest.publication.autoPublish).toBe(false)
+    for (const stage of STAGE_IDS) {
+      expect(manifest.pipeline.stages[stage].status === 'skipped').toBe(!DOCUMENT_STAGES.includes(stage as (typeof DOCUMENT_STAGES)[number]))
+    }
+    expect(manifest.pipeline.stages.source.status).toBe('ready')
   })
 })
 
-describe('manifest v2 → v3 迁移', () => {
-  it('补齐 kind、summary 块与缺失的新阶段条目', () => {
+describe('manifest v2 → v6 迁移', () => {
+  it('补齐 kind、summary、research、lineage、document 块与缺失的新阶段条目', () => {
     const current = createTaskManifest({ kind: 'url', url: 'https://example.com/video' })
     const legacy = structuredClone(current) as unknown as Record<string, unknown>
     legacy.schemaVersion = 2
@@ -52,10 +65,21 @@ describe('manifest v2 → v3 迁移', () => {
 
     const migrated = migrateTaskManifest(legacy)
 
-    expect(migrated.schemaVersion).toBe(3)
+    expect(migrated.schemaVersion).toBe(6)
     expect(migrated.kind).toBe('subtitle')
+    expect(migrated.lineage).toEqual({ rootTaskId: migrated.taskId })
     expect(migrated.summary.illustration.phase).toBe('agent-pending')
     expect(migrated.summary.illustration.planned).toEqual([])
+    expect(migrated.summary.research).toMatchObject({ status: 'skipped', claims: [], queryCount: 0 })
+    expect(migrated.document).toMatchObject({
+      workflowVersion: 1,
+      processingMode: 'auto',
+      translationMode: 'legacy-direct',
+      targetLanguage: 'zh-CN',
+      blockCount: 0,
+      translatedBlockCount: 0,
+      warnings: []
+    })
     // 缺阶段会让流水线把新阶段当成待执行，必须补成 skipped。
     for (const stage of SUMMARY_ONLY) expect(migrated.pipeline.stages[stage].status).toBe('skipped')
   })
@@ -71,6 +95,45 @@ describe('manifest v2 → v3 迁移', () => {
 
     expect(migrated.pipeline.stages.digest.status).toBe('pending')
     expect(migrated.pipeline.stages.burn.status).toBe('skipped')
+  })
+
+  it('v5 总结任务在 digest 完成后插入 research，并把 summary 退回 pending', () => {
+    const legacy = structuredClone(createTaskManifest(
+      { kind: 'url', url: 'https://example.com/video' },
+      '', 'codex', '', 'standard', false, 'summary'
+    )) as unknown as Record<string, unknown>
+    legacy.schemaVersion = 5
+    delete legacy.video
+    const pipeline = legacy.pipeline as { stages: Record<string, { status: string }> }
+    delete pipeline.stages.research
+    pipeline.stages.digest.status = 'completed'
+    pipeline.stages.summary.status = 'ready'
+
+    const migrated = migrateTaskManifest(legacy)
+
+    expect(migrated.pipeline.stages.research.status).toBe('ready')
+    expect(migrated.pipeline.stages.summary.status).toBe('pending')
+    expect(migrated.summary.research).toMatchObject({ status: 'idle', claims: [], queryCount: 0 })
+  })
+
+  it('已开始写作的 v5 总结任务跳过 research，保持旧合同可读', () => {
+    const legacy = structuredClone(createTaskManifest(
+      { kind: 'url', url: 'https://example.com/video' },
+      '', 'codex', '', 'standard', false, 'summary'
+    )) as unknown as Record<string, unknown>
+    legacy.schemaVersion = 5
+    delete legacy.video
+    const pipeline = legacy.pipeline as { stages: Record<string, { status: string }> }
+    delete pipeline.stages.research
+    pipeline.stages.digest.status = 'completed'
+    pipeline.stages.summary.status = 'completed'
+
+    const migrated = migrateTaskManifest(legacy)
+
+    expect(migrated.pipeline.stages.research.status).toBe('skipped')
+    expect(migrated.pipeline.stages.summary.status).toBe('completed')
+    expect(migrated.summary.research.status).toBe('skipped')
+    expect(migrated.summary.research.limitations).toContain('旧任务沿用原总结合同，未补跑外部核验')
   })
 })
 

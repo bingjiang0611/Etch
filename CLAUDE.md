@@ -4,11 +4,17 @@
 
 - Etch 是独立 Electron + React + TypeScript macOS App；原 `youtube-bilingual-subs` skill 只作只读行为参考，不是运行时依赖。
 - `task.json` 是任务状态权威；队列索引只在内存中维护，并在启动时从任务目录重建。任何 worker 提交必须经过 step lease + revision/fingerprint CAS。
+- 任务分三类：`kind: 'subtitle'` 跑硬字幕，`kind: 'summary'` 跑中文长文总结，`kind: 'document'` 把普通网页、X 单条帖子或 X Article 转成结构保真的 Markdown 并按模式翻译。三类共用同一条阶段序列，不属于本类型的阶段在创建时就写成 `skipped`；文档任务复用 `source → inspect → translate → review → verify` 的调度槽位，但必须在进入任何视频逻辑前分流。新增阶段必须同时补齐 manifest 迁移里的缺阶段填充，否则旧任务会把新阶段当成待执行。
+- 总结任务的三稿硬门禁：必须真实生成 A/B/C 三份完整候选稿、六项数值评分、遗漏清单与终稿自检，记录不齐就让阶段 `failed`，不得产出半成品。终稿必须保留「最后」评论区和 8-12 处 `images/NN-slug.png` 配图占位。
 - renderer 只能通过窄 preload IPC 访问主进程；不得直接读文件、spawn、启用 Node integration 或引入任意命令 IPC。
 - 四 Provider 只使用本地 `claude`、`codex exec`、`qodercli`、`opencode run` CLI；不得改用 SDK、app-server 或常驻 server。
+- 翻译、英文审计、素材分析与长文写作全部跑纯文本隔离调用（禁工具、空 MCP、任何工具标记即视为会话污染）。配图是唯一允许工具调用的路径：走独立的 `image-adapters` 调用档与 `ImageStreamReader`，只放行图像生成工具、只允许认领本次 run 或本次 Codex thread 的图片，且不复用、不写入翻译的 session generation。图像能力白名单只能来自实测（当前为 Qoder `ImageGen` 与 Codex `image_generation`），未验证的 Provider 一律在 UI 上置灰并给出原因。
+- 配图必须由用户在 checkpoint 里确认并选定 agent：`illustrate` 阶段按 `phase` 推进（`agent-pending` → `cover-review` → `rest` → `done`，或 `skipped`），phase 必须进入 inputFingerprint。封面未验收前不得生成其余配图；封面失败直接让阶段失败，章节图失败只记 `pending` 并带缺图交付。
+- 图像工具自己选文件名：Qoder 实测落在 `<cwd>/vibe_images/<name>_<ts>.png`，Codex 落在 `generated_images/<thread UUID>/`。Etch 只传逻辑名，按精确 thread/run 归属认领，改名与验收（PNG magic、>10KB、16:9 ±3%）由主进程完成；每张通过后单独 CAS 持久化，不能把其他会话或上一张配图当成本次新产物。
 - 外部进程统一使用独立 process group、durable registry 与参数数组；成功以验证后原子提交产物为准，不以退出码 0 为准。
-- B站投稿使用安装包内固定版本和 SHA-256 的 `biliup` sidecar；凭证只由主进程通过 `safeStorage` 保存，投稿状态独立于十阶段流水线，提交结果不可验证时必须进入 `unknown` 防止重复投稿。
-- 工作流产品约束源：`../workflows/youtube-bilingual-subs-app.md`；实施方案：`../docs/rfc/Etch/etch-mvp.md`。
+- B站投稿使用安装包内固定版本和 SHA-256 的 `biliup` sidecar；凭证只由主进程通过 `safeStorage` 保存，投稿状态独立于主流水线，提交结果不可验证时必须进入 `unknown` 防止重复投稿。
+- 任务分类只是归档位：分类本体存 `AppSettings.taskCategories`，`task.json` 只存 `category` id（空串 = 未分类）；引用已删分类时按未分类渲染而不报错，删分类不改写任何 manifest，改分类不碰阶段状态。
+- 工作流产品约束源：`../workflows/youtube-bilingual-subs-app.md`；实施方案：`../docs/rfc/Etch/etch-mvp.md`；视频总结实施方案：`../docs/rfc/Etch/etch-video-summary.md`（行为参考 `youtube-content` skill，不是运行时依赖，也不引入 Obsidian）。
 - 静态 HTML、截图或设计稿里的字段必须先映射到 Etch 的 `task.json` / manifest / IPC，再决定是否渲染。没有真实持久化数据的 speaker、Token、source/final 媒体切换等字段不得照搬成假能力；优先复用校对、任务信息、审计术语和样式等真实入口。
 
 ## 改完代码后的验证 profile
@@ -34,12 +40,14 @@ PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH" npm run pack
 - 需要 DOM 级 installed smoke 时，可用 Playwright 直接启动 `/Applications/Etch.app/Contents/MacOS/Etch`，核对 packaged main/preload/renderer、真实 userData、安装哈希和关键 DOM；这只算 L2，不替代四 Provider 与多平台 L3。
 - 人工验证队列、设置、工具健康、Chrome cookies 参数、应用菜单、通知、电源 assertion、强杀恢复与 task manifest/内存索引重建。
 - 使用真实 URL 生成并验证一个短视频硬字幕成品；真实工具不健康时明确记录阻塞，不得写“L2 通过”。
+- 总结任务：用真实短视频跑完 `digest → research → summary → illustrate`，确认三稿执行记录可审、外部证据账本可追溯、配图 checkpoint 真的停下来等选 agent、封面验收后才生成其余配图，并验证工作台预览与导出目录（`summary.md` + `images/`）可用。Qoder/Codex 图像 CLI 不可用时记环境阻塞，不得声称配图通过。
 - 托盘与本地文件导入当前未实现，不属于现行 L2 合同。
 
 ### L3 端到端用户路径
 
 - 真实覆盖 YouTube 有字幕、YouTube→Whisper、X/通用 URL。
 - 真实覆盖 Claude/Codex/Qoder/OpenCode 四 Provider 的翻译、resume 与全局审计。
+- 总结任务 L3：真实覆盖 YouTube 有字幕与 Whisper 两条路径、封面验收不通过后换 agent 重做、跳过配图、以及强杀后从 `illustrate` checkpoint 恢复；同时回归一条完整字幕任务确认旧流程未退化。
 - 覆盖三任务跨阶段并发、低清/超长/术语歧义/session 丢失 checkpoint、局部重试、样式重压、完成 brief。
 - 固定窗口工作台至少检查 `1360×860`、`1360×680`、`1100×900`；低高度下重点核对 recovery banner、展开流水线、固定 tabs/footer 是否挤压 cue 列表，以及主区滚动和 editor 最低高度是否仍成立。
 - 只有上述全部成功才能宣称 Etch MVP 完成；登录态、平台或环境阻塞逐项列残余风险。

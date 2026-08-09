@@ -2,9 +2,12 @@ import type { TaskKind, TaskManifest } from '../../shared/task-schema'
 
 export interface IndexedTask {
   taskId: string
+  rootTaskId?: string
+  reusedFromTaskId?: string
   location: string
   title: string
   kind: TaskKind
+  category: string
   revision: number
   status: string
   updatedAt: string
@@ -22,9 +25,12 @@ export function taskStatus(manifest: TaskManifest): string {
 export function indexedTask(location: string, manifest: TaskManifest): IndexedTask {
   return {
     taskId: manifest.taskId,
+    rootTaskId: manifest.lineage.rootTaskId,
+    reusedFromTaskId: manifest.lineage.reusedFromTaskId,
     location,
     title: manifest.title,
     kind: manifest.kind,
+    category: manifest.category,
     revision: manifest.revision,
     status: taskStatus(manifest),
     updatedAt: manifest.updatedAt

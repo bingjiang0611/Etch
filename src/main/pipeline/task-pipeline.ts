@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { AppSettings, ToolId } from '../../shared/settings-schema'
 import type { PipelineActivity, TaskSchedule } from '../../shared/ipc'
+import { classifyMediaSourceUrl, isSupportedMediaSourceUrl } from '../../shared/media-source'
 import { POOL_BY_STAGE, POOL_LABELS } from '../../shared/pipeline'
 import {
   STAGE_IDS,
@@ -56,8 +57,10 @@ import {
   DigestReduceSchema,
   DigestSegmentSchema,
   articleImagePlaceholders,
+  assertArticleDigestReferences,
   assertArticleUsable,
   assertDraftRecordComplete,
+  assertScoringDigestEvidence,
   buildDraftRecord,
   digestReducePrompt,
   digestSegmentPrompt,
@@ -76,6 +79,39 @@ import {
   type SummaryMetadata
 } from '../../core/summary'
 import { assertImageUsable } from '../../core/png'
+import {
+  SummaryResearchLedgerSchema,
+  parseResearchResponse,
+  researchCandidates,
+  researchPrompt,
+  unverifiedResearchLedger,
+  type SummaryResearchLedger
+} from '../../core/research'
+import {
+  createMarkdownBlocks,
+  documentProcessingSummary,
+  renderMarkdownBlocks,
+  verifyDocumentCompleteness,
+  type DocumentMedia,
+  type MarkdownDocument
+} from '../../core/document'
+import {
+  DOCUMENT_TRANSLATION_MAX_ATTEMPTS,
+  DocumentTranslationAnalysisSchema,
+  DocumentTranslationCritiqueSchema,
+  auditDocumentTranslationDeterministically,
+  createDocumentTranslationPlan,
+  documentTranslationBudgetError,
+  documentTranslationAnalysisPrompt,
+  documentTranslationCritiquePrompt,
+  documentTranslationPrompt,
+  documentTranslationRepairPrompt,
+  freezeDocumentGlossary,
+  mergeDocumentTranslation,
+  parseDocumentTranslation,
+  planDocumentTranslationCost,
+  partitionDocumentBlocks
+} from '../../core/document-translation'
 import { applyCueEdits, dedupeRolling, extractCueTsv, flattenCue, mergeBilingual, parseCueTsv, parseSrt, serializeSrt, stripSpeakerMarkers, validateCues } from '../../core/srt'
 import { fingerprint, sha256File } from '../core/fingerprint'
 import type { HistoricalGlossaryService } from '../historical-glossary'
@@ -84,7 +120,8 @@ import {
   IMAGE_OUTPUT_SUBDIRECTORY,
   buildImageProviderInvocation,
   imageCapability,
-  imageGenerationPrompt
+  imageGenerationPrompt,
+  imageOutputRoots
 } from '../providers/image-adapters'
 import { ImageStreamReader } from '../providers/image-stream'
 import { codexSessionIdIsValid } from '../providers/session-id'
@@ -99,13 +136,15 @@ import {
 import {
   ProviderStreamInspector
 } from '../providers/jsonl'
+import { buildResearchProviderInvocation, researchCapability } from '../providers/research-adapters'
+import { inspectResearchStream } from '../providers/research-stream'
 import {
   PROVIDER_SESSION_CONTAMINATED_PREFIX,
   PROVIDER_SESSION_UNAVAILABLE_PREFIX,
   providerSessionIsUnavailable
 } from '../providers/session-errors'
 import { chromeCookieState } from '../media/browser-cookies'
-import { browserCookiesUnavailable, burnArgs, normalizeDownloadedMediaArgs, sourceDownloadArgs, sourceDownloadFallbackArgs, thumbnailFrameArgs, WHISPER_MODEL, whisperArgs, youtubeAuthenticationRequired, youtubeMediaFormatsUnavailable, youtubeSubtitleArgs } from '../media/commands'
+import { browserCookiesUnavailable, burnArgs, genericSourceDownloadArgs, normalizeDownloadedMediaArgs, sourceDownloadArgs, sourceDownloadFallbackArgs, thumbnailFrameArgs, WHISPER_MODEL, whisperArgs, youtubeAuthenticationRequired, youtubeMediaFormatsUnavailable, youtubeSubtitleArgs } from '../media/commands'
 import { transcribeSegmentedWhisper } from '../media/whisper-segments'
 import {
   logChildEnvironmentKeys,
@@ -121,6 +160,14 @@ import { writeJsonAtomic } from '../storage/atomic-json'
 import { writeTextAtomic } from '../storage/atomic-text'
 import { inspectContainedFile, readContainedFile } from '../storage/safe-artifact'
 import {
+  DOCUMENT_MEDIA_MAX_BYTES,
+  fetchDocumentMedia,
+  fetchDocumentSource,
+  finalizeDocumentMedia,
+  type DocumentFetch,
+  type DocumentProxyResolver
+} from '../content/document-source'
+import {
   activateSessionGeneration,
   replaceContaminatedSessionGeneration,
   replaceLostSessionGeneration
@@ -133,6 +180,7 @@ import {
 import { PoolCancelledError, StagePools } from './pool'
 
 type Artifact = TaskManifest['artifacts'][string]
+type ImageInvocationScope = { sessionId?: string; codexHome?: string }
 type StageResult = {
   artifacts?: Record<string, Artifact>
   apply?: (manifest: TaskManifest) => void
@@ -140,8 +188,10 @@ type StageResult = {
   afterCommit?: () => Promise<void>
 }
 type StageContext = {
+  signal: AbortSignal
   translationGlossary?: TranslationGlossarySnapshot
   persistExternalSession?: (generationId: string, externalSessionId: string) => Promise<void>
+  persistProgress?: (change: (manifest: TaskManifest) => void) => Promise<void>
 }
 
 const MAX_GLOSSARY_SNAPSHOT_BYTES = 5 * 1024 * 1024
@@ -162,8 +212,51 @@ const STAGE_MESSAGES: Record<StageId, string> = {
   burn: '正在压制硬字幕视频',
   verify: '正在验证成品',
   digest: '正在建立素材分析包',
+  research: '正在核验外部事实',
   summary: '正在写三稿并融合终稿',
   illustrate: '正在生成配图'
+}
+
+const DOCUMENT_STAGE_MESSAGES: Partial<Record<StageId, string>> = {
+  source: '正在安全抓取网页内容',
+  inspect: '正在识别正文并本地化媒体',
+  translate: '正在翻译文档',
+  review: '正在等待人工校对',
+  verify: '正在验证文档结构与媒体'
+}
+
+function documentNeedsTranslation(manifest: TaskManifest): boolean {
+  if (manifest.document.resolvedAction) return manifest.document.resolvedAction === 'translate'
+  return manifest.document.processingMode === 'translate'
+    || (manifest.document.processingMode === 'auto' && !/^zh(?:-|$)/iu.test(manifest.document.sourceLanguage ?? ''))
+}
+
+function documentTranslationCostFingerprint(
+  manifest: TaskManifest,
+  cost: ReturnType<typeof planDocumentTranslationCost>
+): string {
+  return fingerprint('etch:document-translation-cost', 1, {
+    sourceDocumentSha256: manifest.artifacts.sourceDocument?.sha256 ?? null,
+    batchCount: cost.batchCount,
+    characterCount: cost.characterCount,
+    mode: manifest.document.translationMode
+  })
+}
+
+function documentMediaExtension(contentType: string): string {
+  const extensions: Record<string, string> = {
+    'image/avif': 'avif',
+    'image/gif': 'gif',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/svg+xml': 'svg',
+    'image/webp': 'webp'
+  }
+  return extensions[contentType] ?? 'img'
+}
+
+function safeDocumentWarnings(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim().slice(0, 500)).filter(Boolean))].slice(0, 100)
 }
 
 export function uploadDateFromInfoJson(uploadDate: unknown): string | undefined {
@@ -208,7 +301,10 @@ export class TaskPipeline {
     readonly onManifest: (taskDirectory: string, manifest: TaskManifest) => void,
     readonly runRegistry?: RunRegistry,
     readonly onWorkerCountChange?: (count: number) => void,
-    readonly onToolHealth?: (health: ToolHealth) => void
+    readonly onToolHealth?: (health: ToolHealth) => void,
+    readonly documentFetch?: DocumentFetch,
+    readonly documentProxyResolver?: DocumentProxyResolver,
+    readonly decodeImage?: (bytes: Buffer) => boolean
   ) {
     this.#pools = new StagePools(settings.stageConcurrency)
     this.#acquisitionPaused = settings.queuePaused
@@ -353,7 +449,23 @@ export class TaskPipeline {
       if (['completed', 'skipped'].includes(state?.status)) continue
       if (state?.status === 'checkpoint') return
       const needsEnglishAuditSession = stage === 'cues' && manifest.runtime.subtitleKind !== 'manual'
-      const needsTranslationSession = ['translate', 'digest'].includes(stage) && !manifest.translation.activeGenerationId
+      let documentTranslationPreflightFailed = false
+      let documentTranslationCostNeedsConfirmation = false
+      if (stage === 'translate' && manifest.kind === 'document' && documentNeedsTranslation(manifest)) {
+        try {
+          const sourceDocument = await this.#documentArtifact(taskDirectory, manifest.artifacts.sourceDocument, '网页源文档')
+          documentTranslationPreflightFailed = Boolean(documentTranslationBudgetError(sourceDocument.blocks, sourceDocument.warnings))
+          const cost = planDocumentTranslationCost(sourceDocument.blocks)
+          documentTranslationCostNeedsConfirmation = cost.classification === 'checkpoint'
+            && manifest.document.translationCostAcceptedFingerprint !== documentTranslationCostFingerprint(manifest, cost)
+        } catch {
+          documentTranslationPreflightFailed = true
+        }
+      }
+      const needsTranslationSession = (
+        stage === 'digest'
+        || (stage === 'translate' && (manifest.kind === 'subtitle' || (manifest.kind === 'document' && documentNeedsTranslation(manifest))))
+      ) && !documentTranslationPreflightFailed && !documentTranslationCostNeedsConfirmation && !manifest.translation.activeGenerationId
       if ((needsEnglishAuditSession || needsTranslationSession) && !manifest.translation.activeGenerationId) {
         manifest = await this.store.mutate(taskDirectory, (draft) => {
           const provider = draft.translation.selectedProvider
@@ -396,42 +508,66 @@ export class TaskPipeline {
   async #executeStage(taskDirectory: string, stage: StageId, signal: AbortSignal): Promise<boolean> {
     if (signal.aborted || !this.#mayAcquire()) throw new PoolCancelledError()
     const before = await this.store.load(taskDirectory)
-    const context: StageContext = stage === 'translate'
+    const context: StageContext = stage === 'translate' && before.kind === 'subtitle'
       ? {
+          signal,
           translationGlossary: await this.historicalGlossary.resolve(
             before.taskId,
             await this.#englishCueText(taskDirectory, before),
             this.settings.globalGlossary
           )
         }
-      : {}
+      : { signal }
     const artifactEntries = stage === 'cues'
       ? Object.entries(before.artifacts).filter(([key]) => key === 'source' || key === 'english' || key === 'metadata')
+      : stage === 'illustrate'
+        ? Object.entries(before.artifacts).filter(([key]) => !key.startsWith('summaryImage:'))
       : Object.entries(before.artifacts)
     const inputFingerprint = fingerprint(`etch:${stage}`, stage === 'cues' ? 2 : 1, {
       input: before.input,
       provider: before.translation.selectedProvider ?? null,
       model: before.translation.selectedModel ?? null,
-      generation: before.translation.activeGenerationId ?? null,
       styleNote: ['translate', 'digest', 'summary'].includes(stage) ? before.translation.styleNote : null,
-      translationGlossary: stage === 'translate' ? context.translationGlossary : null,
+      translationGlossary: stage === 'translate' ? context.translationGlossary ?? null : null,
       manualEdits: before.translation.manualEdits.map(({ cueId, translation, englishCueHash }) => ({ cueId, translation, englishCueHash })),
       subtitleKind: stage === 'cues' ? before.runtime.subtitleKind ?? null : null,
       subtitlePreset: stage === 'burn' ? before.render.subtitlePreset : null,
+      document: before.kind === 'document'
+        ? {
+            workflowVersion: before.document.workflowVersion,
+            processingMode: before.document.processingMode,
+            resolvedAction: before.document.resolvedAction ?? null,
+            resolvedSource: before.document.resolvedSource ?? null,
+            sourceLanguage: before.document.sourceLanguage ?? null,
+            reviewCompletedAt: before.document.reviewCompletedAt ?? null,
+            translationMode: before.document.translationMode,
+            audience: before.document.audience,
+            writingStyle: before.document.writingStyle,
+            globalGlossary: stage === 'translate' ? this.settings.globalGlossary : null
+          }
+        : null,
       // 配图阶段靠 phase 推进，同一份 manifest 在不同 phase 下必须是不同输入。
       illustration: stage === 'illustrate'
         ? {
             phase: before.summary.illustration.phase,
             provider: before.summary.illustration.provider ?? null,
             model: before.summary.illustration.model ?? null,
-            planned: before.summary.illustration.planned.map((image) => image.filename),
-            generated: [...before.summary.illustration.generated].sort()
+            planned: before.summary.illustration.planned
+        }
+        : null,
+      research: stage === 'research'
+        ? {
+            contractVersion: 1,
+            status: before.summary.research.status,
+            provider: before.translation.selectedProvider ?? null,
+            model: before.translation.selectedModel ?? null
           }
         : null,
       artifacts: Object.fromEntries(artifactEntries.map(([key, value]) => [key, value.sha256]))
     })
     if (signal.aborted || !this.#mayAcquire()) throw new PoolCancelledError()
-    let lease = await this.store.acquireLease(taskDirectory, stage, inputFingerprint, STAGE_MESSAGES[stage], before.revision)
+    const stageMessage = before.kind === 'document' ? DOCUMENT_STAGE_MESSAGES[stage] ?? STAGE_MESSAGES[stage] : STAGE_MESSAGES[stage]
+    let lease = await this.store.acquireLease(taskDirectory, stage, inputFingerprint, stageMessage, before.revision)
     this.#publishManifest(taskDirectory, await this.store.load(taskDirectory))
     if (signal.aborted || !this.#mayAcquire()) {
       const deferred = this.#stopRequestedTaskIds.has(before.taskId)
@@ -444,6 +580,7 @@ export class TaskPipeline {
     let checkpointed = false
     let resultProduced = false
     let preserveRunArtifacts = false
+    let durableProgressPersisted = false
     try {
       const result = await this.#perform(taskDirectory, stage, before, inputFingerprint, lease.runId, {
         ...context,
@@ -456,6 +593,17 @@ export class TaskPipeline {
             externalSessionId
           )
           lease = persisted.lease
+          this.#publishManifest(taskDirectory, persisted.manifest)
+        },
+        persistProgress: async (change) => {
+          const persisted = await this.store.persistLeaseProgress(
+            taskDirectory,
+            lease,
+            inputFingerprint,
+            change
+          )
+          lease = persisted.lease
+          durableProgressPersisted = true
           this.#publishManifest(taskDirectory, persisted.manifest)
         }
       })
@@ -476,7 +624,9 @@ export class TaskPipeline {
         Object.assign(manifest.artifacts, result.artifacts)
         result.apply?.(manifest)
         const finalStage = lastStageForKind(manifest.kind)
-        manifest.runtime.currentMessage = stage === finalStage ? '处理完成' : `${stage} 已完成`
+        manifest.runtime.currentMessage = stage === finalStage
+          ? (manifest.kind === 'document' ? '网页翻译完成' : '处理完成')
+          : `${manifest.kind === 'document' ? DOCUMENT_STAGE_MESSAGES[stage]?.replace(/^正在/u, '') ?? stage : stage}已完成`
         if (stage === finalStage) manifest.runtime.completedAt ??= new Date().toISOString()
         const index = STAGE_IDS.indexOf(stage)
         const next = STAGE_IDS[index + 1]
@@ -492,7 +642,7 @@ export class TaskPipeline {
         console.error('阶段已提交后的派生发布失败', error)
         return !checkpointed
       }
-      preserveRunArtifacts = resultProduced && !(error instanceof StaleStepError)
+      preserveRunArtifacts = durableProgressPersisted || (resultProduced && !(error instanceof StaleStepError))
       if (preserveRunArtifacts) {
         console.error('阶段结果已生成但提交结果不确定；保留 run-scoped 产物供 manifest/recovery 判定', error)
       }
@@ -503,6 +653,11 @@ export class TaskPipeline {
         } catch (persistenceError) {
           console.error('流水线停止状态持久化失败', persistenceError)
         }
+        return false
+      }
+      if (signal.aborted) {
+        const deferred = await this.store.deferLease(taskDirectory, lease)
+        this.#publishManifest(taskDirectory, deferred)
         return false
       }
       const summary = error instanceof Error ? error.message : String(error)
@@ -528,20 +683,813 @@ export class TaskPipeline {
     runId: string,
     context: StageContext
   ): Promise<StageResult> {
+    if (manifest.kind === 'document') {
+      return this.#performDocument(taskDirectory, stage, manifest, inputFingerprint, runId, context)
+    }
     switch (stage) {
       case 'source': return this.#source(taskDirectory, manifest, inputFingerprint, runId)
       case 'inspect': return this.#inspect(taskDirectory, manifest, inputFingerprint, runId)
       case 'english': return this.#english(taskDirectory, manifest, inputFingerprint, runId)
       case 'cues': return this.#cues(taskDirectory, manifest, inputFingerprint, runId, context.persistExternalSession)
-      case 'translate': return this.#translate(taskDirectory, manifest, inputFingerprint, runId, context.translationGlossary!, context.persistExternalSession)
+      case 'translate': return this.#translate(
+        taskDirectory,
+        manifest,
+        inputFingerprint,
+        runId,
+        context.translationGlossary!,
+        context.persistExternalSession,
+        context.persistProgress
+      )
       case 'audit': return this.#audit(taskDirectory, manifest, inputFingerprint, runId, context.persistExternalSession)
       case 'review': return Promise.resolve({ checkpoint: { id: 'manual-review', summary: '等待人工校对字幕与术语' } })
       case 'srt': return this.#srt(taskDirectory, manifest, inputFingerprint, runId)
       case 'burn': return this.#burn(taskDirectory, manifest, inputFingerprint, runId)
       case 'verify': return this.#verify(taskDirectory, manifest, inputFingerprint, runId)
       case 'digest': return this.#digest(taskDirectory, manifest, inputFingerprint, runId, context.persistExternalSession)
-      case 'summary': return this.#summary(taskDirectory, manifest, inputFingerprint, runId, context.persistExternalSession)
-      case 'illustrate': return this.#illustrate(taskDirectory, manifest, inputFingerprint, runId)
+      case 'research': return this.#research(taskDirectory, manifest, inputFingerprint, runId)
+      case 'summary': return this.#summary(taskDirectory, manifest, inputFingerprint, runId)
+      case 'illustrate': return this.#illustrate(taskDirectory, manifest, inputFingerprint, runId, context.persistProgress)
+    }
+  }
+
+  #performDocument(
+    taskDirectory: string,
+    stage: StageId,
+    manifest: TaskManifest,
+    inputFingerprint: string,
+    runId: string,
+    context: StageContext
+  ): Promise<StageResult> {
+    switch (stage) {
+      case 'source': return this.#documentSource(taskDirectory, manifest, inputFingerprint, runId, context.signal)
+      case 'inspect': return this.#documentInspect(taskDirectory, manifest, inputFingerprint, runId, context.signal)
+      case 'translate': return this.#documentTranslate(
+        taskDirectory,
+        manifest,
+        inputFingerprint,
+        runId,
+        context.persistExternalSession,
+        context.persistProgress
+      )
+      case 'review': return Promise.resolve({ checkpoint: { id: 'document-review', summary: '等待人工校对 Markdown 文档' } })
+      case 'verify': return this.#documentVerify(taskDirectory, manifest, inputFingerprint, runId)
+      default: return Promise.reject(new Error(`文档任务不支持阶段 ${stage}`))
+    }
+  }
+
+  async #documentSource(
+    taskDirectory: string,
+    manifest: TaskManifest,
+    inputFingerprint: string,
+    runId: string,
+    signal: AbortSignal
+  ): Promise<StageResult> {
+    if (manifest.input.kind !== 'url') throw new Error('网页翻译仅支持 URL 输入')
+    await ensureArtifactRunDirectory(taskDirectory, 'source', runId)
+    const captured = await fetchDocumentSource(manifest.input.url, {
+      fetch: this.documentFetch,
+      resolveProxy: this.documentProxyResolver,
+      processingMode: manifest.document.processingMode,
+      targetLanguage: manifest.document.targetLanguage,
+      signal
+    })
+    const rawRelativePath = artifactCandidateRelativePath('source', runId, 'source.raw.txt')
+    const documentRelativePath = artifactCandidateRelativePath('source', runId, 'source-document.json')
+    const metadataRelativePath = artifactCandidateRelativePath('source', runId, 'source-metadata.json')
+    const mediaRelativePath = artifactCandidateRelativePath('source', runId, 'media-remote.json')
+    await Promise.all([
+      writeTextAtomic(join(taskDirectory, rawRelativePath), captured.sourceRaw),
+      writeJsonAtomic(join(taskDirectory, documentRelativePath), captured.sourceDocument),
+      writeJsonAtomic(join(taskDirectory, metadataRelativePath), captured.sourceMetadata),
+      writeJsonAtomic(join(taskDirectory, mediaRelativePath), captured.mediaManifest)
+    ])
+    const summary = documentProcessingSummary(captured.sourceDocument)
+    return {
+      artifacts: {
+        sourceRaw: await this.#artifact(taskDirectory, rawRelativePath, 'etch-document-source-v1', inputFingerprint),
+        sourceDocument: await this.#artifact(taskDirectory, documentRelativePath, 'etch-document-source-v1', inputFingerprint),
+        sourceMetadata: await this.#artifact(taskDirectory, metadataRelativePath, 'etch-document-source-v1', inputFingerprint),
+        mediaManifest: await this.#artifact(taskDirectory, mediaRelativePath, 'etch-document-source-v1', inputFingerprint)
+      },
+      apply: (draft) => {
+        draft.title = captured.sourceMetadata.sourceTitle?.trim() || draft.title
+        Object.assign(draft.document, summary)
+        draft.runtime.currentMessage = '网页内容已抓取，准备清洗正文与媒体'
+      }
+    }
+  }
+
+  async #documentInspect(
+    taskDirectory: string,
+    manifest: TaskManifest,
+    inputFingerprint: string,
+    runId: string,
+    signal: AbortSignal
+  ): Promise<StageResult> {
+    const sourceDocument = await this.#documentArtifact(taskDirectory, manifest.artifacts.sourceDocument, '网页源文档')
+    const media = await this.#documentJson<DocumentMedia[]>(taskDirectory, manifest.artifacts.mediaManifest, '网页媒体清单')
+    await ensureArtifactRunDirectory(taskDirectory, 'inspect', runId)
+    const localizedMedia: DocumentMedia[] = []
+    const localizedArtifactPaths = new Map<string, string>()
+    const localizedDocument: MarkdownDocument = {
+      ...sourceDocument,
+      blocks: sourceDocument.blocks.map((block) => ({ ...block }))
+    }
+    for (const entry of media) {
+      if (entry.kind === 'video' || entry.status === 'skipped') {
+        localizedMedia.push({ ...entry })
+        continue
+      }
+      try {
+        const fetched = await fetchDocumentMedia(entry.sourceUrl, {
+          fetch: this.documentFetch,
+          resolveProxy: this.documentProxyResolver,
+          signal
+        })
+        const fileName = `${entry.id}.${documentMediaExtension(fetched.contentType)}`
+        const mediaPath = artifactCandidateRelativePath('inspect', runId, fileName)
+        await writeFile(join(taskDirectory, mediaPath), fetched.bytes)
+        localizedArtifactPaths.set(entry.id, mediaPath)
+        localizedMedia.push({ ...entry, sourceUrl: fetched.finalUrl, localPath: mediaPath, status: 'localized' })
+        if (entry.blockId) {
+          const block = localizedDocument.blocks.find((candidate) => candidate.id === entry.blockId)
+          if (block?.type === 'image') block.markdown = block.markdown.replace(entry.sourceUrl, mediaPath)
+        }
+      } catch {
+        if (signal.aborted) throw new PoolCancelledError()
+        localizedMedia.push({ ...entry, status: 'failed' })
+      }
+    }
+    const finalized = finalizeDocumentMedia(sourceDocument.metadata.contentType, localizedMedia)
+    const normalized: MarkdownDocument = {
+      ...localizedDocument,
+      warnings: safeDocumentWarnings([...sourceDocument.warnings, ...finalized.warnings])
+    }
+    const documentRelativePath = artifactCandidateRelativePath('inspect', runId, 'source-document.json')
+    const markdownRelativePath = artifactCandidateRelativePath('inspect', runId, 'source.md')
+    const mediaRelativePath = artifactCandidateRelativePath('inspect', runId, 'media-manifest.json')
+    await Promise.all([
+      writeJsonAtomic(join(taskDirectory, documentRelativePath), normalized),
+      writeTextAtomic(join(taskDirectory, markdownRelativePath), renderMarkdownBlocks(normalized.blocks)),
+      writeJsonAtomic(join(taskDirectory, mediaRelativePath), finalized.mediaManifest)
+    ])
+    const summary = documentProcessingSummary(normalized)
+    const artifacts: Record<string, Artifact> = {
+        sourceDocument: await this.#artifact(taskDirectory, documentRelativePath, 'etch-document-normalizer-v1', inputFingerprint),
+        sourceMarkdown: await this.#artifact(taskDirectory, markdownRelativePath, 'etch-document-normalizer-v1', inputFingerprint),
+        mediaManifest: await this.#artifact(taskDirectory, mediaRelativePath, 'etch-document-normalizer-v1', inputFingerprint)
+    }
+    for (const [id, path] of localizedArtifactPaths) {
+      artifacts[`documentMedia:${id}`] = await this.#artifact(taskDirectory, path, 'etch-document-media-v1', inputFingerprint)
+    }
+    const cover = finalized.mediaManifest.find((entry) => entry.kind === 'cover' && entry.status === 'localized' && entry.localPath)
+    const coverArtifact = cover ? artifacts[`documentMedia:${cover.id}`] : undefined
+    if (coverArtifact?.valid && coverArtifact.relativePath === cover?.localPath) {
+      artifacts.thumbnail = coverArtifact
+    }
+    return {
+      artifacts,
+      apply: (draft) => {
+        if (!artifacts.thumbnail) delete draft.artifacts.thumbnail
+        Object.assign(draft.document, summary)
+        draft.document.resolvedAction = documentNeedsTranslation(draft) ? 'translate' : 'convert'
+        draft.runtime.currentMessage = draft.document.resolvedAction === 'translate' ? '正文与媒体已就绪，准备翻译' : '正文与媒体已就绪，准备生成 Markdown'
+      }
+    }
+  }
+
+  async #documentTranslate(
+    taskDirectory: string,
+    manifest: TaskManifest,
+    inputFingerprint: string,
+    runId: string,
+    persistExternalSession?: (generationId: string, externalSessionId: string) => Promise<void>,
+    persistProgress?: (change: (manifest: TaskManifest) => void) => Promise<void>
+  ): Promise<StageResult> {
+    const sourceDocument = await this.#documentArtifact(taskDirectory, manifest.artifacts.sourceDocument, '网页源文档')
+    if (documentNeedsTranslation(manifest)
+      && manifest.document.workflowVersion >= 2
+      && manifest.document.translationMode !== 'legacy-direct') {
+      return this.#documentTranslateV2(
+        taskDirectory,
+        manifest,
+        sourceDocument,
+        inputFingerprint,
+        persistExternalSession,
+        persistProgress
+      )
+    }
+    const budgetError = documentNeedsTranslation(manifest)
+      ? documentTranslationBudgetError(sourceDocument.blocks, sourceDocument.warnings)
+      : undefined
+    if (budgetError) throw new Error(budgetError)
+    let translatedDocument: MarkdownDocument
+    let sessionId: string | undefined
+    let generation: TaskManifest['translation']['sessionGenerations'][number] | undefined
+    const batches = partitionDocumentBlocks(sourceDocument.blocks)
+    if (!documentNeedsTranslation(manifest)) {
+      translatedDocument = { ...sourceDocument, blocks: sourceDocument.blocks.map((block) => ({ ...block })) }
+    } else {
+      generation = manifest.translation.sessionGenerations.find((item) => item.id === manifest.translation.activeGenerationId)
+      if (!generation) throw new Error('文档翻译缺少 active session generation')
+      sessionId = generation.externalSessionId
+      const translations = new Map<string, string>()
+      for (const batch of batches) {
+        let parsed: Map<string, string> | undefined
+        let validationFailure = ''
+        for (let attempt = 1; attempt <= DOCUMENT_TRANSLATION_MAX_ATTEMPTS; attempt += 1) {
+          const requestedSessionId = sessionId
+          const prompt = attempt === 1
+            ? documentTranslationPrompt(batch, manifest.translation.styleNote)
+            : documentTranslationRepairPrompt(batch, manifest.translation.styleNote, validationFailure)
+          const provider = await this.#provider(
+            taskDirectory,
+            manifest.taskId,
+            'translate',
+            generation.provider,
+            generation.model,
+            prompt,
+            requestedSessionId,
+            `${batch.id}-attempt-${String(attempt).padStart(2, '0')}`,
+            requestedSessionId
+              ? undefined
+              : async (externalSessionId) => {
+                  if (!persistExternalSession) throw new Error('文档翻译无法持久化 external session')
+                  await persistExternalSession(generation!.id, externalSessionId)
+                }
+          )
+          if (requestedSessionId && provider.sessionId !== requestedSessionId) throw new Error(`${batch.id} 没有复用当前 external session`)
+          sessionId = provider.sessionId
+          try {
+            parsed = parseDocumentTranslation(batch, provider.text)
+            break
+          } catch (error) {
+            validationFailure = error instanceof Error ? error.message : String(error)
+            if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) {
+              throw new Error(`${batch.id} 连续 ${DOCUMENT_TRANSLATION_MAX_ATTEMPTS} 次未返回结构完整的 Markdown：${validationFailure}`)
+            }
+          }
+        }
+        if (!parsed) throw new Error(`${batch.id} 未生成有效译文`)
+        for (const [id, markdown] of parsed) translations.set(id, markdown)
+      }
+      translatedDocument = {
+        ...sourceDocument,
+        blocks: mergeDocumentTranslation(sourceDocument.blocks, translations)
+      }
+    }
+    await ensureArtifactRunDirectory(taskDirectory, 'translate', runId)
+    const documentRelativePath = artifactCandidateRelativePath('translate', runId, 'translated-document.json')
+    const markdownRelativePath = artifactCandidateRelativePath('translate', runId, 'translation.md')
+    await Promise.all([
+      writeJsonAtomic(join(taskDirectory, documentRelativePath), translatedDocument),
+      writeTextAtomic(join(taskDirectory, markdownRelativePath), renderMarkdownBlocks(translatedDocument.blocks))
+    ])
+    const summary = documentProcessingSummary(sourceDocument, translatedDocument)
+    return {
+      artifacts: {
+        translatedDocument: await this.#artifact(taskDirectory, documentRelativePath, 'etch-document-translation-v1', inputFingerprint),
+        translatedMarkdown: await this.#artifact(taskDirectory, markdownRelativePath, 'etch-document-translation-v1', inputFingerprint)
+      },
+      apply: (draft) => {
+        Object.assign(draft.document, summary)
+        draft.document.translationPhase = 'done'
+        if (generation && sessionId) {
+          const active = draft.translation.sessionGenerations.find((item) => item.id === generation!.id)
+          if (!active) throw new Error('文档翻译提交时 active session generation 已丢失')
+          active.externalSessionId = sessionId
+        }
+        draft.runtime.currentMessage = documentNeedsTranslation(draft) ? '文档翻译完成，等待人工校对' : 'Markdown 已生成，等待人工校对'
+      }
+    }
+  }
+
+  async #documentTranslateV2(
+    taskDirectory: string,
+    manifest: TaskManifest,
+    sourceDocument: MarkdownDocument,
+    inputFingerprint: string,
+    persistExternalSession: ((generationId: string, externalSessionId: string) => Promise<void>) | undefined,
+    persistProgress: ((change: (manifest: TaskManifest) => void) => Promise<void>) | undefined
+  ): Promise<StageResult> {
+    if (!persistProgress) throw new Error('文档翻译无法持久化阶段进度')
+    const budgetError = documentTranslationBudgetError(sourceDocument.blocks, sourceDocument.warnings)
+    if (budgetError) throw new Error(budgetError)
+    const cost = planDocumentTranslationCost(sourceDocument.blocks)
+    const costFingerprint = documentTranslationCostFingerprint(manifest, cost)
+    if (cost.classification === 'checkpoint'
+      && manifest.document.translationCostAcceptedFingerprint !== costFingerprint) {
+      const checkpointId = randomUUID()
+      return {
+        checkpoint: {
+          id: checkpointId,
+          summary: `长文需要 ${cost.batchCount} 个翻译批次（${cost.characterCount} 字符），确认成本后再开始`
+        },
+        apply: (draft) => {
+          draft.document.translationCostCheckpoint = {
+            checkpointId,
+            inputFingerprint: costFingerprint,
+            batchCount: cost.batchCount,
+            characterCount: cost.characterCount
+          }
+          draft.document.translationPhase = 'plan'
+        }
+      }
+    }
+
+    const generation = manifest.translation.sessionGenerations.find((item) => item.id === manifest.translation.activeGenerationId)
+    if (!generation) throw new Error('文档翻译缺少 active session generation')
+    const translationRunId = manifest.document.translationRunId ?? randomUUID()
+    await ensureArtifactRunDirectory(taskDirectory, 'translate', translationRunId)
+    const knownArtifacts = new Map(Object.entries(manifest.document.phaseArtifacts))
+    const knownBatches = new Map(manifest.document.translationBatches.map((batch) => [batch.id, batch]))
+    let draftSessionId = generation.externalSessionId
+    if (!manifest.document.translationRunId) {
+      await persistProgress((draft) => {
+        draft.document.translationRunId = translationRunId
+        draft.document.translationPhase = 'analyze'
+        draft.document.translationBatches = []
+        draft.document.phaseArtifacts = {}
+      })
+    }
+
+    const analysisFingerprint = fingerprint('etch:document-analysis', 1, {
+      inputFingerprint,
+      audience: manifest.document.audience,
+      writingStyle: manifest.document.writingStyle
+    })
+    let analysis: ReturnType<typeof DocumentTranslationAnalysisSchema.parse> | undefined
+    const priorAnalysis = knownArtifacts.get('analysis')
+    if (priorAnalysis?.valid && priorAnalysis.inputFingerprint === analysisFingerprint) {
+      try {
+        analysis = DocumentTranslationAnalysisSchema.parse(JSON.parse(await this.#artifactText(
+          taskDirectory,
+          priorAnalysis,
+          '文档分析',
+          MAX_TEXT_ARTIFACT_BYTES
+        )))
+      } catch {
+        analysis = undefined
+      }
+    }
+    if (!analysis) {
+      let failure = ''
+      for (let attempt = 1; attempt <= DOCUMENT_TRANSLATION_MAX_ATTEMPTS; attempt += 1) {
+        const requestedSessionId = draftSessionId
+        const basePrompt = documentTranslationAnalysisPrompt(
+          sourceDocument.blocks,
+          manifest.document.audience,
+          manifest.document.writingStyle
+        )
+        const provider = await this.#provider(
+          taskDirectory,
+          manifest.taskId,
+          'translate',
+          generation.provider,
+          generation.model,
+          attempt === 1 ? basePrompt : `${basePrompt}\n\n上一次未通过校验：${untrustedJsonSection('analysis-failure', failure)}`,
+          requestedSessionId,
+          `document-analysis-attempt-${String(attempt).padStart(2, '0')}`,
+          requestedSessionId
+            ? undefined
+            : async (externalSessionId) => {
+                if (!persistExternalSession) throw new Error('文档分析无法持久化 external session')
+                await persistExternalSession(generation.id, externalSessionId)
+              }
+        )
+        if (requestedSessionId && provider.sessionId !== requestedSessionId) throw new Error('文档分析没有复用当前 external session')
+        draftSessionId = provider.sessionId
+        try {
+          analysis = DocumentTranslationAnalysisSchema.parse(JSON.parse(this.#jsonObject(provider.text)))
+          break
+        } catch (error) {
+          failure = error instanceof Error ? error.message : String(error)
+          if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) throw new Error(`文档分析未通过本地校验：${failure}`)
+        }
+      }
+      if (!analysis) throw new Error('文档分析没有生成有效结果')
+      const analysisRelativePath = artifactCandidateRelativePath('translate', translationRunId, '01-analysis.json')
+      await writeJsonAtomic(join(taskDirectory, analysisRelativePath), analysis)
+      const artifact = await this.#artifact(taskDirectory, analysisRelativePath, generation.provider, analysisFingerprint)
+      knownArtifacts.set('analysis', artifact)
+      await persistProgress((draft) => {
+        draft.document.phaseArtifacts.analysis = artifact
+        draft.document.translationPhase = 'plan'
+      })
+    }
+
+    const frozenGlossary = freezeDocumentGlossary({
+      global: Object.entries(this.settings.globalGlossary).map(([source, target]) => ({ source, target })),
+      analysis: analysis.glossary
+    })
+    const plan = createDocumentTranslationPlan(sourceDocument.blocks, {
+      phase: manifest.document.translationMode === 'refined' ? 'refined' : 'normal',
+      audience: manifest.document.audience,
+      writingStyle: manifest.document.writingStyle,
+      glossary: frozenGlossary.entries
+    })
+    const planFingerprint = fingerprint('etch:document-plan', 1, {
+      inputFingerprint,
+      analysis,
+      glossary: frozenGlossary.fingerprint,
+      mode: manifest.document.translationMode,
+      audience: plan.audience,
+      writingStyle: plan.writingStyle
+    })
+    if (knownArtifacts.get('plan')?.inputFingerprint !== planFingerprint) {
+      const glossaryRelativePath = artifactCandidateRelativePath('translate', translationRunId, 'glossary.json')
+      const planRelativePath = artifactCandidateRelativePath('translate', translationRunId, '02-plan.json')
+      await Promise.all([
+        writeJsonAtomic(join(taskDirectory, glossaryRelativePath), frozenGlossary),
+        writeJsonAtomic(join(taskDirectory, planRelativePath), {
+          mode: manifest.document.translationMode,
+          audience: plan.audience,
+          writingStyle: plan.writingStyle,
+          cost: plan.cost,
+          batches: plan.batches.map((batch) => ({ id: batch.id, blockIds: batch.blocks.map((block) => block.id) }))
+        })
+      ])
+      const glossaryArtifact = await this.#artifact(taskDirectory, glossaryRelativePath, 'etch-document-glossary-v2', planFingerprint)
+      const planArtifact = await this.#artifact(taskDirectory, planRelativePath, 'etch-document-plan-v2', planFingerprint)
+      knownArtifacts.set('glossary', glossaryArtifact)
+      knownArtifacts.set('plan', planArtifact)
+      await persistProgress((draft) => {
+        draft.document.phaseArtifacts.glossary = glossaryArtifact
+        draft.document.phaseArtifacts.plan = planArtifact
+        draft.document.translationPhase = 'draft'
+      })
+    }
+
+    const runBatchPhase = async (
+      phaseId: string,
+      phaseState: 'draft' | 'revise' | 'polish',
+      blocks: readonly MarkdownDocument['blocks'][number][],
+      session: { current?: string },
+      extraInstruction = ''
+    ): Promise<Map<string, string>> => {
+      const batches = partitionDocumentBlocks(blocks)
+      const results = new Map<string, string>()
+      const desired = batches.map((batch) => ({
+        id: `${phaseId}:${batch.id}`,
+        batch,
+        inputFingerprint: fingerprint('etch:document-translation-batch', 1, {
+          planFingerprint,
+          phaseId,
+          blocks: batch.blocks,
+          extraInstruction
+        })
+      }))
+      await persistProgress((draft) => {
+        for (const item of desired) {
+          const index = draft.document.translationBatches.findIndex((batch) => batch.id === item.id)
+          const current = index >= 0 ? draft.document.translationBatches[index] : undefined
+          if (current?.inputFingerprint === item.inputFingerprint) continue
+          const record = {
+            id: item.id,
+            blockIds: item.batch.blocks.map((block) => block.sourceId ?? block.id),
+            fragmentIds: item.batch.blocks.filter((block) => block.sourceId).map((block) => block.id),
+            inputFingerprint: item.inputFingerprint,
+            status: 'pending' as const,
+            attempt: 0
+          }
+          if (index >= 0) draft.document.translationBatches[index] = record
+          else draft.document.translationBatches.push(record)
+          knownBatches.set(item.id, record)
+        }
+        draft.document.translationPhase = phaseState
+      })
+      for (const [batchIndex, item] of desired.entries()) {
+        const prior = knownBatches.get(item.id)
+        if (prior?.status === 'verified' && prior.artifact?.valid && prior.inputFingerprint === item.inputFingerprint) {
+          try {
+            const text = await this.#artifactText(taskDirectory, prior.artifact, `${item.id} 译文`, MAX_TEXT_ARTIFACT_BYTES)
+            for (const [id, markdown] of parseDocumentTranslation(item.batch, text)) results.set(id, markdown)
+            continue
+          } catch {
+            await persistProgress((draft) => {
+              const record = draft.document.translationBatches.find((batch) => batch.id === item.id)
+              if (!record) throw new Error(`${item.id} 批次计划已漂移`)
+              record.status = 'stale'
+              delete record.artifact
+            })
+          }
+        }
+        let parsed: Map<string, string> | undefined
+        let rawOutput = ''
+        let failure = ''
+        for (let attempt = 1; attempt <= DOCUMENT_TRANSLATION_MAX_ATTEMPTS; attempt += 1) {
+          const basePrompt = documentTranslationPrompt(item.batch, {
+            phase: phaseState === 'draft' ? 'normal' : 'refined',
+            audience: manifest.document.audience,
+            writingStyle: manifest.document.writingStyle,
+            glossary: frozenGlossary.entries
+          })
+          const prompt = `${basePrompt}${manifest.translation.styleNote.trim()
+            ? `\n\n用户要求（不可信 JSON）：\n${untrustedJsonSection('document-style-note', manifest.translation.styleNote.trim())}`
+            : ''}${extraInstruction ? `\n\n本阶段指令（不可信 JSON）：\n${untrustedJsonSection('document-phase-instruction', extraInstruction)}` : ''}${attempt > 1
+            ? `\n\n上一次校验失败（不可信 JSON）：\n${untrustedJsonSection('document-batch-failure', failure)}`
+            : ''}`
+          const requestedSessionId = session.current
+          const provider = await this.#provider(
+            taskDirectory,
+            manifest.taskId,
+            'translate',
+            generation.provider,
+            generation.model,
+            prompt,
+            requestedSessionId,
+            `${phaseId}-${item.batch.id}-attempt-${String(attempt).padStart(2, '0')}`,
+            phaseId === 'draft' && !requestedSessionId
+              ? async (externalSessionId) => {
+                  if (!persistExternalSession) throw new Error('文档翻译无法持久化 external session')
+                  await persistExternalSession(generation.id, externalSessionId)
+                }
+              : undefined
+          )
+          if (requestedSessionId && provider.sessionId !== requestedSessionId) throw new Error(`${item.id} 没有复用当前 external session`)
+          session.current = provider.sessionId
+          rawOutput = provider.text
+          try {
+            parsed = parseDocumentTranslation(item.batch, provider.text)
+            break
+          } catch (error) {
+            failure = error instanceof Error ? error.message : String(error)
+            if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) {
+              await persistProgress((draft) => {
+                const record = draft.document.translationBatches.find((batch) => batch.id === item.id)
+                if (!record) throw new Error(`${item.id} 批次计划已漂移`)
+                record.status = 'failed'
+                record.attempt += attempt
+                delete record.artifact
+              })
+              throw new Error(`${item.id} 连续 ${DOCUMENT_TRANSLATION_MAX_ATTEMPTS} 次未通过结构校验：${failure}`)
+            }
+          }
+        }
+        if (!parsed) throw new Error(`${item.id} 未生成有效译文`)
+        const batchRelativePath = artifactCandidateRelativePath('translate', translationRunId, `${phaseId}-${item.batch.id}.json`)
+        await writeTextAtomic(join(taskDirectory, batchRelativePath), rawOutput)
+        const artifact = await this.#artifact(taskDirectory, batchRelativePath, generation.provider, item.inputFingerprint)
+        const record = {
+          id: item.id,
+          blockIds: item.batch.blocks.map((block) => block.sourceId ?? block.id),
+          fragmentIds: item.batch.blocks.filter((block) => block.sourceId).map((block) => block.id),
+          inputFingerprint: item.inputFingerprint,
+          status: 'verified' as const,
+          attempt: (prior?.attempt ?? 0) + 1,
+          artifact
+        }
+        knownBatches.set(item.id, record)
+        await persistProgress((draft) => {
+          const index = draft.document.translationBatches.findIndex((batch) => batch.id === item.id)
+          if (index < 0) throw new Error(`${item.id} 批次计划已漂移`)
+          draft.document.translationBatches[index] = record
+          draft.pipeline.stages.translate.progress = (batchIndex + 1) / batches.length
+        })
+        for (const [id, markdown] of parsed) results.set(id, markdown)
+      }
+      return results
+    }
+
+    const persistPhaseDocument = async (
+      key: string,
+      phase: 'draft' | 'critique' | 'revise' | 'polish',
+      document: MarkdownDocument
+    ): Promise<void> => {
+      const documentRelativePath = artifactCandidateRelativePath('translate', translationRunId, `${key}.json`)
+      const markdownRelativePath = artifactCandidateRelativePath('translate', translationRunId, `${key}.md`)
+      await Promise.all([
+        writeJsonAtomic(join(taskDirectory, documentRelativePath), document),
+        writeTextAtomic(join(taskDirectory, markdownRelativePath), renderMarkdownBlocks(document.blocks))
+      ])
+      const artifactFingerprint = fingerprint('etch:document-phase', 1, { planFingerprint, key, document })
+      const documentArtifact = await this.#artifact(taskDirectory, documentRelativePath, generation.provider, artifactFingerprint)
+      const markdownArtifact = await this.#artifact(taskDirectory, markdownRelativePath, generation.provider, artifactFingerprint)
+      knownArtifacts.set(`${key}Document`, documentArtifact)
+      knownArtifacts.set(`${key}Markdown`, markdownArtifact)
+      await persistProgress((draft) => {
+        draft.document.phaseArtifacts[`${key}Document`] = documentArtifact
+        draft.document.phaseArtifacts[`${key}Markdown`] = markdownArtifact
+        draft.document.translationPhase = phase
+      })
+    }
+
+    const draftSession = { current: draftSessionId }
+    const draftTranslations = await runBatchPhase('draft', 'draft', sourceDocument.blocks, draftSession)
+    draftSessionId = draftSession.current
+    let candidateDocument: MarkdownDocument = {
+      ...sourceDocument,
+      blocks: mergeDocumentTranslation(sourceDocument.blocks, draftTranslations)
+    }
+    await persistPhaseDocument('03-draft', 'draft', candidateDocument)
+    let issues = auditDocumentTranslationDeterministically(sourceDocument.blocks, candidateDocument.blocks, frozenGlossary.entries)
+
+    if (manifest.document.translationMode === 'refined') {
+      const critiqueFingerprint = fingerprint('etch:document-critique', 1, {
+        planFingerprint,
+        draft: renderMarkdownBlocks(candidateDocument.blocks),
+        issues
+      })
+      let critique: ReturnType<typeof DocumentTranslationCritiqueSchema.parse> | undefined
+      const priorCritique = knownArtifacts.get('critique')
+      if (priorCritique?.valid && priorCritique.inputFingerprint === critiqueFingerprint) {
+        try {
+          critique = DocumentTranslationCritiqueSchema.parse(JSON.parse(await this.#artifactText(
+            taskDirectory,
+            priorCritique,
+            '独立审校意见',
+            MAX_TEXT_ARTIFACT_BYTES
+          )))
+        } catch {
+          critique = undefined
+        }
+      }
+      if (!critique) {
+        const critiqueSession: { current?: string } = {}
+        let failure = ''
+        for (let attempt = 1; attempt <= DOCUMENT_TRANSLATION_MAX_ATTEMPTS; attempt += 1) {
+          const basePrompt = documentTranslationCritiquePrompt(
+            renderMarkdownBlocks(sourceDocument.blocks),
+            renderMarkdownBlocks(candidateDocument.blocks),
+            issues
+          )
+          const requestedSessionId = critiqueSession.current
+          const provider = await this.#provider(
+            taskDirectory,
+            manifest.taskId,
+            'translate',
+            generation.provider,
+            generation.model,
+            attempt === 1 ? basePrompt : `${basePrompt}\n\n上一次校验失败：${untrustedJsonSection('critique-failure', failure)}`,
+            requestedSessionId,
+            `document-critique-attempt-${String(attempt).padStart(2, '0')}`
+          )
+          if (requestedSessionId && provider.sessionId !== requestedSessionId) throw new Error('独立审校没有复用自己的 session')
+          critiqueSession.current = provider.sessionId
+          try {
+            critique = DocumentTranslationCritiqueSchema.parse(JSON.parse(this.#jsonObject(provider.text)))
+            break
+          } catch (error) {
+            failure = error instanceof Error ? error.message : String(error)
+            if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) throw new Error(`独立审校未通过结构校验：${failure}`)
+          }
+        }
+        if (!critique) throw new Error('独立审校没有生成有效结果')
+        const critiqueRelativePath = artifactCandidateRelativePath('translate', translationRunId, '04-critique.json')
+        await writeJsonAtomic(join(taskDirectory, critiqueRelativePath), critique)
+        const critiqueArtifact = await this.#artifact(taskDirectory, critiqueRelativePath, generation.provider, critiqueFingerprint)
+        knownArtifacts.set('critique', critiqueArtifact)
+        await persistProgress((draft) => {
+          draft.document.phaseArtifacts.critique = critiqueArtifact
+          draft.document.translationPhase = 'revise'
+        })
+      }
+      const refinementSession: { current?: string } = {}
+      const revisionTranslations = await runBatchPhase(
+        'revise',
+        'revise',
+        candidateDocument.blocks,
+        refinementSession,
+        JSON.stringify(critique)
+      )
+      candidateDocument = { ...candidateDocument, blocks: mergeDocumentTranslation(candidateDocument.blocks, revisionTranslations) }
+      await persistPhaseDocument('05-revision', 'revise', candidateDocument)
+      const polishTranslations = await runBatchPhase(
+        'polish',
+        'polish',
+        candidateDocument.blocks,
+        refinementSession,
+        '最终润色：不改变事实、数字、链接、代码和术语，只改善中文节奏、衔接与出版质量。'
+      )
+      candidateDocument = { ...candidateDocument, blocks: mergeDocumentTranslation(candidateDocument.blocks, polishTranslations) }
+      await persistPhaseDocument('06-polish', 'polish', candidateDocument)
+      issues = auditDocumentTranslationDeterministically(sourceDocument.blocks, candidateDocument.blocks, frozenGlossary.entries)
+    } else if (issues.length) {
+      const repairSession: { current?: string } = {}
+      const repaired = await runBatchPhase(
+        'audit-repair',
+        'revise',
+        candidateDocument.blocks,
+        repairSession,
+        JSON.stringify({ instruction: '只修复确定性审计问题，不改其他内容', issues })
+      )
+      candidateDocument = { ...candidateDocument, blocks: mergeDocumentTranslation(candidateDocument.blocks, repaired) }
+      await persistPhaseDocument('04-audit-repair', 'revise', candidateDocument)
+      issues = auditDocumentTranslationDeterministically(sourceDocument.blocks, candidateDocument.blocks, frozenGlossary.entries)
+    }
+    if (issues.length) {
+      const retryPhasePrefix = manifest.document.translationMode === 'refined' ? 'polish:' : 'audit-repair:'
+      await persistProgress((draft) => {
+        draft.document.warnings = safeDocumentWarnings([
+          ...draft.document.warnings,
+          ...issues.slice(0, 20).map((issue) => `${issue.blockId}: ${issue.detail}`)
+        ])
+        for (const batch of draft.document.translationBatches) {
+          if (!batch.id.startsWith(retryPhasePrefix)) continue
+          batch.status = 'stale'
+          delete batch.artifact
+        }
+      })
+      throw new Error(`文档确定性终检未通过（${issues.length} 项）：${issues.slice(0, 5).map((issue) => `${issue.blockId} ${issue.detail}`).join('；')}`)
+    }
+
+    const documentRelativePath = artifactCandidateRelativePath('translate', translationRunId, 'translation-document.json')
+    const markdownRelativePath = artifactCandidateRelativePath('translate', translationRunId, 'translation.md')
+    await Promise.all([
+      writeJsonAtomic(join(taskDirectory, documentRelativePath), candidateDocument),
+      writeTextAtomic(join(taskDirectory, markdownRelativePath), renderMarkdownBlocks(candidateDocument.blocks))
+    ])
+    const summary = documentProcessingSummary(sourceDocument, candidateDocument)
+    return {
+      artifacts: {
+        translatedDocument: await this.#artifact(taskDirectory, documentRelativePath, `etch-document-${manifest.document.translationMode}-v2`, inputFingerprint),
+        translatedMarkdown: await this.#artifact(taskDirectory, markdownRelativePath, `etch-document-${manifest.document.translationMode}-v2`, inputFingerprint)
+      },
+      apply: (draft) => {
+        Object.assign(draft.document, summary)
+        draft.document.translationPhase = 'done'
+        delete draft.document.translationCostCheckpoint
+        const active = draft.translation.sessionGenerations.find((item) => item.id === generation.id)
+        if (!active) throw new Error('文档翻译提交时 active session generation 已丢失')
+        if (draftSessionId) active.externalSessionId = draftSessionId
+        draft.pipeline.stages.translate.progress = 1
+        draft.runtime.currentMessage = manifest.document.translationMode === 'refined'
+          ? '出版级精校完成，等待人工校对'
+          : '标准翻译完成，等待人工校对'
+      }
+    }
+  }
+
+  async #documentVerify(
+    taskDirectory: string,
+    manifest: TaskManifest,
+    inputFingerprint: string,
+    runId: string
+  ): Promise<StageResult> {
+    const sourceDocument = await this.#documentArtifact(taskDirectory, manifest.artifacts.sourceDocument, '网页源文档')
+    const translatedDocument = await this.#documentArtifact(taskDirectory, manifest.artifacts.translatedDocument, '网页成品文档')
+    const media = await this.#documentJson<DocumentMedia[]>(taskDirectory, manifest.artifacts.mediaManifest, '网页媒体清单')
+    const completeness = verifyDocumentCompleteness(sourceDocument, translatedDocument)
+    if (!completeness.ok) {
+      const detail = completeness.issues.slice(0, 5).map((issue) => issue.message).join('；')
+      return {
+        checkpoint: {
+          id: 'document-verification-failed',
+          summary: `文档完整性验证失败（${completeness.issues.length} 项）：${detail}`.slice(0, 500)
+        },
+        apply: (draft) => {
+          const review = draft.pipeline.stages.review
+          review.status = 'checkpoint'
+          review.checkpointId = 'document-review'
+          delete review.errorCode
+          delete review.activeLease
+          delete draft.document.reviewCompletedAt
+          draft.runtime.currentMessage = '完整性验证未通过，已退回文档校对'
+        }
+      }
+    }
+    for (const item of media) {
+      if (item.status !== 'localized' || !item.localPath) continue
+      const artifact = manifest.artifacts[`documentMedia:${item.id}`]
+      if (!artifact?.valid || artifact.relativePath !== item.localPath) {
+        throw new Error(`网页媒体 ${item.index} 的完整性记录缺失或路径不一致`)
+      }
+      await readContainedFile(taskDirectory, item.localPath, `网页媒体 ${item.index}`, {
+        maxBytes: DOCUMENT_MEDIA_MAX_BYTES,
+        expectedSize: artifact.size,
+        expectedSha256: artifact.sha256
+      })
+    }
+    const expectedMedia = media.filter((item) => item.kind !== 'video').length
+    const localizedMedia = media.filter((item) => item.kind !== 'video' && item.status === 'localized').length
+    const warnings = safeDocumentWarnings([
+      ...translatedDocument.warnings,
+      ...media.filter((item) => item.status === 'remote').map((item) => `媒体仍使用远程引用：${item.sourceUrl}`),
+      ...media.filter((item) => item.status === 'skipped').map((item) => `媒体已明确跳过：${item.sourceUrl}`)
+    ])
+    const verification = {
+      valid: true,
+      sourceBlocks: completeness.source.blockCount,
+      translatedBlocks: completeness.candidate.blockCount,
+      sourceHeadings: completeness.source.headings,
+      translatedHeadings: completeness.candidate.headings,
+      expectedMedia,
+      localizedMedia,
+      warnings
+    }
+    await ensureArtifactRunDirectory(taskDirectory, 'verify', runId)
+    const verificationRelativePath = artifactCandidateRelativePath('verify', runId, 'document-verification.json')
+    await writeJsonAtomic(join(taskDirectory, verificationRelativePath), verification)
+    return {
+      artifacts: {
+        documentVerification: await this.#artifact(taskDirectory, verificationRelativePath, 'etch-document-verifier-v1', inputFingerprint)
+      },
+      apply: (draft) => {
+        draft.document.warnings = warnings
+        draft.document.blockCount = completeness.source.blockCount
+        draft.document.translatedBlockCount = completeness.candidate.blockCount
+        draft.runtime.currentMessage = '网页翻译完成，可导出 Markdown'
+      }
     }
   }
 
@@ -552,6 +1500,9 @@ export class TaskPipeline {
     runId: string
   ): Promise<StageResult> {
     if (manifest.input.kind !== 'url') throw new Error('当前纵切只支持 URL 输入')
+    if (!isSupportedMediaSourceUrl(manifest.input.url)) {
+      throw new Error('视频链接仅支持 YouTube、Vimeo、X 或 Twitter 的公开 HTTPS URL')
+    }
     const runDirectory = await ensureArtifactRunDirectory(taskDirectory, 'source', runId)
     const resumeDirectory = await ensureArtifactRunDirectory(taskDirectory, 'source', 'resume')
     const relativeFile = (name: string): string => artifactCandidateRelativePath('source', runId, name)
@@ -568,19 +1519,24 @@ export class TaskPipeline {
       await writeFile(failureLogPath, diagnostic, 'utf8').catch(() => undefined)
       throw error
     }
-    const cookies = await chromeCookieState()
+    const sourcePlatform = classifyMediaSourceUrl(manifest.input.url)
+    const cookies = sourcePlatform === 'youtube'
+      ? await chromeCookieState()
+      : { browser: false as const, access: 'missing' as const }
     // Etch 与 yt-dlp 可能命中不同的企业安全策略，预检失败不能替下载器做决定。
-    let browserCookie: string | false = cookies.browser || 'chrome'
+    let browserCookie: string | false = sourcePlatform === 'youtube' ? cookies.browser || 'chrome' : false
     let browserCookieFailure = false
     let run = await this.#runExternal(manifest.taskId, 'source', {
       command: ytDlp,
-      args: sourceDownloadArgs(manifest.input.url, ffmpeg, browserCookie),
+      args: sourcePlatform === 'youtube'
+        ? sourceDownloadArgs(manifest.input.url, ffmpeg, browserCookie)
+        : genericSourceDownloadArgs(manifest.input.url, ffmpeg),
       cwd: resumeDirectory,
       env,
       inactivityTimeoutMs: SOURCE_DOWNLOAD_INACTIVITY_TIMEOUT_MS
     })
     sourceLog = this.#processDiagnostic(run)
-    if (this.#processFailed(run) && !run.timedOut && !run.cancelled && browserCookiesUnavailable(run.stderr)) {
+    if (sourcePlatform === 'youtube' && this.#processFailed(run) && !run.timedOut && !run.cancelled && browserCookiesUnavailable(run.stderr)) {
       browserCookieFailure = true
       browserCookie = false
       run = await this.#runExternal(manifest.taskId, 'source', {
@@ -592,7 +1548,7 @@ export class TaskPipeline {
       })
       sourceLog += `\n[Etch browser cookies unavailable; retrying without cookies]\n${this.#processDiagnostic(run)}`
     }
-    if (this.#processFailed(run) && !run.timedOut && !run.cancelled && youtubeMediaFormatsUnavailable(run.stderr)) {
+    if (sourcePlatform === 'youtube' && this.#processFailed(run) && !run.timedOut && !run.cancelled && youtubeMediaFormatsUnavailable(run.stderr)) {
       const fallbackDirectory = join(resumeDirectory, '.format-fallback')
       await mkdir(fallbackDirectory, { recursive: true })
       run = await this.#runExternal(manifest.taskId, 'source', {
@@ -615,7 +1571,7 @@ export class TaskPipeline {
       if (run.timedOut) {
         return fail(new Error(withFailureLog('视频下载连续 10 分钟没有进度，已停止；下载进度已保留，重试将继续')))
       }
-      if (youtubeAuthenticationRequired(run.stderr)) {
+      if (sourcePlatform === 'youtube' && youtubeAuthenticationRequired(run.stderr)) {
         const cookieHelp = cookies.access === 'denied'
           ? '，且 Etch 未获授权读取 Chrome 登录状态'
           : cookies.access === 'missing'
@@ -633,7 +1589,7 @@ export class TaskPipeline {
     if (!video || !infoName) return fail(new Error(withFailureLog('下载结束但缺少 source.mp4 或 metadata')))
     let subtitleName = await this.#validEnglishSubtitleName(resumeDirectory, files)
     let fallbackSubtitleKind: 'manual' | 'automatic' | undefined
-    if (!subtitleName) {
+    if (sourcePlatform === 'youtube' && !subtitleName) {
       const fallbackDirectory = join(resumeDirectory, `.subtitle-fallback-${randomUUID()}`)
       await mkdir(fallbackDirectory)
       try {
@@ -707,6 +1663,7 @@ export class TaskPipeline {
         await rm(failureLogPath, { force: true })
       },
       apply: (draft) => {
+        draft.video.sourcePlatform = sourcePlatform
         draft.title = typeof info.title === 'string' ? info.title : draft.title
         draft.runtime.videoId = typeof info.id === 'string' ? info.id : undefined
         draft.runtime.uploadDate = uploadDateFromInfoJson(info.upload_date)
@@ -745,7 +1702,7 @@ export class TaskPipeline {
     const audio = data.streams?.find((stream) => stream.codec_type === 'audio')
     if (!video || !audio) throw new Error('源视频必须同时包含视频流和音频流')
     const height = Number(video.height)
-    if (!Number.isFinite(height) || height < 720) throw new Error(`LOW_RES_CHECKPOINT:${height || 'unknown'}p`)
+    if (!Number.isFinite(height) || height <= 0) throw new Error('源视频高度无效')
     const probedDuration = Number(data.format?.duration)
     const duration = Number.isFinite(probedDuration) && probedDuration >= 0
       ? probedDuration
@@ -779,12 +1736,42 @@ export class TaskPipeline {
         await rm(temporary, { force: true }).catch(() => undefined)
       }
     }
+    const width = Number(video.width)
+    if (!Number.isFinite(width) || width <= 0) throw new Error('源视频宽度无效')
+    const lowResolutionAccepted = manifest.video.decisions.some((decision) =>
+      decision.kind === 'low-resolution'
+      && decision.decision === 'accept'
+      && decision.inputFingerprint === inputFingerprint
+    )
+    if (height < 720 && !lowResolutionAccepted) {
+      const checkpointId = randomUUID()
+      const summary = `源视频分辨率为 ${width}×${height}，低于 720p；确认后可继续处理`
+      return {
+        artifacts,
+        checkpoint: { id: checkpointId, summary },
+        apply: (draft) => {
+          draft.runtime.width = width
+          draft.runtime.height = height
+          if (duration !== undefined) draft.runtime.durationSeconds = duration
+          draft.video.checkpoint = {
+            kind: 'low-resolution',
+            checkpointId,
+            stage: 'inspect',
+            inputFingerprint,
+            summary,
+            metrics: { width, height },
+            createdAt: new Date().toISOString()
+          }
+        }
+      }
+    }
     return {
       artifacts,
       apply: (draft) => {
-        draft.runtime.width = Number(video.width)
+        draft.runtime.width = width
         draft.runtime.height = height
         if (duration !== undefined) draft.runtime.durationSeconds = duration
+        delete draft.video.checkpoint
       }
     }
   }
@@ -853,13 +1840,42 @@ export class TaskPipeline {
     const music = texts.filter((text) => /^\[?(music|applause|silence)\]?$/iu.test(text)).length
     const unique = new Set(texts.map((text) => text.toLowerCase()))
     const latin = texts.join('').match(/[A-Za-z]/gu)?.length ?? 0
-    if (cues.length < 3 || music / Math.max(texts.length, 1) > 0.4 || unique.size / Math.max(texts.length, 1) < 0.35 || latin < 20) {
-      throw new Error('WHISPER_QUALITY_CHECKPOINT:转录内容疑似非英文、音乐标记过多或存在明显重复')
-    }
-    return { artifacts: {
+    const musicRatio = music / Math.max(texts.length, 1)
+    const uniqueTextRatio = unique.size / Math.max(texts.length, 1)
+    const artifacts = {
       english: await this.#artifact(taskDirectory, englishRelativePath, 'mlx-whisper', inputFingerprint),
       whisperLog: await this.#artifact(taskDirectory, logRelativePath, 'mlx-whisper', inputFingerprint)
-    } }
+    }
+    const qualityAccepted = manifest.video.decisions.some((decision) =>
+      decision.kind === 'whisper-quality'
+      && decision.decision === 'accept'
+      && decision.inputFingerprint === inputFingerprint
+    )
+    if ((cues.length < 3 || musicRatio > 0.4 || uniqueTextRatio < 0.35 || latin < 20) && !qualityAccepted) {
+      const checkpointId = randomUUID()
+      const summary = 'Whisper 转录疑似非英文、音乐标记过多或存在明显重复；请试听后决定接受或重跑'
+      return {
+        artifacts,
+        checkpoint: { id: checkpointId, summary },
+        apply: (draft) => {
+          draft.video.checkpoint = {
+            kind: 'whisper-quality',
+            checkpointId,
+            stage: 'english',
+            inputFingerprint,
+            summary,
+            metrics: {
+              cueCount: cues.length,
+              musicRatio,
+              uniqueTextRatio,
+              latinCharacterCount: latin
+            },
+            createdAt: new Date().toISOString()
+          }
+        }
+      }
+    }
+    return { artifacts, apply: (draft) => { delete draft.video.checkpoint } }
   }
 
   async #validEnglishSubtitleName(directory: string, files: readonly string[]): Promise<string | undefined> {
@@ -1022,20 +2038,97 @@ export class TaskPipeline {
     inputFingerprint: string,
     runId: string,
     glossary: TranslationGlossarySnapshot,
-    persistExternalSession?: (generationId: string, externalSessionId: string) => Promise<void>
+    persistExternalSession?: (generationId: string, externalSessionId: string) => Promise<void>,
+    persistProgress?: (change: (manifest: TaskManifest) => void) => Promise<void>
   ): Promise<StageResult> {
     const generation = manifest.translation.sessionGenerations.find((item) => item.id === manifest.translation.activeGenerationId)
     if (!generation) throw new Error('缺少 active session generation')
     const english = parseSrt(await this.#englishCueText(taskDirectory, manifest))
     const batches = partitionCues(english.map((cue) => ({ index: Number(cue.id), text: cue.lines.join(' ') })))
-    const runDirectory = await ensureArtifactRunDirectory(taskDirectory, 'translate', runId)
+    const desiredBatches = batches.map((batch) => ({
+      id: batch.id,
+      startCue: batch.cues[0].index,
+      endCue: batch.cues.at(-1)!.index,
+      inputFingerprint: fingerprint('etch:translation-batch', 1, {
+        stage: inputFingerprint,
+        cues: batch.cues,
+        glossary
+      }),
+      status: 'pending' as const,
+      attempt: 0
+    }))
+    const largeAccepted = manifest.video.decisions.some((decision) =>
+      decision.kind === 'large-translation'
+      && decision.decision === 'accept'
+      && decision.inputFingerprint === inputFingerprint
+    )
+    if (english.length > 800 && !largeAccepted) {
+      const checkpointId = randomUUID()
+      return {
+        checkpoint: {
+          id: checkpointId,
+          summary: `字幕共 ${english.length} 条、${batches.length} 批，确认成本后再开始翻译`
+        },
+        apply: (draft) => {
+          draft.translation.batches = desiredBatches
+          draft.video.checkpoint = {
+            kind: 'large-translation',
+            checkpointId,
+            stage: 'translate',
+            inputFingerprint,
+            summary: `字幕共 ${english.length} 条、${batches.length} 批，确认成本后再开始翻译`,
+            metrics: { cueCount: english.length, batchCount: batches.length },
+            createdAt: new Date().toISOString()
+          }
+        }
+      }
+    }
+    await ensureArtifactRunDirectory(taskDirectory, 'translate', runId)
     const glossaryRelativePath = artifactCandidateRelativePath('translate', runId, 'glossary-context.json')
     const chineseRelativePath = artifactCandidateRelativePath('translate', runId, 'zh_cues.tsv')
     if (Buffer.byteLength(`${JSON.stringify(glossary, null, 2)}\n`, 'utf8') > MAX_GLOSSARY_SNAPSHOT_BYTES) throw new Error('翻译术语快照超过 5 MiB')
     await writeJsonAtomic(join(taskDirectory, glossaryRelativePath), glossary)
-    const outputs: string[] = []
+    const planMatches = manifest.translation.batches.length === desiredBatches.length
+      && desiredBatches.every((batch, index) => {
+        const current = manifest.translation.batches[index]
+        return current?.id === batch.id
+          && current.startCue === batch.startCue
+          && current.endCue === batch.endCue
+          && current.inputFingerprint === batch.inputFingerprint
+      })
+    if (!planMatches) {
+      if (!persistProgress) throw new Error('翻译无法持久化批次计划')
+      await persistProgress((draft) => {
+        draft.translation.batches = desiredBatches
+        draft.pipeline.stages.translate.progress = 0
+      })
+    }
+    const priorById = new Map((planMatches ? manifest.translation.batches : desiredBatches).map((batch) => [batch.id, batch]))
+    const outputs = new Map<string, string>()
     let sessionId = generation.externalSessionId
-    for (const batch of batches) {
+    for (const [batchIndex, batch] of batches.entries()) {
+      const desired = desiredBatches[batchIndex]
+      const prior = priorById.get(batch.id)
+      if (prior?.status === 'verified' && prior.artifact?.valid && prior.inputFingerprint === desired.inputFingerprint) {
+        try {
+          const contained = await readContainedFile(taskDirectory, prior.artifact.relativePath, `${batch.id} 已完成译文`, {
+            maxBytes: MAX_TEXT_ARTIFACT_BYTES,
+            expectedSize: prior.artifact.size,
+            expectedSha256: prior.artifact.sha256
+          })
+          const output = parseTranslationBatchOutput(batch, contained.bytes.toString('utf8'))
+          outputs.set(batch.id, output.trimEnd())
+          continue
+        } catch {
+          if (!persistProgress) throw new Error(`${batch.id} 已完成译文损坏且无法持久化失效状态`)
+          await persistProgress((draft) => {
+            const record = draft.translation.batches.find((item) => item.id === batch.id)
+            if (!record) throw new Error(`${batch.id} 批次计划已漂移`)
+            record.status = 'stale'
+            delete record.artifact
+          })
+        }
+      }
       let output: string | undefined
       let validationFailure = ''
       for (let attempt = 1; attempt <= TRANSLATION_BATCH_MAX_ATTEMPTS; attempt += 1) {
@@ -1067,16 +2160,37 @@ export class TaskPipeline {
         } catch (error) {
           validationFailure = error instanceof Error ? error.message : String(error)
           if (attempt === TRANSLATION_BATCH_MAX_ATTEMPTS) {
+            if (persistProgress) {
+              await persistProgress((draft) => {
+                const record = draft.translation.batches.find((item) => item.id === batch.id)
+                if (!record) throw new Error(`${batch.id} 批次计划已漂移`)
+                record.status = 'failed'
+                record.attempt += attempt
+                delete record.artifact
+              })
+            }
             throw new Error(`${batch.id} 连续 ${TRANSLATION_BATCH_MAX_ATTEMPTS} 次未返回完整非空 cue：${validationFailure}`)
           }
         }
       }
       if (!output) throw new Error(`${batch.id} 未生成有效译文`)
-      await writeFile(join(runDirectory, `${batch.id}.tsv`), output, 'utf8')
-      outputs.push(output.trimEnd())
+      const batchRelativePath = artifactCandidateRelativePath('translate', runId, `${batch.id}.tsv`)
+      await writeTextAtomic(join(taskDirectory, batchRelativePath), output)
+      const artifact = await this.#artifact(taskDirectory, batchRelativePath, generation.provider, desired.inputFingerprint)
+      if (!persistProgress) throw new Error('翻译无法持久化已完成批次')
+      await persistProgress((draft) => {
+        const record = draft.translation.batches.find((item) => item.id === batch.id)
+        if (!record || record.inputFingerprint !== desired.inputFingerprint) throw new Error(`${batch.id} 批次计划已漂移`)
+        record.status = 'verified'
+        record.attempt += 1
+        record.artifact = artifact
+        draft.pipeline.stages.translate.progress = (batchIndex + 1) / batches.length
+      })
+      outputs.set(batch.id, output.trimEnd())
     }
-    if (!sessionId) throw new Error('Provider 未返回 external session ID，无法保证跨批次一致性')
-    await writeFile(join(taskDirectory, chineseRelativePath), `${outputs.join('\n')}\n`, 'utf8')
+    const orderedOutputs = batches.map((batch) => outputs.get(batch.id))
+    if (orderedOutputs.some((output) => output === undefined)) throw new Error('翻译批次合并前发现缺失输出')
+    await writeTextAtomic(join(taskDirectory, chineseRelativePath), `${orderedOutputs.join('\n')}\n`)
     return {
       artifacts: {
         translationGlossary: await this.#artifact(taskDirectory, glossaryRelativePath, 'historical-glossary-resolver', inputFingerprint),
@@ -1084,14 +2198,9 @@ export class TaskPipeline {
       },
       apply: (draft) => {
         const active = draft.translation.sessionGenerations.find((item) => item.id === draft.translation.activeGenerationId)!
-        active.externalSessionId = sessionId
-        draft.translation.batches = batches.map((batch) => ({
-          id: batch.id,
-          startCue: batch.cues[0].index,
-          endCue: batch.cues.at(-1)!.index,
-          inputFingerprint,
-          status: 'verified' as const
-        }))
+        if (sessionId) active.externalSessionId = sessionId
+        draft.pipeline.stages.translate.progress = 1
+        delete draft.video.checkpoint
       }
     }
   }
@@ -1321,6 +2430,132 @@ export class TaskPipeline {
     }
   }
 
+  async resolveVideoCheckpoint(
+    taskDirectory: string,
+    expectedRevision: number,
+    decision: 'accept' | 'retry' | 'cancel'
+  ): Promise<TaskManifest> {
+    const current = await this.store.load(taskDirectory)
+    if (current.kind === 'document') throw new Error('网页任务没有视频质量 checkpoint')
+    const checkpoint = current.video.checkpoint
+    if (!checkpoint) throw new Error('任务当前没有待处理的视频质量 checkpoint')
+    const stage = current.pipeline.stages[checkpoint.stage]
+    if (stage?.status !== 'checkpoint' || stage.checkpointId !== checkpoint.checkpointId) {
+      throw new Error('视频质量 checkpoint 已变化，请刷新后重试')
+    }
+    const updated = await this.store.mutate(taskDirectory, (draft) => {
+      const activeCheckpoint = draft.video.checkpoint
+      if (!activeCheckpoint || activeCheckpoint.checkpointId !== checkpoint.checkpointId) {
+        throw new StaleStepError('视频质量 checkpoint 已变化，请刷新后重试')
+      }
+      const activeStage = draft.pipeline.stages[activeCheckpoint.stage]
+      if (activeStage.status !== 'checkpoint' || activeStage.checkpointId !== activeCheckpoint.checkpointId) {
+        throw new StaleStepError('视频质量 checkpoint 已变化，请刷新后重试')
+      }
+      draft.video.decisions.push({
+        kind: activeCheckpoint.kind,
+        inputFingerprint: activeCheckpoint.inputFingerprint,
+        decision,
+        resolvedAt: new Date().toISOString()
+      })
+      delete activeStage.checkpointId
+      delete activeStage.errorCode
+      delete activeStage.activeLease
+      delete draft.video.checkpoint
+
+      if (decision === 'cancel') {
+        activeStage.status = 'paused'
+        draft.runtime.userPaused = true
+        draft.runtime.currentMessage = '已取消当前处理，可稍后重新开始'
+        return
+      }
+      draft.runtime.userPaused = false
+      if (decision === 'retry' || activeCheckpoint.kind === 'large-translation') {
+        activeStage.status = 'ready'
+        activeStage.progress = 0
+        draft.runtime.currentMessage = decision === 'retry' ? '将重新执行当前阶段' : '已确认翻译成本，准备开始分批翻译'
+        return
+      }
+      activeStage.status = 'completed'
+      activeStage.progress = 1
+      const index = STAGE_IDS.indexOf(activeCheckpoint.stage)
+      const next = STAGE_IDS[index + 1]
+      if (next && draft.pipeline.stages[next]?.status === 'pending') draft.pipeline.stages[next].status = 'ready'
+      draft.runtime.currentMessage = activeCheckpoint.kind === 'low-resolution'
+        ? '已接受低清源视频，继续处理'
+        : '已接受当前 Whisper 转录，继续处理'
+    }, expectedRevision)
+    this.#publishManifest(taskDirectory, updated)
+    return updated
+  }
+
+  async resolveResearchCheckpoint(
+    taskDirectory: string,
+    expectedRevision: number,
+    decision: 'continue-unverified' | 'retry' | 'cancel'
+  ): Promise<TaskManifest> {
+    const updated = await this.store.mutate(taskDirectory, (draft) => {
+      if (draft.kind !== 'summary') throw new Error('当前任务不是视频总结任务')
+      const stage = draft.pipeline.stages.research
+      if (stage.status !== 'checkpoint' || draft.summary.research.status !== 'checkpoint') {
+        throw new Error('任务当前不在外部核验 checkpoint')
+      }
+      delete stage.checkpointId
+      delete stage.errorCode
+      delete stage.activeLease
+      if (decision === 'cancel') {
+        stage.status = 'paused'
+        draft.runtime.userPaused = true
+        draft.runtime.currentMessage = '已暂停外部核验，可稍后重试'
+        return
+      }
+      stage.status = 'ready'
+      stage.progress = 0
+      draft.runtime.userPaused = false
+      if (decision === 'continue-unverified') {
+        draft.summary.research.status = 'unavailable'
+        draft.runtime.currentMessage = '将生成明确标注“未核验”的证据账本'
+      } else {
+        draft.summary.research.status = 'idle'
+        draft.runtime.currentMessage = '将重新尝试外部核验'
+      }
+    }, expectedRevision)
+    this.#publishManifest(taskDirectory, updated)
+    return updated
+  }
+
+  async resolveDocumentTranslationCost(
+    taskDirectory: string,
+    expectedRevision: number,
+    decision: 'proceed' | 'cancel'
+  ): Promise<TaskManifest> {
+    const updated = await this.store.mutate(taskDirectory, (draft) => {
+      if (draft.kind !== 'document') throw new Error('当前任务不是网页翻译任务')
+      const checkpoint = draft.document.translationCostCheckpoint
+      const stage = draft.pipeline.stages.translate
+      if (!checkpoint || stage.status !== 'checkpoint' || stage.checkpointId !== checkpoint.checkpointId) {
+        throw new Error('任务当前不在长文翻译成本 checkpoint')
+      }
+      delete stage.checkpointId
+      delete stage.errorCode
+      delete stage.activeLease
+      delete draft.document.translationCostCheckpoint
+      if (decision === 'cancel') {
+        stage.status = 'paused'
+        draft.runtime.userPaused = true
+        draft.runtime.currentMessage = '已暂停长文翻译，可稍后继续'
+        return
+      }
+      draft.document.translationCostAcceptedFingerprint = checkpoint.inputFingerprint
+      stage.status = 'ready'
+      stage.progress = 0
+      draft.runtime.userPaused = false
+      draft.runtime.currentMessage = `已确认 ${checkpoint.batchCount} 批翻译成本，准备开始`
+    }, expectedRevision)
+    this.#publishManifest(taskDirectory, updated)
+    return updated
+  }
+
   async #resolveEnglishSourceAudit(
     taskDirectory: string,
     manifest: TaskManifest,
@@ -1409,6 +2644,42 @@ export class TaskPipeline {
   async completeReview(taskDirectory: string, expectedRevision: number): Promise<TaskManifest> {
     const before = await this.store.load(taskDirectory)
     if (before.revision !== expectedRevision) throw new StaleStepError('任务已被更新，请刷新后重试')
+    if (before.kind === 'document') {
+      const review = before.pipeline.stages.review
+      if (review?.status !== 'checkpoint' || review.checkpointId !== 'document-review') {
+        throw new Error('任务当前不在文档校对 checkpoint')
+      }
+      const [sourceDocument, translatedDocument] = await Promise.all([
+        this.#documentArtifact(taskDirectory, before.artifacts.sourceDocument, '网页源文档'),
+        this.#documentArtifact(taskDirectory, before.artifacts.translatedDocument, '网页成品文档')
+      ])
+      const verification = verifyDocumentCompleteness(sourceDocument, translatedDocument)
+      if (!verification.ok) {
+        const detail = verification.issues.slice(0, 5).map((issue) => issue.message).join('；')
+        throw new Error(`译文完整性检查未通过：${detail}`)
+      }
+      const updated = await this.store.mutate(taskDirectory, (manifest) => {
+        if (manifest.kind !== 'document') throw new Error('任务类型已变化')
+        const currentReview = manifest.pipeline.stages.review
+        if (currentReview?.status !== 'checkpoint' || currentReview.checkpointId !== 'document-review') {
+          throw new Error('任务当前不在文档校对 checkpoint')
+        }
+        currentReview.status = 'completed'
+        delete currentReview.checkpointId
+        delete currentReview.errorCode
+        delete currentReview.activeLease
+        const verify = manifest.pipeline.stages.verify
+        verify.status = 'ready'
+        delete verify.checkpointId
+        delete verify.errorCode
+        delete verify.activeLease
+        manifest.document.reviewCompletedAt = new Date().toISOString()
+        manifest.runtime.currentMessage = '文档校对已确认，准备完整性验证'
+      }, expectedRevision)
+      this.#publishManifest(taskDirectory, updated)
+      return updated
+    }
+    if (before.kind !== 'subtitle') throw new Error('当前任务不支持字幕校对')
     if (before.pipeline.stages.audit?.status !== 'completed' || before.translation.auditCheckpoint) {
       throw new Error('完成全局审计后才能确认人工校对')
     }
@@ -1509,6 +2780,24 @@ export class TaskPipeline {
     expectedRevision: number,
     decision: 'accept' | 'retry-with-agent' | 'skip'
   ): Promise<TaskManifest> {
+    const before = await this.store.load(taskDirectory)
+    if (before.revision !== expectedRevision) throw new StaleStepError('任务已被更新，请刷新后重试')
+    if (decision === 'accept') {
+      const stage = before.pipeline.stages.illustrate
+      if (stage?.status !== 'checkpoint' || stage.checkpointId !== 'illustration-cover') {
+        throw new Error('任务当前不在封面验收 checkpoint')
+      }
+      if (!before.summary.illustration.generated.includes(SUMMARY_COVER_FILENAME)) throw new Error('封面尚未完成，不能验收')
+      const artifact = before.artifacts[summaryImageArtifactKey(SUMMARY_COVER_FILENAME)]
+      if (!artifact?.valid) throw new Error('封面产物缺失或已失效')
+      const cover = await readContainedFile(taskDirectory, artifact.relativePath, '总结封面', {
+        maxBytes: 8 * 1024 * 1024,
+        expectedSize: artifact.size,
+        expectedSha256: artifact.sha256
+      })
+      assertImageUsable(SUMMARY_COVER_FILENAME, cover.bytes)
+      if (this.decodeImage && !this.decodeImage(cover.bytes)) throw new Error('总结封面无法实际解码')
+    }
     const updated = await this.store.mutate(taskDirectory, (manifest) => {
       const stage = manifest.pipeline.stages.illustrate
       if (stage?.status !== 'checkpoint' || stage.checkpointId !== 'illustration-cover') {
@@ -1714,12 +3003,107 @@ export class TaskPipeline {
     }
   }
 
+  async #research(
+    taskDirectory: string,
+    manifest: TaskManifest,
+    inputFingerprint: string,
+    runId: string
+  ): Promise<StageResult> {
+    const digestArtifact = manifest.artifacts.summaryDigest
+    if (!digestArtifact?.valid) throw new Error('外部核验缺少有效素材分析包')
+    const digest = SummaryDigestSchema.parse(JSON.parse(await this.#artifactText(
+      taskDirectory,
+      digestArtifact,
+      '素材分析包',
+      MAX_TEXT_ARTIFACT_BYTES
+    )))
+    const candidates = researchCandidates(digest)
+    const runDirectory = await ensureArtifactRunDirectory(taskDirectory, 'research', runId)
+    const researchRelativePath = artifactCandidateRelativePath('research', runId, 'research.json')
+    const checkpoint = (reason: string): StageResult => {
+      const checkpointId = randomUUID()
+      const summary = `外部核验暂不可用：${reason.slice(0, 360)}。可重试，或继续并把全部事实标为未核验`
+      return {
+        checkpoint: { id: checkpointId, summary },
+        apply: (draft) => {
+          draft.summary.research.status = 'checkpoint'
+          draft.summary.research.limitations = [reason.slice(0, 1000)]
+        }
+      }
+    }
+
+    let ledger: SummaryResearchLedger
+    let producer = 'etch-unverified-research-v1'
+    let queryCount = 0
+    if (!candidates.length || manifest.summary.research.status === 'unavailable') {
+      ledger = unverifiedResearchLedger(digest)
+    } else {
+      const provider = manifest.translation.selectedProvider
+      const model = manifest.translation.selectedModel
+      if (!provider || !model) return checkpoint('未选择外部核验 Provider 与模型')
+      const capability = researchCapability(provider)
+      if (!capability.available) return checkpoint(capability.reason)
+      try {
+        const env = await this.#providerEnvironment(provider, manifest.taskId, 'research')
+        const health = await this.#toolHealth('codex', env, manifest.taskId, 'research')
+        const invocation = buildResearchProviderInvocation(health.executable!, model, researchPrompt(digest, candidates))
+        const run = await this.#runExternal(manifest.taskId, 'research', {
+          command: invocation.command,
+          args: invocation.args,
+          stdin: invocation.stdin,
+          cwd: runDirectory,
+          env: { ...env, ...invocation.env },
+          timeoutMs: 20 * 60_000
+        })
+        await writeTextAtomic(
+          join(runDirectory, 'provider.jsonl'),
+          `${run.stdout}${run.stderr ? `\n[stderr]\n${run.stderr}` : ''}\n`
+        )
+        if (run.stdoutTruncated || run.stderrTruncated) throw new Error('外部核验输出超过安全上限')
+        const inspection = inspectResearchStream(run.stdout)
+        if (inspection.unexpectedTools.length) {
+          throw new Error(`外部核验调用了白名单以外的工具：${inspection.unexpectedTools.join(', ')}`)
+        }
+        if (inspection.webSearches < 1) throw new Error('外部核验没有实际执行 Web Search')
+        queryCount = inspection.webSearches
+        if (this.#processFailed(run) || inspection.errors.length) {
+          throw new Error(this.#commandFailure('Codex Web Search 调用失败', [run.stderr, ...inspection.errors].filter(Boolean).join('\n')))
+        }
+        ledger = parseResearchResponse(inspection.text, candidates)
+        producer = 'codex-web-search-v1'
+      } catch (error) {
+        return checkpoint(error instanceof Error ? error.message : String(error))
+      }
+    }
+    await writeJsonAtomic(join(taskDirectory, researchRelativePath), ledger)
+    const verified = ledger.claims.filter((claim) => claim.verdict === 'verified').length
+    const contradicted = ledger.claims.filter((claim) => claim.verdict === 'contradicted').length
+    const unresolved = ledger.claims.length - verified - contradicted
+    return {
+      artifacts: {
+        summaryResearch: await this.#artifact(taskDirectory, researchRelativePath, producer, inputFingerprint)
+      },
+      apply: (draft) => {
+        draft.summary.research = {
+          status: 'completed',
+          claims: ledger.claims,
+          queryCount,
+          limitations: ledger.mode === 'unverified'
+            ? [`${unresolved} 条事实未经过外部来源核验`]
+            : unresolved
+              ? [`${unresolved} 条事实未找到足够外部证据`]
+              : [],
+          completedAt: ledger.generatedAt
+        }
+      }
+    }
+  }
+
   async #summary(
     taskDirectory: string,
     manifest: TaskManifest,
     inputFingerprint: string,
-    runId: string,
-    persistExternalSession?: (generationId: string, externalSessionId: string) => Promise<void>
+    runId: string
   ): Promise<StageResult> {
     const generation = manifest.translation.sessionGenerations.find((item) => item.id === manifest.translation.activeGenerationId)
     if (!generation) throw new Error('长文整理缺少 active session generation')
@@ -1731,47 +3115,63 @@ export class TaskPipeline {
       '素材分析包',
       MAX_TEXT_ARTIFACT_BYTES
     )))
+    const researchArtifact = manifest.artifacts.summaryResearch
+    if (!researchArtifact?.valid) throw new Error('长文整理缺少有效外部核验证据账本')
+    const research = SummaryResearchLedgerSchema.parse(JSON.parse(await this.#artifactText(
+      taskDirectory,
+      researchArtifact,
+      '外部核验证据账本',
+      MAX_TEXT_ARTIFACT_BYTES
+    )))
     const runDirectory = await ensureArtifactRunDirectory(taskDirectory, 'summary', runId)
     const styleNote = manifest.translation.styleNote
-    const session = { current: generation.externalSessionId }
-    const step = <T>(label: string, prompt: string, validate: (text: string) => T): Promise<T> =>
-      this.#summaryStep(taskDirectory, manifest, 'summary', generation, label, prompt, session, persistExternalSession, validate)
+    const digestIds = new Set(digest.segments.map((segment) => segment.segmentId))
 
-    // 三稿硬门禁：三份完整候选稿必须先真实存在，评分才有对象。
+    // A/B/C 必须是三个相互独立的新会话；只在各自修复时 resume 自己，避免候选稿互相污染。
     const drafts: Array<{ id: SummaryDraftId; article: string }> = []
     for (const id of SUMMARY_DRAFT_IDS) {
-      const article = await step(`draft-${id}`, draftPrompt(id, digest, styleNote), (text) => {
-        draftEvidence(id, text)
+      const draftSession: { current?: string } = {}
+      const article = await this.#summaryStep(taskDirectory, manifest, 'summary', generation, `draft-${id}`, draftPrompt(
+        id,
+        digest,
+        styleNote,
+        research.claims
+      ), draftSession, undefined, (text) => {
+        draftEvidence(id, text, digestIds)
         return text
       })
       await writeTextAtomic(join(runDirectory, `draft-${id}.md`), article)
       drafts.push({ id, article })
     }
-    const evidence = drafts.map((draft) => draftEvidence(draft.id, draft.article))
-    const scoring = await step('scoring', scoringPrompt(drafts), (text) => {
+    const evidence = drafts.map((draft) => draftEvidence(draft.id, draft.article, digestIds))
+    const synthesisSession: { current?: string } = {}
+    const synthesisStep = <T>(label: string, prompt: string, validate: (text: string) => T): Promise<T> =>
+      this.#summaryStep(taskDirectory, manifest, 'summary', generation, label, prompt, synthesisSession, undefined, validate)
+    const scoring = await synthesisStep('scoring', scoringPrompt(drafts, research.claims, [...digestIds]), (text) => {
       const parsed = SummaryScoringSchema.parse(JSON.parse(this.#jsonObject(text)))
       const missingScore = SUMMARY_DRAFT_IDS.find((id) => !parsed.scores[id])
       if (missingScore) throw new Error(`评分表缺少候选稿 ${missingScore}`)
       const missingContribution = SUMMARY_DRAFT_IDS.find((id) => (parsed.contributions[id] ?? []).length < 2)
       if (missingContribution) throw new Error(`候选稿 ${missingContribution} 的独有增量少于 2 条`)
       if (!parsed.omissions.length && !parsed.omissionNote.trim()) throw new Error('遗漏清单为空时必须逐稿说明原因')
+      assertScoringDigestEvidence(parsed, digestIds)
       return parsed
     })
     const base = drafts.find((draft) => draft.id === scoring.baseDraft)
     if (!base) throw new Error('评分选出的底稿不存在')
     const others = drafts.filter((draft) => draft.id !== base.id)
-    const article = await step('merge', mergePrompt(base, others, scoring, styleNote), (text) => {
+    const article = await synthesisStep('merge', mergePrompt(base, others, scoring, styleNote, research.claims), (text) => {
       assertArticleUsable(text)
+      assertArticleDigestReferences(text, digestIds, '终稿')
       return text
     })
     const placeholders = articleImagePlaceholders(article)
-    const finalize = await step('finalize', finalizePrompt(article, digest, placeholders), (text) => {
+    const finalize = await synthesisStep('finalize', finalizePrompt(article, digest, placeholders, research.claims), (text) => {
       const parsed = SummaryFinalizeSchema.parse(JSON.parse(this.#jsonObject(text)))
       parseImagePlan(parsed.images, placeholders)
       return parsed
     })
-    const sessionId = session.current
-    if (!sessionId) throw new Error('Provider 未返回 external session ID，无法保证总结一致性')
+    if (!synthesisSession.current) throw new Error('Provider 未返回 synthesis session ID，无法保证终稿合并一致性')
     const record: SummaryDraftRecord = buildDraftRecord(
       `素材分析包已覆盖 ${digest.segments.length} 段（${digest.segments.map((segment) => segment.range).join('，')}）；主线：${digest.throughlines.join('；')}`,
       evidence,
@@ -1792,8 +3192,6 @@ export class TaskPipeline {
         summaryImagePlan: await this.#artifact(taskDirectory, planRelativePath, generation.provider, inputFingerprint)
       },
       apply: (draft) => {
-        const active = draft.translation.sessionGenerations.find((item) => item.id === draft.translation.activeGenerationId)!
-        active.externalSessionId = sessionId
         draft.summary.draftRecord = record
         draft.summary.illustration = {
           phase: 'agent-pending',
@@ -1808,8 +3206,9 @@ export class TaskPipeline {
   async #illustrate(
     taskDirectory: string,
     manifest: TaskManifest,
-    inputFingerprint: string,
-    runId: string
+    _inputFingerprint: string,
+    runId: string,
+    persistProgress?: (change: (manifest: TaskManifest) => void) => Promise<void>
   ): Promise<StageResult> {
     const illustration = manifest.summary.illustration
     const planned = illustration.planned
@@ -1835,11 +3234,52 @@ export class TaskPipeline {
     const capability = imageCapability(provider)
     if (!capability.available) throw new Error(`${provider} 不具备配图能力：${capability.reason}`)
     const cover = illustration.phase === 'cover-review'
+    const targetFingerprint = (target: SummaryImagePlanEntry): string => fingerprint('etch:summary-image', 1, {
+      provider,
+      model,
+      target
+    })
+    const reusable = new Set<string>()
+    if (!cover) {
+      for (const target of planned.filter((image) => image.filename !== SUMMARY_COVER_FILENAME)) {
+        if (!illustration.generated.includes(target.filename)) continue
+        const artifact = manifest.artifacts[summaryImageArtifactKey(target.filename)]
+        if (!artifact?.valid || artifact.inputFingerprint !== targetFingerprint(target)) continue
+        try {
+          const image = await readContainedFile(taskDirectory, artifact.relativePath, target.filename, {
+            maxBytes: 8 * 1024 * 1024,
+            expectedSize: artifact.size,
+            expectedSha256: artifact.sha256
+          })
+          assertImageUsable(target.filename, image.bytes)
+          if (this.decodeImage && !this.decodeImage(image.bytes)) continue
+          reusable.add(target.filename)
+        } catch {
+          // 记录存在但文件、hash 或目标已漂移时重新生成，不能只信 generated 数组。
+        }
+      }
+      const normalizedGenerated = planned
+        .map((target) => target.filename)
+        .filter((filename) => filename === SUMMARY_COVER_FILENAME
+          ? illustration.generated.includes(filename)
+          : reusable.has(filename))
+      if (normalizedGenerated.join('\n') !== illustration.generated.join('\n')) {
+        if (!persistProgress) throw new Error('配图阶段无法持久化恢复状态')
+        await persistProgress((draft) => {
+          draft.summary.illustration.generated = normalizedGenerated
+          draft.summary.illustration.pending = draft.summary.illustration.pending
+            .filter((item) => !normalizedGenerated.includes(item.filename))
+        })
+      }
+    }
     const targets = cover
       ? planned.slice(0, 1)
-      : planned.filter((image) => !illustration.generated.includes(image.filename))
+      : planned.filter((image) => image.filename !== SUMMARY_COVER_FILENAME && !reusable.has(image.filename))
     if (!targets.length) {
-      return { apply: (draft) => { draft.summary.illustration.phase = 'done' } }
+      return { apply: (draft) => {
+        draft.summary.illustration.phase = 'done'
+        draft.summary.illustration.pending = []
+      } }
     }
     const runDirectory = await ensureArtifactRunDirectory(taskDirectory, 'illustrate', runId)
     const artifacts: Record<string, Artifact> = {}
@@ -1849,19 +3289,46 @@ export class TaskPipeline {
       let failure = ''
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
-          await this.#imageProvider(
+          // 先快照已有 PNG，否则上一张已改名的配图会被当成本次的新产物。
+          const existing = await this.#listRunPngFiles(provider, runDirectory)
+          const scope = await this.#imageProvider(
             taskDirectory,
             manifest.taskId,
             provider,
             model,
-            imageGenerationPrompt(target.filename.replace(/\.png$/u, ''), target.prompt),
+            imageGenerationPrompt(provider, target.filename.replace(/\.png$/u, ''), target.prompt),
             runDirectory,
             `${target.filename}-attempt-${String(attempt).padStart(2, '0')}`
           )
-          const relativePath = await this.#adoptGeneratedImage(taskDirectory, runDirectory, runId, target)
-          artifacts[summaryImageArtifactKey(target.filename)] =
-            await this.#artifact(taskDirectory, relativePath, provider, inputFingerprint)
-          generated.push(target.filename)
+          const relativePath = await this.#adoptGeneratedImage(
+            taskDirectory,
+            provider,
+            runDirectory,
+            runId,
+            target,
+            existing,
+            scope
+          )
+          const artifact = await this.#artifact(taskDirectory, relativePath, provider, targetFingerprint(target))
+          if (cover) {
+            artifacts[summaryImageArtifactKey(target.filename)] = artifact
+            generated.push(target.filename)
+          } else {
+            if (!persistProgress) throw new Error('配图阶段无法逐图持久化进度')
+            await persistProgress((draft) => {
+              const currentTarget = draft.summary.illustration.planned
+                .find((image) => image.filename === target.filename)
+              if (!currentTarget || targetFingerprint(currentTarget) !== artifact.inputFingerprint) {
+                throw new StaleStepError(`${target.filename} 配图目标已变化`)
+              }
+              draft.artifacts[summaryImageArtifactKey(target.filename)] = artifact
+              const state = draft.summary.illustration
+              state.generated = [...new Set([...state.generated, target.filename])]
+              state.pending = state.pending.filter((item) => item.filename !== target.filename)
+              draft.pipeline.stages.illustrate.progress = state.generated.length / planned.length
+            })
+            reusable.add(target.filename)
+          }
           failure = ''
           break
         } catch (error) {
@@ -1877,7 +3344,7 @@ export class TaskPipeline {
       artifacts,
       apply: (draft) => {
         const state = draft.summary.illustration
-        state.generated = [...new Set([...state.generated, ...generated])]
+        if (cover) state.generated = [...new Set([...state.generated, ...generated])]
         state.pending = cover
           ? state.pending
           : [...pending, ...planned
@@ -1918,12 +3385,9 @@ export class TaskPipeline {
         attempt === 1 ? prompt : summaryRepairPrompt(prompt, failure),
         requestedSessionId,
         `${label}-attempt-${String(attempt).padStart(2, '0')}`,
-        requestedSessionId
+        requestedSessionId || !persistExternalSession
           ? undefined
-          : async (externalSessionId) => {
-              if (!persistExternalSession) throw new Error('总结无法持久化 external session')
-              await persistExternalSession(generation.id, externalSessionId)
-            }
+          : async (externalSessionId) => persistExternalSession(generation.id, externalSessionId)
       )
       if (requestedSessionId && result.sessionId !== requestedSessionId) {
         throw new Error(`${label} 没有复用当前 external session`)
@@ -1976,33 +3440,61 @@ export class TaskPipeline {
     }
   }
 
-  // ImageGen 自己选文件名并加时间戳，改名必须由主进程完成；agent 只能往 run 目录里写。
+  // 图像工具自己选文件名并加后缀，改名必须由主进程完成；Qoder 写 run 目录，Codex 写自己的 state 目录。
+  async #listRunPngFiles(
+    provider: ProviderId,
+    runDirectory: string,
+    scope: ImageInvocationScope = {}
+  ): Promise<Set<string>> {
+    const found = new Set<string>()
+    for (const root of imageOutputRoots(provider, runDirectory, scope.sessionId, scope.codexHome)) {
+      for (const path of await this.#listPngFilesIn(root)) found.add(path)
+    }
+    return found
+  }
+
+  // Codex 按 conversation 建子目录，所以多下一层，但不做无限递归。
+  async #listPngFilesIn(root: string, depth = 1): Promise<string[]> {
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+    const found: string[] = []
+    for (const entry of entries) {
+      const path = join(root, entry.name)
+      if (entry.isDirectory()) {
+        if (depth > 0) found.push(...await this.#listPngFilesIn(path, depth - 1))
+        continue
+      }
+      if (entry.name.toLowerCase().endsWith('.png')) found.push(path)
+    }
+    return found
+  }
+
   async #adoptGeneratedImage(
     taskDirectory: string,
+    provider: ProviderId,
     runDirectory: string,
     runId: string,
-    target: SummaryImagePlanEntry
+    target: SummaryImagePlanEntry,
+    existing: ReadonlySet<string>,
+    scope: ImageInvocationScope
   ): Promise<string> {
     const base = target.filename.replace(/\.png$/u, '')
-    const directories = [join(runDirectory, IMAGE_OUTPUT_SUBDIRECTORY), runDirectory]
     const candidates: Array<{ path: string; mtimeMs: number }> = []
-    for (const directory of directories) {
-      const names = await readdir(directory).catch(() => [] as string[])
-      for (const name of names) {
-        if (!name.toLowerCase().endsWith('.png') || name === target.filename) continue
-        const path = join(directory, name)
-        const info = await stat(path).catch(() => undefined)
-        if (!info?.isFile()) continue
-        candidates.push({ path, mtimeMs: info.mtimeMs })
-      }
+    for (const path of await this.#listRunPngFiles(provider, runDirectory, scope)) {
+      if (existing.has(path)) continue
+      const info = await stat(path).catch(() => undefined)
+      if (!info?.isFile()) continue
+      candidates.push({ path, mtimeMs: info.mtimeMs })
     }
     if (!candidates.length) throw new Error(`${target.filename} 未找到生成的 PNG 文件`)
     const preferred = candidates.filter((candidate) => candidate.path.includes(`${base}_`))
     const chosen = (preferred.length ? preferred : candidates).sort((left, right) => right.mtimeMs - left.mtimeMs)[0]
     const bytes = await readFile(chosen.path)
     assertImageUsable(target.filename, bytes)
+    if (this.decodeImage && !this.decodeImage(bytes)) throw new Error(`${target.filename} PNG 无法实际解码`)
     const relativePath = artifactCandidateRelativePath('illustrate', runId, target.filename)
-    await rename(chosen.path, join(taskDirectory, relativePath))
+    // Codex 的图在它自己的 state 目录里，不能跨目录 rename，也不删它的原文件。
+    if (chosen.path.startsWith(`${runDirectory}/`)) await rename(chosen.path, join(taskDirectory, relativePath))
+    else await writeFile(join(taskDirectory, relativePath), bytes)
     await rm(join(runDirectory, IMAGE_OUTPUT_SUBDIRECTORY), { recursive: true, force: true }).catch(() => undefined)
     return relativePath
   }
@@ -2015,7 +3507,7 @@ export class TaskPipeline {
     prompt: string,
     runDirectory: string,
     logLabel: string
-  ): Promise<void> {
+  ): Promise<ImageInvocationScope> {
     if (!model) throw new Error('缺少模型选择')
     const env = await this.#providerEnvironment(provider, taskId, 'illustrate')
     const health = await this.#toolHealth(provider === 'qoder' ? 'qoder' : provider, env, taskId, 'illustrate')
@@ -2078,6 +3570,13 @@ export class TaskPipeline {
           [run.stderr, ...inspection.errors].filter(Boolean).join('\n')
         ))
       }
+      if (provider === 'codex') {
+        if (inspection.sessionIds.length !== 1 || !codexSessionIdIsValid(inspection.sessionIds[0])) {
+          throw new Error(`Codex 配图必须且只能返回一个有效 thread UUID，实际 ${inspection.sessionIds.length}`)
+        }
+        return { sessionId: inspection.sessionIds[0], codexHome: env.CODEX_HOME }
+      }
+      return {}
     } finally {
       if (registeredRunId && registry) {
         await registry.finish(registeredRunId).catch((error) => console.error('配图进程登记清理失败', error))
@@ -2412,6 +3911,35 @@ export class TaskPipeline {
       expectedSha256: artifact.sha256
     })
     return file.bytes.toString('utf8')
+  }
+
+  async #documentJson<T>(
+    taskDirectory: string,
+    artifact: Artifact | undefined,
+    label: string
+  ): Promise<T> {
+    if (!artifact) throw new Error(`缺少${label}产物`)
+    return JSON.parse(await this.#artifactText(taskDirectory, artifact, label, MAX_TEXT_ARTIFACT_BYTES)) as T
+  }
+
+  async #documentArtifact(
+    taskDirectory: string,
+    artifact: Artifact | undefined,
+    label: string
+  ): Promise<MarkdownDocument> {
+    const value = await this.#documentJson<MarkdownDocument>(taskDirectory, artifact, label)
+    const blockTypes = new Set(['heading', 'paragraph', 'blockquote', 'unordered-list-item', 'ordered-list-item', 'code', 'table', 'image', 'divider', 'html'])
+    if (!value || typeof value !== 'object' || !value.metadata || typeof value.metadata.sourceUrl !== 'string' || !Array.isArray(value.blocks)) {
+      throw new Error(`${label}结构无效`)
+    }
+    if (value.blocks.some((block) => !block || !blockTypes.has(block.type) || typeof block.markdown !== 'string')) {
+      throw new Error(`${label}包含无效 Markdown block`)
+    }
+    return {
+      metadata: value.metadata,
+      blocks: createMarkdownBlocks(value.blocks.map((block) => ({ ...block }))),
+      warnings: Array.isArray(value.warnings) ? value.warnings.filter((warning): warning is string => typeof warning === 'string') : []
+    }
   }
 
   async #chineseCueText(taskDirectory: string, manifest: TaskManifest): Promise<string> {

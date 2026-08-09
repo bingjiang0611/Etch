@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { publicationTemplateReady, type BilibiliAccount } from '../shared/bilibili'
-import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, InstallableTool, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
+import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, DocumentHtmlPage, DocumentPage, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, InstallableTool, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
 import { IDLE_PIPELINE_ACTIVITY, InstallableToolSchema } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
-import { defaultSettings, type AppSettings, type ThemePreference, type ToolId } from '../shared/settings-schema'
-import type { ProviderId, StageId, TaskKind } from '../shared/task-schema'
+import { defaultSettings, type AppSettings, type TaskCategory, type ThemePreference, type ToolId } from '../shared/settings-schema'
+import { lastStageForKind, taskThumbnailArtifact, type DocumentProcessingMode, type ProviderId, type StageId, type TaskKind } from '../shared/task-schema'
 import type { GlossaryEdit } from './AuditGlossary'
 import { glossaryImpactCounts } from './glossary-impact'
 import { GlossaryCatalog } from './GlossaryCatalog'
@@ -13,14 +13,17 @@ import { loadLastNewTaskProvider, resolveNewTaskProvider, saveLastNewTaskProvide
 import { detectInitialToolsWithRetry } from './tool-detection'
 import { mergeToolHealth } from './tool-health'
 import { parseTaskUrls } from './task-input'
+import { ALL_TASKS_TAB, UNSORTED_TAB, categoryCounts, createCategoryDraft, effectiveCategory, findCategory, resolveTab, taskMatchesTab, type CategoryTab } from './task-categories'
+import { TaskCategoryDialog } from './TaskCategoryDialog'
 import { TaskDeleteDialog, type TaskDeleteRequest } from './TaskDeleteDialog'
 import { deleteFocusNeighborId } from './task-delete-focus'
+import { DocumentWorkbench } from './DocumentWorkbench'
 import { WorkbenchView } from './WorkbenchView'
 import { BilibiliPublishDialog } from './BilibiliPublishDialog'
 import { BilibiliSettingsCard } from './BilibiliSettingsCard'
 import { readableRemoteError } from './readable-error'
 import { permissionGuideCopy } from './permission-guide'
-import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, stageLabels, subtitleKindLabel, taskStatusText, type SubtitlePreset } from './ui'
+import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, stageLabelForKind, subtitleKindLabel, taskKindLabel, taskStages, taskStatusText, type SubtitlePreset } from './ui'
 
 const tools: ToolId[] = ['yt-dlp', 'ffmpeg', 'ffprobe', 'python', 'mlx_whisper', 'claude', 'codex', 'qoder', 'opencode']
 const INSTALLABLE_TOOLS = new Set<string>(InstallableToolSchema.options)
@@ -44,7 +47,7 @@ function glossaryMatchesEdits(glossary: TaskReviewPage['glossary'], edits: reado
 
 type View = 'queue' | 'workbench' | 'glossary' | 'settings'
 type BilibiliSettingsIntent = 'publish' | 'auto' | 'template'
-type TaskContextMenuState = { taskId: string; title: string; x: number; y: number; running: boolean }
+type TaskContextMenuState = { taskId: string; title: string; x: number; y: number; running: boolean; taskIds: string[] }
 type TaskThumbnailState = { sha256: string; dataUrl?: string }
 
 export function App(): React.JSX.Element {
@@ -60,10 +63,15 @@ export function App(): React.JSX.Element {
   const [startingTaskIds, setStartingTaskIds] = useState<Record<string, true>>({})
   const [url, setUrl] = useState('')
   const [taskKind, setTaskKind] = useState<TaskKind>('subtitle')
+  const [documentMode, setDocumentMode] = useState<DocumentProcessingMode>('auto')
+  const [documentTranslationMode, setDocumentTranslationMode] = useState<'normal' | 'refined'>('normal')
+  const [documentAudience, setDocumentAudience] = useState('general')
+  const [documentWritingStyle, setDocumentWritingStyle] = useState('storytelling')
   const [styleNote, setStyleNote] = useState('')
   const [autoPublish, setAutoPublish] = useState(false)
   const [provider, setProvider] = useState<ProviderId>(DEFAULT_PROVIDER)
   const [creatingTask, setCreatingTask] = useState(false)
+  const [creatingCompanion, setCreatingCompanion] = useState(false)
   const [stoppingTask, setStoppingTask] = useState(false)
   const [publicationActionBusy, setPublicationActionBusy] = useState(false)
   const [newTaskOpen, setNewTaskOpen] = useState(false)
@@ -90,11 +98,27 @@ export function App(): React.JSX.Element {
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
   const [taskContextMenu, setTaskContextMenu] = useState<TaskContextMenuState>()
+  const [categoryTab, setCategoryTab] = useState<CategoryTab>(ALL_TASKS_TAB)
+  const [newTaskCategory, setNewTaskCategory] = useState('')
+  const [inlineCategoryOpen, setInlineCategoryOpen] = useState(false)
+  const [inlineCategoryName, setInlineCategoryName] = useState('')
+  const [inlineCategoryError, setInlineCategoryError] = useState('')
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false)
+  const [savingCategories, setSavingCategories] = useState(false)
+  const [categoryError, setCategoryError] = useState('')
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
+  const [pickedTaskIds, setPickedTaskIds] = useState<string[]>([])
   const [deleteRequest, setDeleteRequest] = useState<TaskDeleteRequest>()
   const [taskDeleteError, setTaskDeleteError] = useState('')
   const [deletingTaskId, setDeletingTaskId] = useState<string>()
   const [taskActionError, setTaskActionError] = useState('')
   const [reviewPage, setReviewPage] = useState<TaskReviewPage>()
+  const [documentPage, setDocumentPage] = useState<DocumentPage>()
+  const [documentPageLoading, setDocumentPageLoading] = useState(false)
+  const [documentPageError, setDocumentPageError] = useState('')
+  const [documentHtmlPage, setDocumentHtmlPage] = useState<DocumentHtmlPage>()
+  const [documentHtmlPageLoading, setDocumentHtmlPageLoading] = useState(false)
+  const [documentHtmlPageError, setDocumentHtmlPageError] = useState('')
   const [reviewOffset, setReviewOffset] = useState(0)
   const [reviewLoading, setReviewLoading] = useState(false)
   const [reviewError, setReviewError] = useState('')
@@ -137,9 +161,12 @@ export function App(): React.JSX.Element {
   const cueSaveGenerationRef = useRef(0)
   const cueSaveInFlightRef = useRef(false)
   const auditSubmittingRef = useRef(false)
+  const documentDraftTimerRef = useRef<number | undefined>(undefined)
+  const documentSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
   const completingReviewRef = useRef(false)
   const createTaskInFlightRef = useRef(false)
   const settingsSaveInFlightRef = useRef(false)
+  const categorySaveInFlightRef = useRef(false)
   const presetSaveInFlightRef = useRef(false)
   const presetSaveGenerationRef = useRef(0)
   const persistedSettingsRef = useRef(settings)
@@ -189,6 +216,7 @@ export function App(): React.JSX.Element {
 
   const closeTaskContextMenu = useCallback((restoreFocus = true): void => {
     setTaskContextMenu(undefined)
+    setCategoryMenuOpen(false)
     if (restoreFocus) window.requestAnimationFrame(() => taskContextTriggerRef.current?.focus())
   }, [])
 
@@ -221,6 +249,12 @@ export function App(): React.JSX.Element {
       document.removeEventListener('scroll', close, true)
     }
   }, [taskContextMenu, closeTaskContextMenu])
+
+  useEffect(() => {
+    if (!categoryMenuOpen) return
+    const submenu = taskContextMenuRef.current?.querySelector<HTMLElement>('.task-category-submenu')
+    ;(submenu?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ?? submenu?.querySelector<HTMLButtonElement>('button'))?.focus()
+  }, [categoryMenuOpen])
 
   const handleGlossaryBusyChange = useCallback((busy: boolean): void => {
     glossaryBusyRef.current = busy
@@ -368,6 +402,12 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (!selected || view !== 'workbench') return
+    // 只有字幕任务使用 cue 校对页；文档有独立工作台。
+    if (selected.manifest.kind !== 'subtitle') {
+      setReviewPage(undefined)
+      setReviewLoading(false)
+      return
+    }
     let cancelled = false
     setReviewLoading(true)
     if (!Object.keys(cueConflictsRef.current).length) setReviewError('')
@@ -391,6 +431,66 @@ export function App(): React.JSX.Element {
   }, [selected?.manifest.taskId, selected?.manifest.revision, selected?.manifest.artifacts.audit?.sha256, selected?.manifest.artifacts.chineseCues?.sha256, reviewOffset, view])
 
   useEffect(() => {
+    if (!selected || selected.manifest.kind !== 'document' || view !== 'workbench') {
+      setDocumentPage(undefined)
+      setDocumentPageLoading(false)
+      setDocumentPageError('')
+      return
+    }
+    let cancelled = false
+    setDocumentPageLoading(true)
+    setDocumentPageError('')
+    void window.etch.documentPage(selected.manifest.taskId)
+      .then((page) => {
+        if (!cancelled && page.taskId === selected.manifest.taskId) setDocumentPage(page)
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setDocumentPage(undefined)
+          setDocumentPageError(caught instanceof Error ? caught.message : '文档读取失败')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDocumentPageLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selected?.manifest.taskId, selected?.manifest.revision, selected?.manifest.artifacts.sourceDocument?.sha256, selected?.manifest.artifacts.translatedDocument?.sha256, selected?.manifest.artifacts.documentVerification?.sha256, view])
+
+  useEffect(() => {
+    if (!selected || selected.manifest.kind !== 'document' || view !== 'workbench') {
+      setDocumentHtmlPage(undefined)
+      setDocumentHtmlPageLoading(false)
+      setDocumentHtmlPageError('')
+      return
+    }
+    let cancelled = false
+    setDocumentHtmlPageLoading(true)
+    setDocumentHtmlPageError('')
+    void window.etch.documentHtmlPage(selected.manifest.taskId)
+      .then((page) => {
+        if (!cancelled && page.taskId === selected.manifest.taskId) setDocumentHtmlPage(page)
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setDocumentHtmlPage(undefined)
+          setDocumentHtmlPageError(caught instanceof Error ? caught.message : 'HTML 发布状态读取失败')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDocumentHtmlPageLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selected?.manifest.taskId, selected?.manifest.revision, selected?.manifest.artifacts.documentHtmlPreview?.sha256, selected?.manifest.artifacts.documentHtml?.sha256, selected?.manifest.artifacts.documentHtmlVerification?.sha256, view])
+
+  useEffect(() => () => {
+    if (documentDraftTimerRef.current) window.clearTimeout(documentDraftTimerRef.current)
+  }, [])
+
+  useEffect(() => {
     const activeIds = new Set(queue.items.map((item) => item.taskId))
     const retained = Object.fromEntries(Object.entries(taskThumbnailsRef.current).filter(([taskId]) => activeIds.has(taskId)))
     if (Object.keys(retained).length !== Object.keys(taskThumbnailsRef.current).length) {
@@ -400,7 +500,7 @@ export function App(): React.JSX.Element {
 
     for (const [taskId, detail] of Object.entries(queueDetails)) {
       if (!activeIds.has(taskId)) continue
-      const artifact = detail.manifest.artifacts.thumbnail
+      const artifact = taskThumbnailArtifact(detail.manifest)
       if (!artifact?.valid || taskThumbnailsRef.current[taskId]?.sha256 === artifact.sha256) continue
       const requestKey = `${taskId}:${artifact.sha256}`
       if (thumbnailRequestsRef.current.has(requestKey)) continue
@@ -408,7 +508,8 @@ export function App(): React.JSX.Element {
       void window.etch
         .taskThumbnail(taskId, artifact.sha256)
         .then((dataUrl) => {
-          const latestArtifact = queueDetailsRef.current[taskId]?.manifest.artifacts.thumbnail
+          const latestDetail = queueDetailsRef.current[taskId]
+          const latestArtifact = latestDetail ? taskThumbnailArtifact(latestDetail.manifest) : undefined
           if (latestArtifact?.sha256 !== artifact.sha256) return
           const next = { ...taskThumbnailsRef.current, [taskId]: { sha256: artifact.sha256, dataUrl } }
           taskThumbnailsRef.current = next
@@ -475,29 +576,49 @@ export function App(): React.JSX.Element {
     try {
       submittedUrls = parseTaskUrls(url)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '视频链接格式无效')
+      setError(caught instanceof Error ? caught.message : '链接格式无效')
       return
     }
     const submittedUrlText = url
     const submittedKind = taskKind
-    const submittedStyleNote = styleNote
-    const submittedAutoPublish = submittedKind === 'summary' ? false : autoPublish
+    const submittedStyleNote = submittedKind === 'document' && documentMode === 'convert' ? '' : styleNote
+    const submittedAutoPublish = submittedKind === 'subtitle' ? autoPublish : false
+    const submittedDocumentMode = documentMode
+    const submittedDocumentTranslationMode = documentTranslationMode
+    const submittedDocumentAudience = documentAudience
+    const submittedDocumentWritingStyle = documentWritingStyle
+    const submittedCategory = findCategory(settings.taskCategories, newTaskCategory) ? newTaskCategory : ''
     const submittedProvider = providerOrDefault(provider)
     createTaskInFlightRef.current = true
     setCreatingTask(true)
     try {
       setError('')
       await ensureRecoveryReleased()
-      const next = await window.etch.createUrls(submittedUrls, submittedProvider, submittedStyleNote, submittedAutoPublish, submittedKind)
+      const next = await window.etch.createUrls(
+        submittedUrls,
+        submittedProvider,
+        submittedStyleNote,
+        submittedAutoPublish,
+        submittedKind,
+        submittedCategory,
+        submittedDocumentMode,
+        submittedDocumentTranslationMode,
+        submittedDocumentAudience,
+        submittedDocumentWritingStyle
+      )
       commitQueuePage(next)
-      saveLastNewTaskProvider(() => window.localStorage, submittedProvider)
+      if (!(submittedKind === 'document' && submittedDocumentMode === 'convert')) {
+        saveLastNewTaskProvider(() => window.localStorage, submittedProvider)
+      }
       setUrl((current) => (current === submittedUrlText ? '' : current))
       setStyleNote((current) => (current === submittedStyleNote ? '' : current))
       setAutoPublish((current) => (current === submittedAutoPublish ? false : current))
+      // 新建到某个分类时直接跳过去，否则任务会落在当前 tab 之外看不见。
+      if (submittedCategory) setCategoryTab(submittedCategory)
       setNewTaskOpen(false)
       window.requestAnimationFrame(() => newTaskTriggerRef.current?.focus())
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '任务创建失败，请检查视频链接和翻译风格。')
+      setError(caught instanceof Error ? caught.message : '任务创建失败，请检查链接与处理设置。')
     } finally {
       createTaskInFlightRef.current = false
       setCreatingTask(false)
@@ -528,6 +649,23 @@ export function App(): React.JSX.Element {
       if (generation === openTaskGenerationRef.current) setTaskActionError(caught instanceof Error ? caught.message : '任务读取失败')
     } finally {
       if (generation === openTaskGenerationRef.current) setOpeningTaskId(undefined)
+    }
+  }
+
+  const createCompanion = async (provider: ProviderId, styleNote: string): Promise<void> => {
+    if (!selected || creatingCompanion) return
+    setCreatingCompanion(true)
+    setTaskActionError('')
+    try {
+      await ensureRecoveryReleased()
+      const detail = await window.etch.createCompanion(selected.manifest.taskId, provider, styleNote)
+      rememberDetail(detail)
+      refreshQueue()
+      await openTask(detail.manifest.taskId)
+    } catch (caught) {
+      setTaskActionError(caught instanceof Error ? caught.message : '追加成果失败')
+    } finally {
+      setCreatingCompanion(false)
     }
   }
 
@@ -777,6 +915,58 @@ export function App(): React.JSX.Element {
     }
   }
 
+  // 分类要点一下就落盘，但不能顺手把设置页里没保存的草稿一起提交，所以只合并 taskCategories。
+  const saveCategories = async (next: TaskCategory[]): Promise<TaskCategory[] | undefined> => {
+    if (!settingsLoaded || categorySaveInFlightRef.current) return undefined
+    categorySaveInFlightRef.current = true
+    setSavingCategories(true)
+    try {
+      setCategoryError('')
+      const saved = await window.etch.updateSettings({ ...persistedSettingsRef.current, taskCategories: next })
+      persistedSettingsRef.current = saved
+      setSettings((current) => ({ ...current, taskCategories: saved.taskCategories }))
+      return saved.taskCategories
+    } catch (caught) {
+      setCategoryError(caught instanceof Error ? caught.message : '分类保存失败')
+      return undefined
+    } finally {
+      categorySaveInFlightRef.current = false
+      setSavingCategories(false)
+    }
+  }
+
+  const moveTasksToCategory = async (taskIds: readonly string[], category: string): Promise<void> => {
+    setPickedTaskIds([])
+    try {
+      setTaskActionError('')
+      let page: QueuePage | undefined
+      for (const taskId of taskIds) page = await window.etch.setTaskCategory(taskId, category)
+      if (page) commitQueuePage(page)
+    } catch (caught) {
+      setTaskActionError(caught instanceof Error ? caught.message : '任务分类修改失败')
+      await window.etch.queuePage().then(commitQueuePage).catch(() => undefined)
+    }
+  }
+
+  const createCategoryFromName = async (name: string, onError: (message: string) => void): Promise<string | undefined> => {
+    const result = createCategoryDraft(settings.taskCategories, name)
+    if ('error' in result) {
+      onError(result.error)
+      return undefined
+    }
+    onError('')
+    const saved = await saveCategories([...settings.taskCategories, result.category])
+    return saved?.some((category) => category.id === result.category.id) ? result.category.id : undefined
+  }
+
+  const createInlineCategory = async (): Promise<void> => {
+    const created = await createCategoryFromName(inlineCategoryName, setInlineCategoryError)
+    if (!created) return
+    setNewTaskCategory(created)
+    setInlineCategoryName('')
+    setInlineCategoryOpen(false)
+  }
+
   const persistWorkbenchPreset = async (subtitlePreset: SubtitlePreset): Promise<void> => {
     if (!selected || presetSaveInFlightRef.current || settingsSaveInFlightRef.current) return
     if (selected.manifest.render.subtitlePreset === subtitlePreset) return
@@ -909,7 +1099,7 @@ export function App(): React.JSX.Element {
     if (!dialog) return
     if (newTaskOpen && !dialog.open) {
       dialog.showModal()
-      window.requestAnimationFrame(() => dialog.querySelector<HTMLInputElement>('#video-url')?.focus())
+      window.requestAnimationFrame(() => dialog.querySelector<HTMLTextAreaElement>('#content-url')?.focus())
     }
     if (!newTaskOpen && dialog.open) dialog.close()
   }, [newTaskOpen])
@@ -943,6 +1133,11 @@ export function App(): React.JSX.Element {
     setError('')
     providerEditVersionRef.current += 1
     setProvider(resolveNewTaskProvider(loadLastNewTaskProvider(() => window.localStorage), settings.defaultProvider, toolHealth))
+    // 停在某个分类 tab 上新建时，默认就建到这个分类。
+    setNewTaskCategory(findCategory(settings.taskCategories, categoryTab) ? categoryTab : '')
+    setInlineCategoryOpen(false)
+    setInlineCategoryName('')
+    setInlineCategoryError('')
     setNewTaskOpen(true)
   }
 
@@ -1195,20 +1390,22 @@ export function App(): React.JSX.Element {
 
   const completeReview = async (): Promise<void> => {
     if (!selected || completingReviewRef.current) return
+    const isDocument = selected.manifest.kind === 'document'
     const reviewStage = getStage(selected, 'review')
-    if (reviewStage.status !== 'checkpoint' || reviewStage.checkpointId !== 'manual-review') {
+    const expectedCheckpoint = isDocument ? 'document-review' : 'manual-review'
+    if (reviewStage.status !== 'checkpoint' || reviewStage.checkpointId !== expectedCheckpoint) {
       setTaskActionError('任务当前不在人工校对 checkpoint。')
       return
     }
-    if (dirtyCount || savingCues || autoSaveBlocked) {
+    if (!isDocument && (dirtyCount || savingCues || autoSaveBlocked)) {
       setTaskActionError('请先等待字幕修改保存完成，并处理所有保存冲突。')
       return
     }
-    if (glossaryBusyRef.current) {
+    if (!isDocument && glossaryBusyRef.current) {
       setTaskActionError('术语修改仍是草稿，请先预览并应用，或放弃修改。')
       return
     }
-    if (reviewLoading || selectedReviewPage?.availability !== 'ready' || selectedReviewPage.revision !== selected.manifest.revision) {
+    if (!isDocument && (reviewLoading || selectedReviewPage?.availability !== 'ready' || selectedReviewPage.revision !== selected.manifest.revision)) {
       setTaskActionError('字幕校对数据尚未就绪，请等待加载完成。')
       return
     }
@@ -1227,11 +1424,55 @@ export function App(): React.JSX.Element {
         setSelected((current) => (current?.manifest.taskId === taskId && current.manifest.revision <= detail.manifest.revision ? detail : current))
       }
     } catch (caught) {
-      if (selectionGeneration === openTaskGenerationRef.current) setTaskActionError(caught instanceof Error ? caught.message : '人工校对确认失败')
+      if (selectionGeneration === openTaskGenerationRef.current) setTaskActionError(caught instanceof Error ? caught.message : `${isDocument ? '文档' : '字幕'}校对确认失败`)
     } finally {
       completingReviewRef.current = false
       if (selectionGeneration === openTaskGenerationRef.current) setCompletingReview(false)
     }
+  }
+
+  const queueDocumentTranslationSave = (markdown: string): void => {
+    if (!selected || selected.manifest.kind !== 'document') return
+    setDocumentPageError('')
+    const taskId = selected.manifest.taskId
+    const selectionGeneration = openTaskGenerationRef.current
+    if (documentDraftTimerRef.current) window.clearTimeout(documentDraftTimerRef.current)
+    documentDraftTimerRef.current = window.setTimeout(() => {
+      documentSaveQueueRef.current = documentSaveQueueRef.current.then(async () => {
+        const current = queueDetailsRef.current[taskId]
+        if (!current || current.manifest.kind !== 'document') return
+        try {
+          setDocumentPageError('')
+          await ensureRecoveryReleased()
+          const detail = await window.etch.updateDocumentTranslation(taskId, current.manifest.revision, markdown)
+          rememberDetail(detail)
+          if (selectionGeneration === openTaskGenerationRef.current) {
+            setSelected((active) => active?.manifest.taskId === taskId ? detail : active)
+            const page = await window.etch.documentPage(taskId)
+            if (selectionGeneration === openTaskGenerationRef.current) setDocumentPage(page)
+          }
+        } catch (caught) {
+          if (selectionGeneration === openTaskGenerationRef.current) {
+            setDocumentPageError(caught instanceof Error ? caught.message : '文档修改保存失败')
+          }
+        }
+      })
+    }, CUE_AUTO_SAVE_DELAY_MS)
+  }
+
+  const runDocumentHtmlAction = async (
+    action: () => Promise<TaskDetail>
+  ): Promise<void> => {
+    if (!selected || selected.manifest.kind !== 'document') return
+    const taskId = selected.manifest.taskId
+    const selectionGeneration = openTaskGenerationRef.current
+    setDocumentHtmlPageError('')
+    const detail = await action()
+    rememberDetail(detail)
+    if (selectionGeneration !== openTaskGenerationRef.current) return
+    setSelected((current) => current?.manifest.taskId === taskId && current.manifest.revision <= detail.manifest.revision ? detail : current)
+    const page = await window.etch.documentHtmlPage(taskId)
+    if (selectionGeneration === openTaskGenerationRef.current) setDocumentHtmlPage(page)
   }
 
   const environmentSummary = detectingTools ? '环境检测中' : toolDetectError ? '环境检测失败' : toolHealth.length ? `环境 ${toolHealth.filter((item) => item.status === 'ready').length}/${tools.length} 可用` : '环境待检测'
@@ -1239,15 +1480,44 @@ export function App(): React.JSX.Element {
   const defaultProvider = providerOrDefault(settings.defaultProvider)
   const defaultProviderAvailability = providerAvailability(defaultProvider, toolHealth)
   const selectedProviderAvailability = providerAvailability(provider, toolHealth)
+  const taskNeedsAgent = taskKind !== 'document' || documentMode !== 'convert'
+  const documentModeHint = documentMode === 'auto'
+    ? '按正文语言自动决定'
+    : documentMode === 'translate'
+      ? '始终生成中文译文'
+      : '仅提取与整理'
+  const taskAgentHint = !taskNeedsAgent
+    ? '当前模式只转换结构，不会调用 Agent'
+    : taskKind === 'document' && documentMode === 'auto'
+      ? `按需调用 · ${selectedProviderAvailability.summary ?? '运行时校验登录状态'}`
+      : selectedProviderAvailability.summary ?? '使用本机 CLI；登录态在运行时校验'
   const selectedIsRunning = selected ? Object.values(selected.manifest.pipeline.stages).some((stage) => stage.status === 'running') : false
   const selectedSummary = queue.items.find((item) => item.taskId === selected?.manifest.taskId)
+  const relatedSummary = selected
+    ? queue.items.find((item) => selected.manifest.kind !== 'document'
+      && item.kind !== 'document'
+      && (item.rootTaskId ?? item.taskId) === selected.manifest.lineage.rootTaskId
+      && item.kind !== selected.manifest.kind)
+    : undefined
+  const relatedOutput = relatedSummary ? queueDetails[relatedSummary.taskId] : undefined
   const selectedWaitingStage = selectedSummary?.schedule === 'waiting' ? selectedSummary.waitingStage : undefined
   const runningTaskCount = queue.items.filter((item) => item.status === 'running').length
   const waitingSlotCount = queue.items.filter((item) => item.schedule === 'waiting').length
   const selectedIsPaused = Boolean(selected?.manifest.runtime.userPaused)
-  const needsRebuild = selected ? (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(selected, id).status === 'stale') : false
+  const needsRebuild = selected?.manifest.kind === 'subtitle'
+    ? (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(selected, id).status === 'stale')
+    : false
   const permissionGuide = permissionGuideCopy(chromeCookieAccess)
   const enteredUrlCount = new Set(url.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)).size
+  const categories = settings.taskCategories
+  const categoryTotals = categoryCounts(categories, queue.items)
+  const activeCategoryTab = resolveTab(categories, categoryTab, categoryTotals.unsorted)
+  const activeCategory = findCategory(categories, activeCategoryTab)
+  const visibleTasks = queue.items.filter((item) => taskMatchesTab(categories, item.category, activeCategoryTab))
+  const pickedVisibleTaskIds = pickedTaskIds.filter((taskId) => visibleTasks.some((item) => item.taskId === taskId))
+  // 右键菜单只在单选时显示当前分类的勾选；批量归类的“当前值”本来就不唯一。
+  const menuTask = taskContextMenu?.taskIds.length === 1 ? queue.items.find((item) => item.taskId === taskContextMenu.taskIds[0]) : undefined
+  const currentMenuCategory = menuTask ? effectiveCategory(categories, menuTask.category) : undefined
 
   useEffect(() => {
     if (!dirtyCount || savingCues || autoSaveBlocked || selectedIsRunning || view !== 'workbench') return
@@ -1372,9 +1642,50 @@ export function App(): React.JSX.Element {
                 </button>
               )}
               <div className="section-heading queue-heading">
-                <div>
-                  <h2 id="queue-title">全部任务</h2>
-                  <span className="count-badge">{queue.total}</span>
+                <h2 className="sr-only" id="queue-title">全部任务</h2>
+                <div className="category-bar">
+                  <div className="category-tabs" role="tablist" aria-label="任务分类">
+                    <button
+                      className="category-tab"
+                      type="button"
+                      role="tab"
+                      aria-selected={activeCategoryTab === ALL_TASKS_TAB}
+                      onClick={() => setCategoryTab(ALL_TASKS_TAB)}
+                    >
+                      全部任务<span className="tab-count mono">{queue.total}</span>
+                    </button>
+                    {(categoryTotals.unsorted > 0 || categories.length > 0) && <span className="category-tab-divider" aria-hidden="true" />}
+                    {categoryTotals.unsorted > 0 && (
+                      <button
+                        className="category-tab"
+                        type="button"
+                        role="tab"
+                        aria-selected={activeCategoryTab === UNSORTED_TAB}
+                        onClick={() => setCategoryTab(UNSORTED_TAB)}
+                      >
+                        未分类<span className="tab-count mono">{categoryTotals.unsorted}</span>
+                      </button>
+                    )}
+                    {categories.map((category) => (
+                      <button
+                        className="category-tab"
+                        data-category-color={category.color}
+                        type="button"
+                        role="tab"
+                        key={category.id}
+                        aria-selected={activeCategoryTab === category.id}
+                        onClick={() => setCategoryTab(category.id)}
+                      >
+                        <i className="cat-dot" aria-hidden="true" />
+                        <span>{category.name}</span>
+                        <span className="tab-count mono">{categoryTotals.byCategory[category.id] ?? 0}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button className="category-manage-button" type="button" onClick={() => setCategoryDialogOpen(true)}>
+                    <Icon name="settings" />
+                    {categories.length ? '管理' : '新建分类'}
+                  </button>
                 </div>
                 <p className="sub">
                   每阶段并发 {settings.stageConcurrency} · {runningTaskCount ? `${runningTaskCount} 个运行中` : settings.queuePaused ? '队列已暂停' : '队列空闲'}{waitingSlotCount ? ` · ${waitingSlotCount} 个排队等槽位` : ''}
@@ -1392,34 +1703,43 @@ export function App(): React.JSX.Element {
               )}
               {queue.items.length ? (
                 <div className="task-list">
-                  {queue.items.map((task) => {
+                  {visibleTasks.map((task) => {
                     const detail = queueDetails[task.taskId]
+                    const stages = detail ? taskStages(detail) : STAGE_ORDER
+                    const stageTotal = stages.length
                     const done = detail ? completedStageCount(detail) : 0
-                    const progress = detail ? STAGE_ORDER.reduce((total, id) => {
+                    const progress = detail ? stages.reduce((total, id) => {
                       const stage = getStage(detail, id)
                       if (stage.status === 'completed' || stage.status === 'skipped') return total + 1
                       return stage.status === 'running' ? total + (stage.progress ?? 0) : total
                     }, 0) : 0
                     const status = detail?.manifest.translation.auditCheckpoint ? 'checkpoint' : task.status
                     const providerId = detail?.manifest.translation.selectedProvider
-                    const thumbnailArtifact = detail?.manifest.artifacts.thumbnail
+                    const thumbnailArtifact = detail ? taskThumbnailArtifact(detail.manifest) : undefined
                     const thumbnailState = taskThumbnails[task.taskId]
                     const thumbnailDataUrl = thumbnailArtifact?.valid && thumbnailState?.sha256 === thumbnailArtifact.sha256 ? thumbnailState.dataUrl : undefined
-                    const sourceKind = detail?.manifest.input.kind === 'local' ? '本地视频' : detail?.manifest.input.kind === 'url' ? 'URL 视频' : '来源读取中'
+                    const isDocument = task.kind === 'document'
+                    const sourceKind = isDocument
+                      ? detail?.manifest.document.resolvedSource === 'x-article'
+                        ? 'X Article'
+                        : detail?.manifest.document.resolvedSource === 'x-post'
+                          ? 'X 帖子'
+                          : '网页'
+                      : detail?.manifest.input.kind === 'local' ? '本地视频' : detail?.manifest.input.kind === 'url' ? 'URL 视频' : '来源读取中'
                     const sourceName = detail ? (detail.manifest.input.kind === 'url' ? detail.manifest.input.url : detail.manifest.input.sourcePath) : ''
                     const updatedAt = new Date(task.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
                     const taskIsStarting = task.taskId in startingTaskIds
                     const taskIsWaitingSlot = task.schedule === 'waiting'
                     const taskIsRunning = task.status === 'running' || Boolean(detail && Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'running'))
                     const taskHasCheckpoint = status === 'checkpoint' || Boolean(detail && Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'checkpoint'))
-                    const taskNeedsRebuild = Boolean(detail && (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(detail, id).status === 'stale'))
-                    const taskIsComplete = task.status === 'completed' || Boolean(detail && getStage(detail, 'verify').status === 'completed' && !taskNeedsRebuild)
+                    const taskNeedsRebuild = Boolean(detail?.manifest.kind === 'subtitle' && (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(detail, id).status === 'stale'))
+                    const taskIsComplete = task.status === 'completed' || Boolean(detail && getStage(detail, lastStageForKind(detail.manifest.kind)).status === 'completed' && !taskNeedsRebuild)
                     const queueActionLabel = taskIsRunning
                       ? '处理中'
                       : taskIsStarting
                         ? '正在启动…'
                         : taskIsWaitingSlot
-                          ? `排队等${task.waitingStage ? stageLabels[task.waitingStage] : ''}槽位`
+                          ? `排队等${task.waitingStage ? stageLabelForKind(task.waitingStage, task.kind) : ''}槽位`
                           : taskHasCheckpoint
                             ? '需要确认'
                             : taskIsComplete
@@ -1431,7 +1751,7 @@ export function App(): React.JSX.Element {
                                   : '开始处理'
                     return (
                       <article
-                        className={`task-row row-hover ${selected?.manifest.taskId === task.taskId ? 'is-selected' : ''} ${openingTaskId === task.taskId ? 'is-opening' : ''} ${taskContextMenu?.taskId === task.taskId ? 'is-context' : ''}`}
+                        className={`task-row row-hover ${selected?.manifest.taskId === task.taskId ? 'is-selected' : ''} ${openingTaskId === task.taskId ? 'is-opening' : ''} ${taskContextMenu?.taskIds.includes(task.taskId) ? 'is-context' : ''} ${pickedVisibleTaskIds.includes(task.taskId) ? 'is-picked' : ''}`}
                         data-task-id={task.taskId}
                         aria-busy={openingTaskId === task.taskId}
                         key={task.taskId}
@@ -1441,7 +1761,15 @@ export function App(): React.JSX.Element {
                           aria-label={`打开工作台：${task.title}`}
                           aria-haspopup="menu"
                           type="button"
-                          onClick={() => {
+                          onClick={(event) => {
+                            // ⌘ / Ctrl 点击只多选，不进工作台；多选只用于批量归类。
+                            if (event.metaKey || event.ctrlKey) {
+                              setPickedTaskIds((current) => current.includes(task.taskId)
+                                ? current.filter((taskId) => taskId !== task.taskId)
+                                : [...current, task.taskId])
+                              return
+                            }
+                            setPickedTaskIds([])
                             void openTask(task.taskId)
                           }}
                           onContextMenu={(event) => {
@@ -1449,14 +1777,16 @@ export function App(): React.JSX.Element {
                             event.stopPropagation()
                             taskContextTriggerRef.current = event.currentTarget
                             const menuWidth = 270
-                            const menuHeight = 130
+                            const menuHeight = 180
                             const edge = 8
+                            setCategoryMenuOpen(false)
                             setTaskContextMenu({
                               taskId: task.taskId,
                               title: task.title,
                               x: Math.max(edge, Math.min(event.clientX, window.innerWidth - menuWidth - edge)),
                               y: Math.max(edge, Math.min(event.clientY, window.innerHeight - menuHeight - edge)),
-                              running: taskIsRunning || taskIsWaitingSlot
+                              running: taskIsRunning || taskIsWaitingSlot,
+                              taskIds: pickedVisibleTaskIds.length > 1 && pickedVisibleTaskIds.includes(task.taskId) ? [...pickedVisibleTaskIds] : [task.taskId]
                             })
                           }}
                           onKeyDown={(event) => {
@@ -1464,17 +1794,19 @@ export function App(): React.JSX.Element {
                             event.preventDefault()
                             const bounds = event.currentTarget.getBoundingClientRect()
                             taskContextTriggerRef.current = event.currentTarget
+                            setCategoryMenuOpen(false)
                             setTaskContextMenu({
                               taskId: task.taskId,
                               title: task.title,
                               x: Math.min(bounds.left + 28, window.innerWidth - 278),
-                              y: Math.min(bounds.top + 28, window.innerHeight - 138),
-                              running: taskIsRunning || taskIsWaitingSlot
+                              y: Math.min(bounds.top + 28, window.innerHeight - 188),
+                              running: taskIsRunning || taskIsWaitingSlot,
+                              taskIds: pickedVisibleTaskIds.length > 1 && pickedVisibleTaskIds.includes(task.taskId) ? [...pickedVisibleTaskIds] : [task.taskId]
                             })
                           }}
                         />
                         <span className={`thumb ${thumbnailDataUrl ? 'has-image' : ''}`} aria-hidden="true">
-                          {thumbnailDataUrl && (
+                          {thumbnailArtifact && thumbnailDataUrl && (
                             <img
                               src={thumbnailDataUrl}
                               alt=""
@@ -1490,18 +1822,22 @@ export function App(): React.JSX.Element {
                           )}
                           {!thumbnailDataUrl && (
                             <span className="thumb-placeholder">
-                              <Icon name="play" />
-                              <small>等待视频封面</small>
+                              <Icon name={isDocument ? 'document' : 'play'} />
+                              <small>{isDocument ? 'Markdown 文档' : '等待视频封面'}</small>
                             </span>
                           )}
                           <span className="pill task-cover-status" data-status={taskIsWaitingSlot ? 'queued' : status}>
                             {taskStatusText(detail, task.status, taskIsWaitingSlot)}
                           </span>
-                          <span className="dur mono">{durationLabel(detail?.manifest.runtime.durationSeconds)}</span>
+                          {!isDocument && <span className="dur mono">{durationLabel(detail?.manifest.runtime.durationSeconds)}</span>}
                         </span>
                         <span className="task-meta">
                           <span className="task-card-overline">
-                            <span>{providerId ? providerNames[providerId] : 'Provider 读取中'}</span>
+                            <span>{detail?.manifest.kind === 'document' && detail.manifest.document.processingMode === 'convert'
+                              ? '无需 Provider'
+                              : providerId ? providerNames[providerId] : 'Provider 读取中'}</span>
+                            <span className="dot-sep" />
+                            <span>{taskKindLabel(task.kind)}</span>
                             <span className="dot-sep" />
                             <span>{sourceKind}</span>
                           </span>
@@ -1518,25 +1854,42 @@ export function App(): React.JSX.Element {
                             </span>
                           )}
                           <span className="task-card-tags">
+                            {(() => {
+                              const category = findCategory(categories, task.category)
+                              return category
+                                ? (
+                                  <span className="category-chip" data-category-color={category.color} title={`分类：${category.name}`}>
+                                    <i className="cat-dot" aria-hidden="true" />
+                                    <span>{category.name}</span>
+                                  </span>
+                                )
+                                : <span className="category-chip is-unsorted">未分类</span>
+                            })()}
                             <span className="src-chip">
                               {detail ? <Icon name={detail.manifest.input.kind === 'local' ? 'local' : 'link'} /> : null}
                               {detail ? (detail.manifest.input.kind === 'url' ? 'URL' : '本地') : '来源 —'}
                             </span>
-                            <span className="task-tag">{detail ? subtitleKindLabel(detail.manifest.runtime.subtitleKind) : queueDetailFailures[task.taskId] ? '详情读取失败' : '字幕读取中'}</span>
-                            {detail && (detail.manifest.publication.autoPublish || detail.manifest.publication.status !== 'idle') && (
+                            <span className="task-tag">{detail
+                              ? detail.manifest.kind === 'document'
+                                ? detail.manifest.document.sourceLanguage
+                                  ? `${detail.manifest.document.sourceLanguage} → 中文`
+                                  : '语言识别中'
+                                : subtitleKindLabel(detail.manifest.runtime.subtitleKind)
+                              : queueDetailFailures[task.taskId] ? '详情读取失败' : isDocument ? '正文读取中' : '字幕读取中'}</span>
+                            {detail?.manifest.kind === 'subtitle' && (detail.manifest.publication.autoPublish || detail.manifest.publication.status !== 'idle') && (
                               <span className="publication-chip" data-status={detail.manifest.publication.status}>{bilibiliPublicationText(detail)}</span>
                             )}
                           </span>
                           <span className="task-card-footer">
                             <span className="id mono">{task.taskId.slice(0, 8)}</span>
-                            {detail?.manifest.runtime.uploadDate && (
+                            {!isDocument && detail?.manifest.runtime.uploadDate && (
                               <span className="task-published mono" title="视频发布时间">发布 {detail.manifest.runtime.uploadDate}</span>
                             )}
                             <span className="task-updated mono">更新于 {updatedAt}</span>
                           </span>
                           <span className="task-card-action-row">
                             <span className="task-progress-copy">
-                              <span>{done} / {STAGE_ORDER.length} 阶段</span>
+                              <span>{done} / {stageTotal} 阶段</span>
                             </span>
                             <button
                               className="task-start-button"
@@ -1551,8 +1904,8 @@ export function App(): React.JSX.Element {
                               {queueActionLabel}
                             </button>
                           </span>
-                          <span className={`task-mini-progress ${done === STAGE_ORDER.length ? 'is-done' : ''}`}>
-                            <i style={{ width: `${(progress / STAGE_ORDER.length) * 100}%` }} />
+                          <span className={`task-mini-progress ${done === stageTotal ? 'is-done' : ''}`}>
+                            <i style={{ width: `${(progress / stageTotal) * 100}%` }} />
                           </span>
                         </span>
                       </article>
@@ -1564,20 +1917,64 @@ export function App(): React.JSX.Element {
                   <div className="empty-icon" aria-hidden="true">
                     <Icon name="empty" />
                   </div>
-                  <h3>还没有视频任务</h3>
-                  <p>从一个短视频链接开始。Etch 会保留每个中间产物，并在可恢复边界提交结果。</p>
+                  <h3>还没有内容任务</h3>
+                  <p>粘贴一个视频、网页或 X 链接。Etch 会保留中间产物，并在可恢复边界提交结果。</p>
                   <button className="text-button" type="button" onClick={openNewTask}>
-                    粘贴视频链接
+                    粘贴内容链接
                   </button>
                 </div>
               ) : null}
+              {queue.items.length > 0 && visibleTasks.length === 0 && activeCategory && (
+                <div className="empty-state">
+                  <div className="empty-icon" aria-hidden="true">
+                    <Icon name="tag" />
+                  </div>
+                  <h3>「{activeCategory.name}」下还没有任务</h3>
+                  <p>右键任意任务卡片选「移动到分类」，或者新建任务时直接选这个分类。分类只改归档位置，不会动任何产物。</p>
+                  <button className="text-button" type="button" onClick={openNewTask}>
+                    新建任务到「{activeCategory.name}」
+                  </button>
+                </div>
+              )}
+              {pickedVisibleTaskIds.length > 1 && (
+                <div className="queue-selection-bar">
+                  <div>
+                    <strong>已选 {pickedVisibleTaskIds.length} 个任务</strong>
+                    <span>⌘ 点击继续加选 · 右键选「移动到分类」批量归类</span>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={() => setPickedTaskIds([])}>取消选择</button>
+                </div>
+              )}
             </section>
           </>
         )}
 
-        {view === 'workbench' && (
+        {view === 'workbench' && selected?.manifest.kind === 'document' && (
+          <DocumentWorkbench
+            detail={selected}
+            page={documentPage}
+            htmlPage={documentHtmlPage}
+            loading={documentPageLoading}
+            error={documentPageError || taskActionError}
+            htmlLoading={documentHtmlPageLoading}
+            htmlError={documentHtmlPageError}
+            onBack={() => changeView('queue')}
+            onTranslationDraftChange={queueDocumentTranslationSave}
+            onStart={startSelected}
+            onStop={stopSelected}
+            onOpenSource={(taskId) => window.etch.openDocumentSource(taskId)}
+            onCompleteReview={() => completeReview()}
+            onResolveTranslationCost={(_taskId, _revision, decision) => resolveIllustration((taskId, revision) => window.etch.resolveDocumentTranslationCost(taskId, revision, decision))}
+            onExport={(taskId) => window.etch.exportDocument(taskId)}
+            onStartHtml={(taskId, revision) => runDocumentHtmlAction(() => window.etch.startDocumentHtml(taskId, revision, 'preview'))}
+            onResolveHtmlStyle={(taskId, revision, direction) => runDocumentHtmlAction(() => window.etch.resolveDocumentHtmlStyle(taskId, revision, direction))}
+            onExportHtml={(taskId) => window.etch.exportDocumentHtml(taskId)}
+          />
+        )}
+        {view === 'workbench' && selected?.manifest.kind !== 'document' && (
           <WorkbenchView
             selected={selected}
+            relatedOutput={relatedOutput}
             settings={selected ? { ...settings, subtitlePreset: selected.manifest.render.subtitlePreset } : settings}
             settingsLoaded={settingsLoaded}
             taskActionError={taskActionError}
@@ -1601,6 +1998,7 @@ export function App(): React.JSX.Element {
             activity={queue.activity}
             selectedIsPaused={selectedIsPaused}
             stoppingTask={stoppingTask}
+            creatingCompanion={creatingCompanion}
             publicationActionBusy={publicationActionBusy}
             bilibiliAccount={bilibiliAccount}
             needsRebuild={needsRebuild}
@@ -1608,6 +2006,8 @@ export function App(): React.JSX.Element {
             toolHealth={toolHealth}
             videoRef={videoRef}
             onBack={() => changeView('queue')}
+            onOpenOutput={openTask}
+            onCreateCompanion={createCompanion}
             onStart={startSelected}
             onStop={stopSelected}
             onOpenPermissionGuide={openFullDiskAccessGuide}
@@ -1616,6 +2016,8 @@ export function App(): React.JSX.Element {
             onContinuePublication={continuePublication}
             onOpenCreatorCenter={() => window.etch.openBilibiliCreatorCenter()}
             onResolveAudit={resolveAudit}
+            onResolveVideoCheckpoint={(decision) => resolveIllustration((taskId, revision) => window.etch.resolveVideoCheckpoint(taskId, revision, decision))}
+            onResolveResearchCheckpoint={(decision) => resolveIllustration((taskId, revision) => window.etch.resolveResearchCheckpoint(taskId, revision, decision))}
             onResolveIllustrationAgent={(choice) => resolveIllustration((taskId, revision) => window.etch.resolveIllustrationAgent(taskId, revision, choice))}
             onResolveIllustrationCover={(decision) => resolveIllustration((taskId, revision) => window.etch.resolveIllustrationCover(taskId, revision, decision))}
             onCompleteReview={completeReview}
@@ -1914,6 +2316,7 @@ export function App(): React.JSX.Element {
       >
         <form
           className="new-task-form"
+          aria-busy={creatingTask}
           onSubmit={(event) => {
             event.preventDefault()
             void addUrl()
@@ -1921,116 +2324,242 @@ export function App(): React.JSX.Element {
         >
           <header className="new-task-heading">
             <div>
-              <p className="eyebrow">添加视频</p>
               <h2 id="new-task-title">新建任务</h2>
+              <p className="new-task-copy">
+                {taskKind === 'document'
+                  ? '每行一个网页或 X 链接，最多 50 个。提取正文与图片，并按所选模式生成 Markdown。'
+                  : taskKind === 'summary'
+                    ? '每行一个视频链接，最多 50 个。提取字幕并整理为中文长文。'
+                    : '每行一个视频链接，最多 50 个。创建后自动进入处理队列。'}
+              </p>
             </div>
             <button className="new-task-close" type="button" aria-label="关闭新建任务" disabled={creatingTask} onClick={closeNewTask}>
               ×
             </button>
           </header>
-          <p className="new-task-copy">
-            {taskKind === 'summary'
-              ? '每行粘贴一个 YouTube、X 或 Vimeo 视频链接，最多 50 个。总结任务只抽字幕并写中文长文，不翻译、不压制、不投稿。'
-              : '每行粘贴一个 YouTube、X 或 Vimeo 视频链接，最多 50 个。创建后会自动开始处理；队列暂停时先等待。'}
-          </p>
-          <div className="new-task-kind" role="radiogroup" aria-label="任务类型">
-            {([
-              { id: 'subtitle' as const, label: '双语硬字幕', hint: '翻译、校对、压制成片' },
-              { id: 'summary' as const, label: '视频总结', hint: '三稿择优长文 + 配图' }
-            ]).map((option) => (
-              <label className="new-task-kind-option" data-selected={taskKind === option.id ? 'true' : undefined} key={option.id}>
-                <input
-                  type="radio"
-                  name="new-task-kind"
-                  value={option.id}
-                  checked={taskKind === option.id}
-                  disabled={creatingTask}
-                  onChange={() => setTaskKind(option.id)}
-                />
-                <span>
-                  <strong>{option.label}</strong>
-                  <small>{option.hint}</small>
-                </span>
-              </label>
-            ))}
-          </div>
-          <label className="new-task-field" htmlFor="video-url">
-            <span>视频链接 <small>{enteredUrlCount ? `已输入 ${enteredUrlCount} 个` : '支持批量新建'}</small></span>
-            <textarea
-              className="field-area new-task-urls"
-              id="video-url"
-              autoFocus
-              inputMode="url"
-              rows={6}
-              placeholder={'https://www.youtube.com/watch?v=…\nhttps://vimeo.com/…'}
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-            />
-          </label>
-          <label className="new-task-field" htmlFor="provider">
-            <span>{taskKind === 'summary' ? '总结 Provider' : '翻译 Provider'} <small>{selectedProviderAvailability.summary ?? '使用本机 CLI；登录态在运行时校验'}</small></span>
-            <select
-              className="field-select"
-              id="provider"
-              value={provider}
-              onChange={(event) => {
-                providerEditVersionRef.current += 1
-                setProvider(event.target.value as ProviderId)
-              }}
-            >
-              {PROVIDER_IDS.map((providerId) => {
-                const availability = providerAvailability(providerId, toolHealth)
-                return <option value={providerId} disabled={!availability.available} key={providerId}>{providerNames[providerId]}{!availability.available ? `（${availability.summary}）` : ''}</option>
-              })}
-            </select>
-          </label>
-          <label className="new-task-field" htmlFor="task-style-note">
-            <span>{taskKind === 'summary' ? '总结要求' : '翻译风格'} <small>选填</small></span>
-            <textarea
-              className="field-area"
-              id="task-style-note"
-              maxLength={1000}
-              placeholder={taskKind === 'summary'
-                ? '例如：重点写商业模式与数字，多保留对话锋芒'
-                : '例如：简洁自然，保留足球解说的临场感；术语沿用统一术语表'}
-              value={styleNote}
-              onChange={(event) => setStyleNote(event.target.value)}
-            />
-          </label>
-          {taskKind === 'subtitle' && (
-          <div className="new-task-auto-publish">
-            <span>
-              <strong>完成后自动投稿到 B站</strong>
-              <small>{bilibiliAccount.status !== 'connected' ? '请先在设置中扫码登录' : !publicationTemplateReady(settings.bilibiliPublishTemplate) ? '请先补全默认分区和标签' : '使用设置中的投稿模板；默认关闭'}</small>
-              {(bilibiliAccount.status !== 'connected' || !publicationTemplateReady(settings.bilibiliPublishTemplate)) && (
-                <button
-                  className="inline-setup-button"
-                  type="button"
-                  disabled={creatingTask}
-                  onClick={() => openBilibiliSettings(bilibiliAccount.status === 'connected' ? 'template' : 'auto')}
-                >
-                  {bilibiliAccount.status === 'connected' ? '配置投稿模板' : '连接 B站账号'}
-                </button>
+          <div className="new-task-body">
+            <div className="new-task-kind" role="radiogroup" aria-label="任务类型">
+              {([
+                { id: 'subtitle' as const, label: '双语硬字幕', hint: '翻译、校对、压制成片' },
+                { id: 'summary' as const, label: '视频总结', hint: '三稿择优长文 + 配图' },
+                { id: 'document' as const, label: '网页翻译', hint: '网页 / X → Markdown' }
+              ]).map((option) => (
+                <label className="new-task-kind-option" data-selected={taskKind === option.id ? 'true' : undefined} key={option.id}>
+                  <input
+                    type="radio"
+                    name="new-task-kind"
+                    value={option.id}
+                    checked={taskKind === option.id}
+                    disabled={creatingTask}
+                    onChange={() => setTaskKind(option.id)}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.hint}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <label className="new-task-field" htmlFor="content-url">
+              <span>{taskKind === 'document' ? '网页或 X 链接' : '视频链接'} <small>{enteredUrlCount ? `已输入 ${enteredUrlCount} 个` : '支持批量新建'}</small></span>
+              <textarea
+                className="field-area new-task-urls"
+                id="content-url"
+                autoFocus
+                inputMode="url"
+                rows={4}
+                placeholder={taskKind === 'document'
+                  ? 'https://example.com/article\nhttps://x.com/author/status/…'
+                  : 'https://www.youtube.com/watch?v=…\nhttps://vimeo.com/…'}
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+              />
+            </label>
+            {taskKind === 'document' && (
+              <aside className="new-task-scope-note" aria-label="X 内容范围">
+                <strong>X 内容范围</strong>
+                <span>支持单条帖子与 X Article 的正文、作者和静态图片；线程、引用帖、投票与视频会标记为未展开。</span>
+              </aside>
+            )}
+            <div className={taskKind === 'document' ? 'new-task-document-settings' : undefined}>
+              {taskKind === 'document' && (
+                <>
+                  <label className="new-task-field" htmlFor="document-mode">
+                    <span>处理模式 <small aria-live="polite">{documentModeHint}</small></span>
+                    <select
+                      className="field-select"
+                      id="document-mode"
+                      value={documentMode}
+                      disabled={creatingTask}
+                      onChange={(event) => setDocumentMode(event.target.value as DocumentProcessingMode)}
+                    >
+                      <option value="auto">自动判断（推荐）</option>
+                      <option value="translate">强制翻译为中文</option>
+                      <option value="convert">只转 Markdown，不翻译</option>
+                    </select>
+                  </label>
+                  {documentMode !== 'convert' && (
+                    <label className="new-task-field" htmlFor="document-translation-mode">
+                      <span>翻译质量 <small>{documentTranslationMode === 'normal' ? '标准多阶段' : '含独立审校与润色'}</small></span>
+                      <select
+                        className="field-select"
+                        id="document-translation-mode"
+                        value={documentTranslationMode}
+                        disabled={creatingTask}
+                        onChange={(event) => setDocumentTranslationMode(event.target.value as 'normal' | 'refined')}
+                      >
+                        <option value="normal">标准翻译（推荐）</option>
+                        <option value="refined">出版级精校</option>
+                      </select>
+                    </label>
+                  )}
+                </>
               )}
-            </span>
-            <SwitchControl
-              label="完成后自动投稿到 B站"
-              checked={autoPublish}
-              disabled={creatingTask || bilibiliAccount.status !== 'connected' || !publicationTemplateReady(settings.bilibiliPublishTemplate)}
-              onChange={setAutoPublish}
-            />
+              <label className="new-task-field new-task-agent-field" data-inactive={!taskNeedsAgent ? 'true' : undefined} htmlFor="provider">
+                <span>{taskKind === 'document' ? '翻译 Agent' : taskKind === 'summary' ? '总结 Provider' : '翻译 Provider'} <small aria-live="polite">{taskAgentHint}</small></span>
+                <select
+                  className="field-select"
+                  id="provider"
+                  value={taskNeedsAgent ? provider : 'none'}
+                  disabled={creatingTask || !taskNeedsAgent}
+                  onChange={(event) => {
+                    providerEditVersionRef.current += 1
+                    setProvider(event.target.value as ProviderId)
+                  }}
+                >
+                  {!taskNeedsAgent
+                    ? <option value="none">无需 Agent（仅转 Markdown）</option>
+                    : PROVIDER_IDS.map((providerId) => {
+                      const availability = providerAvailability(providerId, toolHealth)
+                      return <option value={providerId} disabled={!availability.available} key={providerId}>{providerNames[providerId]}{!availability.available ? `（${availability.summary}）` : ''}</option>
+                    })}
+                </select>
+              </label>
+            </div>
+            <div className="new-task-field">
+              <label htmlFor="task-category">分类 <small>选填 · 后续可修改</small></label>
+              <div className="category-select-row">
+                <span className="category-select-swatch" data-category-color={findCategory(categories, newTaskCategory)?.color} aria-hidden="true">
+                  <i className={`cat-dot ${findCategory(categories, newTaskCategory) ? '' : 'is-placeholder'}`} />
+                </span>
+                <select
+                  className="field-select"
+                  id="task-category"
+                  value={newTaskCategory}
+                  disabled={creatingTask}
+                  onChange={(event) => {
+                    if (event.target.value === '__new') {
+                      setInlineCategoryOpen(true)
+                      setInlineCategoryError('')
+                      return
+                    }
+                    setNewTaskCategory(event.target.value)
+                    setInlineCategoryOpen(false)
+                    setInlineCategoryError('')
+                  }}
+                >
+                  <option value="">不分类（进未分类）</option>
+                  {categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}
+                  <option value="__new">+ 新建分类…</option>
+                </select>
+              </div>
+              {inlineCategoryOpen && (
+                <div className="inline-new-category">
+                  <input
+                    className="field-input"
+                    type="text"
+                    autoFocus
+                    maxLength={20}
+                    placeholder="分类名称，最多 20 字"
+                    value={inlineCategoryName}
+                    disabled={savingCategories}
+                    onChange={(event) => setInlineCategoryName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter') return
+                      event.preventDefault()
+                      void createInlineCategory()
+                    }}
+                  />
+                  <button className="secondary-button" type="button" disabled={savingCategories || !inlineCategoryName.trim()} onClick={() => { void createInlineCategory() }}>创建</button>
+                </div>
+              )}
+              {(inlineCategoryError || categoryError) && <p className="form-error" role="alert">{inlineCategoryError || categoryError}</p>}
+              {enteredUrlCount > 1 && <p className="new-task-field-note">这一批 {enteredUrlCount} 个任务会全部进同一个分类。</p>}
+            </div>
+            {!(taskKind === 'document' && documentMode === 'convert') && <label className="new-task-field" htmlFor="task-style-note">
+              <span>{taskKind === 'summary' ? '总结要求' : taskKind === 'document' ? '文档处理要求' : '翻译风格'} <small>选填</small></span>
+              <textarea
+                className="field-area"
+                id="task-style-note"
+                maxLength={1000}
+                placeholder={taskKind === 'summary'
+                  ? '例如：重点写商业模式与数字，多保留对话锋芒'
+                  : taskKind === 'document'
+                    ? documentMode === 'convert'
+                      ? '例如：保留表格、代码块与链接；移除导航和广告'
+                      : '例如：产品名与代码保持英文；标题简洁；不要改动链接和表格'
+                    : '例如：简洁自然，保留足球解说的临场感；术语沿用统一术语表'}
+                value={styleNote}
+                onChange={(event) => setStyleNote(event.target.value)}
+              />
+            </label>}
+            {taskKind === 'document' && documentMode !== 'convert' && (
+              <div className="new-task-document-settings">
+                <label className="new-task-field" htmlFor="document-audience">
+                  <span>目标读者</span>
+                  <select className="field-select" id="document-audience" value={documentAudience} disabled={creatingTask} onChange={(event) => setDocumentAudience(event.target.value)}>
+                    <option value="general">普通读者</option>
+                    <option value="technical">技术读者</option>
+                    <option value="executive">决策者</option>
+                  </select>
+                </label>
+                <label className="new-task-field" htmlFor="document-writing-style">
+                  <span>成文风格</span>
+                  <select className="field-select" id="document-writing-style" value={documentWritingStyle} disabled={creatingTask} onChange={(event) => setDocumentWritingStyle(event.target.value)}>
+                    <option value="storytelling">自然叙事</option>
+                    <option value="concise">简洁准确</option>
+                    <option value="academic">严谨书面</option>
+                  </select>
+                </label>
+              </div>
+            )}
+            {taskKind === 'subtitle' && (
+              <div className="new-task-auto-publish">
+                <span>
+                  <strong>完成后自动投稿到 B站</strong>
+                  <small>{bilibiliAccount.status !== 'connected' ? '请先在设置中扫码登录' : !publicationTemplateReady(settings.bilibiliPublishTemplate) ? '请先补全默认分区和标签' : '使用设置中的投稿模板；默认关闭'}</small>
+                  {(bilibiliAccount.status !== 'connected' || !publicationTemplateReady(settings.bilibiliPublishTemplate)) && (
+                    <button
+                      className="inline-setup-button"
+                      type="button"
+                      disabled={creatingTask}
+                      onClick={() => openBilibiliSettings(bilibiliAccount.status === 'connected' ? 'template' : 'auto')}
+                    >
+                      {bilibiliAccount.status === 'connected' ? '配置投稿模板' : '连接 B站账号'}
+                    </button>
+                  )}
+                </span>
+                <SwitchControl
+                  label="完成后自动投稿到 B站"
+                  checked={autoPublish}
+                  disabled={creatingTask || bilibiliAccount.status !== 'connected' || !publicationTemplateReady(settings.bilibiliPublishTemplate)}
+                  onChange={setAutoPublish}
+                />
+              </div>
+            )}
           </div>
-          )}
-          {error && <p className="form-error new-task-error" role="alert">{error}</p>}
           <footer className="new-task-actions">
-            <button className="secondary-button" type="button" disabled={creatingTask} onClick={closeNewTask}>取消</button>
-            <button className="primary-button" type="submit" disabled={!url.trim() || creatingTask || !selectedProviderAvailability.available}>
-              {creatingTask
-                ? `正在创建${enteredUrlCount > 1 ? ` ${enteredUrlCount} 个任务` : '任务'}…`
-                : settings.queuePaused
-                  ? `加入暂停队列${enteredUrlCount > 1 ? `（${enteredUrlCount}）` : ''}`
-                  : `创建并开始${enteredUrlCount > 1 ? `（${enteredUrlCount}）` : ''}`}
-            </button>
+            {error && <p className="form-error new-task-error" role="alert">{error}</p>}
+            <div className="new-task-action-buttons">
+              <button className="secondary-button" type="button" disabled={creatingTask} onClick={closeNewTask}>取消</button>
+              <button className="primary-button" type="submit" disabled={!url.trim() || creatingTask || (taskNeedsAgent && !selectedProviderAvailability.available)}>
+                {creatingTask
+                  ? `正在创建${enteredUrlCount > 1 ? ` ${enteredUrlCount} 个任务` : '任务'}…`
+                  : settings.queuePaused
+                    ? `加入暂停队列${enteredUrlCount > 1 ? `（${enteredUrlCount}）` : ''}`
+                    : `创建并开始${enteredUrlCount > 1 ? `（${enteredUrlCount}）` : ''}`}
+              </button>
+            </div>
           </footer>
         </form>
       </dialog>
@@ -2058,34 +2587,130 @@ export function App(): React.JSX.Element {
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
                 event.preventDefault()
+                if (categoryMenuOpen) {
+                  setCategoryMenuOpen(false)
+                  return
+                }
                 closeTaskContextMenu()
+                return
+              }
+              if (event.key === 'ArrowLeft' && categoryMenuOpen) {
+                event.preventDefault()
+                setCategoryMenuOpen(false)
                 return
               }
               if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
               event.preventDefault()
-              const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
+              const submenu = event.currentTarget.querySelector<HTMLElement>('.task-category-submenu')
+              const scope = categoryMenuOpen && submenu ? submenu : event.currentTarget
+              const items = [...scope.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled), [role="menuitemradio"]:not(:disabled)')]
+                .filter((item) => (categoryMenuOpen ? true : !item.closest('.task-category-submenu')))
               if (!items.length) return
               const current = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement))
               const delta = event.key === 'ArrowDown' ? 1 : -1
               items[(current + delta + items.length) % items.length].focus()
             }}
           >
+            <div className="task-context-submenu-row">
+              <button
+                className="task-context-move"
+                role="menuitem"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={categoryMenuOpen}
+                onClick={() => setCategoryMenuOpen((current) => !current)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowRight') return
+                  event.preventDefault()
+                  setCategoryMenuOpen(true)
+                }}
+              >
+                <Icon name="tag" />
+                {taskContextMenu.taskIds.length > 1 ? `移动 ${taskContextMenu.taskIds.length} 个任务到分类` : '移动到分类'}
+                <span className="task-context-caret" aria-hidden="true"><Icon name="chevron" /></span>
+              </button>
+              {categoryMenuOpen && (
+                <div
+                  className={`task-category-submenu ${taskContextMenu.x > window.innerWidth - 540 ? 'opens-left' : ''}`}
+                  role="menu"
+                  aria-label="选择分类"
+                >
+                  <button
+                    role="menuitemradio"
+                    type="button"
+                    aria-checked={!currentMenuCategory}
+                    onClick={() => {
+                      const taskIds = taskContextMenu.taskIds
+                      closeTaskContextMenu(false)
+                      void moveTasksToCategory(taskIds, '')
+                    }}
+                  >
+                    <span className="task-category-check" aria-hidden="true">{!currentMenuCategory && <Icon name="check" />}</span>
+                    <i className="cat-dot is-placeholder" aria-hidden="true" />
+                    <span>未分类</span>
+                  </button>
+                  {categories.length > 0 && <span className="task-context-separator" />}
+                  {categories.map((category) => (
+                    <button
+                      data-category-color={category.color}
+                      role="menuitemradio"
+                      type="button"
+                      key={category.id}
+                      aria-checked={currentMenuCategory === category.id}
+                      onClick={() => {
+                        const taskIds = taskContextMenu.taskIds
+                        closeTaskContextMenu(false)
+                        void moveTasksToCategory(taskIds, category.id)
+                      }}
+                    >
+                      <span className="task-category-check" aria-hidden="true">{currentMenuCategory === category.id && <Icon name="check" />}</span>
+                      <i className="cat-dot" aria-hidden="true" />
+                      <span>{category.name}</span>
+                      <span className="task-category-submenu-count mono">{categoryTotals.byCategory[category.id] ?? 0}</span>
+                    </button>
+                  ))}
+                  <span className="task-context-separator" />
+                  <button
+                    className="task-category-new"
+                    role="menuitem"
+                    type="button"
+                    onClick={() => {
+                      closeTaskContextMenu(false)
+                      setCategoryDialogOpen(true)
+                    }}
+                  >
+                    <Icon name="plus" />
+                    新建分类…
+                  </button>
+                </div>
+              )}
+            </div>
+            <span className="task-context-separator" />
             <button role="menuitem" type="button" onClick={() => { void revealTask(taskContextMenu.taskId) }}>
               <Icon name="folder" />
               在访达中显示
             </button>
             <span className="task-context-separator" />
-            <button className="is-warning" role="menuitem" type="button" disabled={taskContextMenu.running} onClick={() => { void requestTaskDelete(taskContextMenu.taskId, taskContextMenu.title, 'record-only') }}>
+            <button className="is-warning" role="menuitem" type="button" disabled={taskContextMenu.running || taskContextMenu.taskIds.length > 1} onClick={() => { void requestTaskDelete(taskContextMenu.taskId, taskContextMenu.title, 'record-only') }}>
               <Icon name="record-remove" />
               仅删除任务记录
             </button>
-            <button className="is-danger" role="menuitem" type="button" disabled={taskContextMenu.running} onClick={() => { void requestTaskDelete(taskContextMenu.taskId, taskContextMenu.title, 'all-artifacts') }}>
+            <button className="is-danger" role="menuitem" type="button" disabled={taskContextMenu.running || taskContextMenu.taskIds.length > 1} onClick={() => { void requestTaskDelete(taskContextMenu.taskId, taskContextMenu.title, 'all-artifacts') }}>
               <Icon name="trash" />
               删除任务及全部产物
             </button>
           </div>
         </div>
       )}
+      <TaskCategoryDialog
+        open={categoryDialogOpen}
+        categories={categories}
+        counts={categoryTotals.byCategory}
+        saving={savingCategories}
+        saveError={categoryError}
+        onSave={(next) => { void saveCategories(next) }}
+        onClose={() => setCategoryDialogOpen(false)}
+      />
       <TaskDeleteDialog
         request={deleteRequest}
         deleting={Boolean(deletingTaskId)}

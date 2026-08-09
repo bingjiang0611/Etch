@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { QueuePage, ReviewTimelineWindow, TaskDetail, TaskReviewPage } from '../shared/ipc'
 import { POOL_BY_STAGE, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
-import type { ProviderId, StageId } from '../shared/task-schema'
+import { lastStageForKind, stageBelongsToKind, type ProviderId, type StageId, type TaskKind } from '../shared/task-schema'
 import { clearPlaybackPosition, loadPlaybackPosition, savePlaybackPosition } from './playback-position'
 import {
   PLAYBACK_RATE_PRESETS,
@@ -16,7 +16,7 @@ export const pools = ['download', 'whisper', 'agent', 'audit', 'ffmpeg', 'image'
 
 export type SubtitlePreset = AppSettings['subtitlePreset']
 type StageState = TaskDetail['manifest']['pipeline']['stages'][string]
-type IconName = 'queue' | 'glossary' | 'settings' | 'plus' | 'play' | 'pause' | 'seek-back' | 'seek-forward' | 'back' | 'link' | 'local' | 'search' | 'chevron' | 'warning' | 'refresh' | 'empty' | 'check' | 'folder' | 'record-remove' | 'trash' | 'fullscreen' | 'fullscreen-exit'
+type IconName = 'queue' | 'glossary' | 'settings' | 'plus' | 'play' | 'pause' | 'seek-back' | 'seek-forward' | 'back' | 'link' | 'local' | 'document' | 'search' | 'chevron' | 'warning' | 'refresh' | 'empty' | 'check' | 'folder' | 'tag' | 'record-remove' | 'trash' | 'fullscreen' | 'fullscreen-exit'
 
 export const providerNames: Record<ProviderId, string> = {
   claude: 'Claude Code',
@@ -37,8 +37,26 @@ export const stageLabels: Record<StageId, string> = {
   burn: '压制',
   verify: '验证',
   digest: '素材分析',
+  research: '外部核验',
   summary: '长文整理',
   illustrate: '配图',
+}
+
+const documentStageLabels: Partial<Record<StageId, string>> = {
+  source: '抓取',
+  inspect: '正文与媒体',
+  translate: '翻译',
+  review: '人工校对',
+  verify: '完整性验证'
+}
+
+export function stageLabelForKind(id: StageId, kind: TaskKind): string {
+  return kind === 'document' ? documentStageLabels[id] ?? stageLabels[id] : stageLabels[id]
+}
+
+export function taskKindLabel(kind: TaskKind): string {
+  if (kind === 'document') return '网页翻译'
+  return kind === 'summary' ? '视频总结' : '双语硬字幕'
 }
 
 export function Icon({ name }: { name: IconName }): React.JSX.Element {
@@ -128,6 +146,15 @@ export function Icon({ name }: { name: IconName }): React.JSX.Element {
         <path d="M9 8.5 15 12l-6 3.5z" fill="currentColor" stroke="none" />
       </svg>
     )
+  if (name === 'document')
+    return (
+      <svg {...common}>
+        <path d="M7 3.5h7l3 3V20.5H7z" />
+        <path d="M14 3.5v3h3" />
+        <line x1="9.5" y1="11" x2="14.5" y2="11" />
+        <line x1="9.5" y1="14.5" x2="14.5" y2="14.5" />
+      </svg>
+    )
   if (name === 'search')
     return (
       <svg {...common} strokeWidth="1.7">
@@ -168,6 +195,13 @@ export function Icon({ name }: { name: IconName }): React.JSX.Element {
     return (
       <svg {...common}>
         <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z" />
+      </svg>
+    )
+  if (name === 'tag')
+    return (
+      <svg {...common}>
+        <path d="M11.5 4.5H19.5v8l-8.4 8.4a1.5 1.5 0 0 1-2.1 0l-5.9-5.9a1.5 1.5 0 0 1 0-2.1z" />
+        <circle cx="16" cy="8" r="1.2" />
       </svg>
     )
   if (name === 'record-remove')
@@ -231,12 +265,17 @@ export function isStageDone(stage: StageState): boolean {
   return stage.status === 'completed' || stage.status === 'skipped'
 }
 
+// 三类任务共用调度槽位，但进度与流水线只展示属于本类型的阶段。
+export function taskStages(detail: TaskDetail): StageId[] {
+  return STAGE_ORDER.filter((id) => stageBelongsToKind(id, detail.manifest.kind))
+}
+
 export function completedStageCount(detail: TaskDetail): number {
-  return STAGE_ORDER.filter((id) => isStageDone(getStage(detail, id))).length
+  return taskStages(detail).filter((id) => isStageDone(getStage(detail, id))).length
 }
 
 export function activeStageId(detail: TaskDetail): StageId | undefined {
-  return STAGE_ORDER.find((id) => ['running', 'checkpoint', 'failed', 'paused', 'stale'].includes(getStage(detail, id).status))
+  return taskStages(detail).find((id) => ['running', 'checkpoint', 'failed', 'paused', 'stale'].includes(getStage(detail, id).status))
 }
 
 export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePage['items'][number]['status'], waitingSlot = false): string {
@@ -255,8 +294,8 @@ export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePa
   if (detail.manifest.translation.auditCheckpoint) return '待裁决'
   if (waitingSlot) return '排队中'
   const active = activeStageId(detail)
-  if (active) return stageLabels[active]
-  return getStage(detail, 'verify').status === 'completed' ? '已完成' : fallbackLabels[fallback]
+  if (active) return stageLabelForKind(active, detail.manifest.kind)
+  return getStage(detail, lastStageForKind(detail.manifest.kind)).status === 'completed' ? '已完成' : fallbackLabels[fallback]
 }
 
 export function bilibiliPublicationText(detail: TaskDetail): string {
@@ -276,6 +315,10 @@ export function bilibiliPublicationText(detail: TaskDetail): string {
 
 export function stageSubLabel(detail: TaskDetail, id: StageId, stage: StageState): string {
   if (stage.errorCode) return stage.errorCode
+  if (detail.manifest.kind === 'document') {
+    if (id === 'inspect' && detail.manifest.document.blockCount) return `${detail.manifest.document.blockCount} blocks`
+    if (id === 'translate' && detail.manifest.document.translatedBlockCount) return `${detail.manifest.document.translatedBlockCount}/${detail.manifest.document.blockCount} blocks`
+  }
   if (id === 'inspect' && detail.manifest.runtime.width && detail.manifest.runtime.height) return `${detail.manifest.runtime.width}×${detail.manifest.runtime.height}`
   if (id === 'english' && detail.manifest.runtime.subtitleKind) return detail.manifest.runtime.subtitleKind
   if (id === 'translate' && detail.manifest.translation.batches.length) {

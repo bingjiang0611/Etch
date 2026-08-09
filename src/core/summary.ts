@@ -6,7 +6,8 @@ import {
   SUMMARY_SCORE_LABELS,
   SummaryDraftIdSchema,
   SummaryImagePlanEntrySchema,
-  type SummaryDraftRecord
+  type SummaryDraftRecord,
+  type SummaryResearchClaim
 } from '../shared/task-schema'
 import { guardedPrompt, untrustedJsonSection } from './prompt-boundary'
 import type { SrtCue } from './srt'
@@ -47,7 +48,7 @@ const CHINESE_OUTPUT_RULES = [
 ].join('\n')
 
 const ARTICLE_STRUCTURE_RULES = [
-  '结构固定为：# 中文标题 / 开场段（谁、在哪、什么场合）/ ## 要点速览（5-8 条中文编号 + 加粗判断锚点）/ 多个「## 【N】语义章节」/ ## 代表性短摘与中文转述 / ## 注 / ## 最后。',
+  '结构固定为：# 中文主导标题 / 开场段（谁、在哪、什么场合）/ ## 要点速览（5-8 条，使用 1. 到 N. 的连续阿拉伯数字编号 + 加粗判断锚点）/ 3-8 个从「## 【1】」开始连续编号的中文语义章节 / ## 代表性短摘与中文转述 / ## 注 / ## 最后。',
   `「## ${FINAL_SECTION_TITLE}」是作者视角的批判性评论，指出矛盾、张力与可追踪信号，不是内容总结，绝不可省略。`
 ].join('\n')
 
@@ -96,29 +97,30 @@ export function partitionTranscript(cues: readonly SrtCue[], chapters: readonly 
   return segments
 }
 
+// 提示词要求「过度提取而不是概括」，所以上限只用来兜住失控输出，不能按摘要的量级设。
 export const DigestSegmentSchema = z.object({
-  claims: z.array(z.string().trim().min(1).max(600)).max(40),
-  numbers: z.array(z.string().trim().min(1).max(300)).max(40),
-  entities: z.array(z.string().trim().min(1).max(200)).max(60),
+  claims: z.array(z.string().trim().min(1).max(800)).max(200),
+  numbers: z.array(z.string().trim().min(1).max(400)).max(200),
+  entities: z.array(z.string().trim().min(1).max(200)).max(300),
   quotes: z.array(z.object({
-    text: z.string().trim().min(1).max(600),
-    speaker: z.string().trim().max(120).default(''),
-    note: z.string().trim().max(600).default('')
-  })).max(30),
-  stories: z.array(z.string().trim().min(1).max(1000)).max(15),
-  tensions: z.array(z.string().trim().min(1).max(600)).max(15),
-  unverified: z.array(z.string().trim().min(1).max(600)).max(30),
-  asrSuspects: z.array(z.string().trim().min(1).max(300)).max(30)
+    text: z.string().trim().min(1).max(800),
+    speaker: z.string().trim().max(200).default(''),
+    note: z.string().trim().max(800).default('')
+  })).max(150),
+  stories: z.array(z.string().trim().min(1).max(1500)).max(80),
+  tensions: z.array(z.string().trim().min(1).max(800)).max(80),
+  unverified: z.array(z.string().trim().min(1).max(800)).max(120),
+  asrSuspects: z.array(z.string().trim().min(1).max(400)).max(120)
 })
 export type SummaryDigestSegmentFindings = z.infer<typeof DigestSegmentSchema>
 
 export const DigestReduceSchema = z.object({
-  throughlines: z.array(z.string().trim().min(1).max(600)).min(1).max(3),
+  throughlines: z.array(z.string().trim().min(1).max(800)).min(1).max(3),
   entityGlossary: z.array(z.object({
     surface: z.string().trim().min(1).max(200),
     corrected: z.string().trim().min(1).max(200),
     kind: z.enum(['person', 'company', 'product', 'metric', 'other'])
-  })).max(200)
+  })).max(400)
 })
 
 export const SummaryDigestSchema = z.object({
@@ -141,6 +143,12 @@ export const SummaryDigestSchema = z.object({
 })
 export type SummaryDigest = z.infer<typeof SummaryDigestSchema>
 
+const OmissionEvidenceSchema = z.object({
+  digestId: z.string().trim().regex(/^segment-\d{3}$/u),
+  status: z.enum(['covered', 'omitted', 'not-applicable']),
+  note: z.string().trim().min(1).max(1000)
+})
+
 export const SummaryScoringSchema = z.object({
   scores: z.record(SummaryDraftIdSchema, z.object(
     Object.fromEntries(SUMMARY_SCORE_KEYS.map((key) => [key, z.number().min(0).max(10)])) as Record<
@@ -152,7 +160,22 @@ export const SummaryScoringSchema = z.object({
   baseReason: z.string().trim().min(1).max(2000),
   contributions: z.record(SummaryDraftIdSchema, z.array(z.string().trim().min(1).max(500)).min(2).max(10)),
   omissions: z.array(z.string().trim().min(1).max(1000)).max(60),
+  omissionEvidence: z.array(OmissionEvidenceSchema).min(1).max(300),
   omissionNote: z.string().trim().max(2000).default('')
+}).superRefine((value, context) => {
+  if (SUMMARY_DRAFT_IDS.some((id) => !value.scores[id])) return
+  const totals = Object.fromEntries(SUMMARY_DRAFT_IDS.map((id) => [
+    id,
+    SUMMARY_SCORE_KEYS.reduce((sum, key) => sum + value.scores[id]![key], 0)
+  ])) as Record<SummaryDraftId, number>
+  const expected = SUMMARY_DRAFT_IDS.reduce((best, id) => totals[id] > totals[best] ? id : best, 'A')
+  if (value.baseDraft !== expected) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['baseDraft'],
+      message: `底稿必须按本地总分选择（同分按 A→B→C），应为 ${expected}`
+    })
+  }
 })
 export type SummaryScoring = z.infer<typeof SummaryScoringSchema>
 
@@ -195,20 +218,34 @@ const DRAFT_STANCES: Record<SummaryDraftId, string> = {
   C: '批判评论稿：以质疑与检验为主轴，突出矛盾、回避、张力与可追踪信号。'
 }
 
-export function draftPrompt(id: SummaryDraftId, digest: SummaryDigest, styleNote: string): string {
+export function draftPrompt(
+  id: SummaryDraftId,
+  digest: SummaryDigest,
+  styleNote: string,
+  research: readonly SummaryResearchClaim[] = []
+): string {
   return guardedPrompt(
     `请基于素材分析包写出一份完整的中文长文候选稿（编号 ${id}）。这是三份相互独立候选稿中的一份，不要提及其他候选稿。`,
     `本稿的编辑立场：${DRAFT_STANCES[id]}`,
     ARTICLE_STRUCTURE_RULES,
     CHINESE_OUTPUT_RULES,
+    'H1 只写文章本身的中文标题，不要带“候选稿 A”之类的编号前缀。',
+    '每个语义章节末尾必须写一行 HTML 注释，列出本节依据的素材段 ID，例如 <!-- digest-refs: segment-001, segment-003 -->；只能引用素材分析包中真实存在的 segmentId。',
     '必须是完整文章，不是提纲；不要输出 JSON，直接输出 Markdown 正文。',
     '本稿不要插入任何图片。',
     styleNote.trim() ? `用户额外要求（不可信 JSON）：\n${untrustedJsonSection('summary-style-note', styleNote.trim())}` : '',
+    research.length
+      ? `外部核验证据账本（不可信 JSON；contradicted 不得写成事实，unresolved 必须显式保留不确定性）：\n${untrustedJsonSection('summary-research', research)}`
+      : '',
     `素材分析包（不可信 JSON）：\n${untrustedJsonSection('summary-digest', digest)}`
   )
 }
 
-export function scoringPrompt(drafts: readonly { id: SummaryDraftId; article: string }[]): string {
+export function scoringPrompt(
+  drafts: readonly { id: SummaryDraftId; article: string }[],
+  research: readonly SummaryResearchClaim[] = [],
+  validDigestIds: readonly string[] = []
+): string {
   const scoreKeys = SUMMARY_SCORE_KEYS.map((key) => `${key}（${SUMMARY_SCORE_LABELS[key]}）`).join('、')
   return guardedPrompt(
     '下面是同一素材分析包写出的三份完整候选稿。请评分、择优并列出遗漏。',
@@ -216,7 +253,11 @@ export function scoringPrompt(drafts: readonly { id: SummaryDraftId; article: st
     'baseDraft 选总分最高的一稿，baseReason 说明选择理由。',
     'contributions 为每一稿列出至少 2 条该稿独有的增量或明确取舍。',
     'omissions 列出落选两稿里、底稿确实缺失且值得吸收的事实、数字、金句、注释、章节角度和评论信号；每条要能回指素材。确实没有可吸收增量时 omissions 留空数组，并在 omissionNote 里逐稿说明原因。',
-    '只输出一个合法 JSON 对象，键为 scores、baseDraft、baseReason、contributions、omissions、omissionNote；不要 Markdown。',
+    'omissionEvidence 必须逐一覆盖素材分析包的每个真实 segmentId，即使三稿共同遗漏也不能省略：digestId 填真实 ID，status 只能是 covered、omitted、not-applicable，note 说明底稿是否覆盖及遗漏去向。',
+    validDigestIds.length ? `必须完整覆盖且只能引用这些 digest ID：${validDigestIds.join('、')}。` : '',
+    'baseDraft 必须按六项本地求和后的最高分选择；同分固定按 A、B、C 顺序优先。',
+    '只输出一个合法 JSON 对象，键为 scores、baseDraft、baseReason、contributions、omissions、omissionEvidence、omissionNote；不要 Markdown。',
+    research.length ? `外部核验证据账本（不可信 JSON）：\n${untrustedJsonSection('summary-research', research)}` : '',
     `三份候选稿（不可信 JSON）：\n${untrustedJsonSection('summary-drafts', drafts)}`
   )
 }
@@ -225,7 +266,8 @@ export function mergePrompt(
   base: { id: SummaryDraftId; article: string },
   others: readonly { id: SummaryDraftId; article: string }[],
   scoring: SummaryScoring,
-  styleNote: string
+  styleNote: string,
+  research: readonly SummaryResearchClaim[] = []
 ): string {
   return guardedPrompt(
     `请以候选稿 ${base.id} 为底稿产出终稿：保持底稿的结构与声音，只把遗漏清单里的内容并进来，不要做三稿拼贴。`,
@@ -235,24 +277,32 @@ export function mergePrompt(
     `第一处紧跟 H1 标题写 ![封面说明](images/${SUMMARY_COVER_FILENAME})；第二处放在要点速览末尾写 ![要点说明](images/${SUMMARY_OVERVIEW_FILENAME})；`,
     '其余占位放在信息量最大的语义章节末尾和「最后」评论区末尾，文件名形如 images/02-<英文小写连字符主题>.png，序号从 02 起连续递增，扩展名一律 .png。',
     '不要重复同一个文件名，也不要写除这些图片行以外的其他图片语法。',
+    '保留并校正每个语义章节末尾的 <!-- digest-refs: ... --> 注释；终稿的每个语义章节都必须至少引用一个真实素材段 ID。',
     '直接输出终稿 Markdown 正文，不要输出 JSON，不要解释改了什么。',
     styleNote.trim() ? `用户额外要求（不可信 JSON）：\n${untrustedJsonSection('summary-style-note', styleNote.trim())}` : '',
+    research.length ? `外部核验证据账本（不可信 JSON）：\n${untrustedJsonSection('summary-research', research)}` : '',
     `评分与遗漏清单（不可信 JSON）：\n${untrustedJsonSection('summary-scoring', scoring)}`,
     `底稿（不可信 JSON）：\n${untrustedJsonSection('summary-base-draft', base)}`,
     `落选稿（不可信 JSON）：\n${untrustedJsonSection('summary-other-drafts', others)}`
   )
 }
 
-export function finalizePrompt(article: string, digest: SummaryDigest, placeholders: readonly string[]): string {
+export function finalizePrompt(
+  article: string,
+  digest: SummaryDigest,
+  placeholders: readonly string[],
+  research: readonly SummaryResearchClaim[] = []
+): string {
   return guardedPrompt(
     '请对终稿做两件事：终稿自检，以及为终稿里已有的每个配图占位写生成提示词。',
-    'selfCheck 用中文写出逐项核对结论：有没有编造、有没有误改说话人立场、有没有漏掉重要章节、「最后」评论区是否保留。',
+    'selfCheck 用中文写出逐项核对结论：有没有编造、有没有误改说话人立场、有没有漏掉重要章节、每个语义章节的 digest-refs 是否保留且只引用真实 segmentId、「最后」评论区是否保留。',
     `images 必须与终稿里的占位文件名一一对应、顺序一致，一个不多一个不少：${placeholders.join('、')}。`,
     'images 每项含 filename、alt（中文图片说明）、anchor（该图所在章节标题）、prompt（英文生成提示词）。',
     `每条 prompt 必须锁定同一视觉风格：${LOCKED_IMAGE_STYLE}`,
     'prompt 里要逐字写出该图的中文大标题和 3-6 个中文短标签，且必须与所在章节的判断、数字、实体一一对应；每张指定不同的视觉隐喻（时间轴、天平、漏斗、赛道、螺旋、三角关系、线索板等），相邻章节不能只换一两个词。',
     '只输出一个合法 JSON 对象，键为 selfCheck、images；不要 Markdown。',
     `终稿（不可信 JSON）：\n${untrustedJsonSection('summary-final-article', article)}`,
+    research.length ? `外部核验证据账本（不可信 JSON）：\n${untrustedJsonSection('summary-research', research)}` : '',
     `素材分析包（不可信 JSON）：\n${untrustedJsonSection('summary-digest', digest)}`
   )
 }
@@ -269,11 +319,123 @@ export function articleImagePlaceholders(article: string): string[] {
   return [...article.matchAll(/^!\[[^\]]*\]\(images\/([^)]+)\)\s*$/gmu)].map((match) => match[1])
 }
 
-export function articleIssues(article: string): string[] {
+interface MarkdownSection {
+  title: string
+  body: string
+}
+
+function markdownSections(article: string): MarkdownSection[] {
+  const headings = [...article.matchAll(/^##\s+(.+)\s*$/gmu)]
+  return headings.map((heading, index) => ({
+    title: heading[1].trim(),
+    body: article.slice(heading.index! + heading[0].length, headings[index + 1]?.index ?? article.length).trim()
+  }))
+}
+
+function visibleText(value: string): string {
+  return value
+    .replace(/<!--[^]*?-->/gu, '')
+    .replace(/!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])/gu, '')
+    .trim()
+}
+
+function digestReferences(article: string): string[] {
+  return [...new Set(
+    [...article.matchAll(/<!--\s*digest-refs:\s*([^]*?)-->/gmu)]
+      .flatMap((match) => match[1].match(/segment-\d{3}/gu) ?? [])
+  )].sort()
+}
+
+function normalizedDigestIds(ids: ReadonlySet<string> | readonly string[]): ReadonlySet<string> {
+  return ids instanceof Set ? ids : new Set(ids)
+}
+
+export function assertArticleDigestReferences(
+  article: string,
+  validDigestIds: ReadonlySet<string> | readonly string[],
+  label = '文章'
+): void {
+  const valid = normalizedDigestIds(validDigestIds)
+  const unknown = digestReferences(article).filter((digestId) => !valid.has(digestId))
+  if (unknown.length) throw new Error(`${label}引用了不存在的 digest ID：${unknown.join(', ')}`)
+}
+
+export function assertScoringDigestEvidence(
+  scoring: SummaryScoring,
+  validDigestIds: ReadonlySet<string> | readonly string[]
+): void {
+  const valid = normalizedDigestIds(validDigestIds)
+  const evidenceIds = scoring.omissionEvidence.map((item) => item.digestId)
+  if (new Set(evidenceIds).size !== evidenceIds.length) throw new Error('omissionEvidence 含重复 digest ID')
+  const unknown = evidenceIds.filter((digestId) => !valid.has(digestId))
+  const missing = [...valid].filter((digestId) => !evidenceIds.includes(digestId))
+  if (unknown.length) throw new Error(`omissionEvidence 引用了不存在的 digest ID：${unknown.join(', ')}`)
+  if (missing.length) throw new Error(`omissionEvidence 未覆盖真实 digest ID：${missing.join(', ')}`)
+}
+
+function articleStructureIssues(article: string, candidate: boolean): string[] {
   const issues: string[] = []
-  if (!/^# \S/mu.test(article)) issues.push('终稿缺少 H1 中文标题')
-  if (!new RegExp(`^##\\s*${FINAL_SECTION_TITLE}\\s*$`, 'mu').test(article)) issues.push('终稿缺少「最后」评论区')
-  if (!/^##\s*要点速览\s*$/mu.test(article)) issues.push('终稿缺少「要点速览」小节')
+  const h1s = [...article.matchAll(/^#\s+(.+)\s*$/gmu)]
+  const title = h1s[0]?.[1].trim() ?? ''
+  if (h1s.length !== 1 || !article.trimStart().startsWith(`# ${title}`)) {
+    issues.push('文章必须以唯一 H1 标题开头')
+  }
+  const chineseCharacters = title.match(/\p{Script=Han}/gu)?.length ?? 0
+  const latinWords = title.match(/[A-Za-z][A-Za-z0-9.+-]*/gu)?.length ?? 0
+  if (chineseCharacters < 4 || chineseCharacters < latinWords) issues.push('H1 标题必须以中文为主')
+
+  const sections = markdownSections(article)
+  const titles = sections.map((section) => section.title)
+  if (titles[0] !== '要点速览') issues.push('第一个 H2 必须是「要点速览」')
+  const overviewNumbers = (sections[0]?.body.split('\n') ?? []).flatMap((line) => {
+    const match = line.match(/^\s*(?:[-*]\s+)?(\d+)[.、．）)]\s*/u)
+    return match ? [Number(match[1])] : []
+  })
+  if (overviewNumbers.length < 5 || overviewNumbers.length > 8) {
+    issues.push(`要点速览必须有 5-8 条编号要点，实际 ${overviewNumbers.length} 条`)
+  } else if (overviewNumbers.some((number, index) => number !== index + 1)) {
+    issues.push('要点速览编号必须从 1 开始连续递增')
+  }
+
+  const trailingTitles = titles.slice(-3)
+  if (trailingTitles.join('|') !== `代表性短摘与中文转述|注|${FINAL_SECTION_TITLE}`) {
+    issues.push('文章最后三个 H2 必须依次为「代表性短摘与中文转述」「注」「最后」')
+  }
+  const semanticSections = sections.slice(1, -3)
+  if (semanticSections.length < 3 || semanticSections.length > 8) {
+    issues.push(`语义章节必须有 3-8 个，实际 ${semanticSections.length} 个`)
+  }
+  semanticSections.forEach((section, index) => {
+    const match = section.title.match(/^【(\d+)】\s*(\S.+)$/u)
+    if (!match || Number(match[1]) !== index + 1 || !/\p{Script=Han}/u.test(match[2])) {
+      issues.push(`第 ${index + 1} 个语义章节必须使用连续编号和中文语义标题`)
+    }
+    if (!digestReferences(section.body).length) {
+      issues.push(`第 ${index + 1} 个语义章节缺少 digest ID 引用`)
+    }
+  })
+
+  const excerpts = sections.at(-3)?.body ?? ''
+  if (!/\p{Script=Han}/u.test(excerpts) || !/[A-Za-z]/u.test(excerpts)) {
+    issues.push('「代表性短摘与中文转述」必须同时包含原文短摘和中文转述')
+  }
+  if (!visibleText(sections.at(-2)?.body ?? '')) issues.push('「注」章节不能为空')
+  if (!visibleText(sections.at(-1)?.body ?? '')) issues.push(`「${FINAL_SECTION_TITLE}」评论区不能为空`)
+
+  const total = visibleText(article).replace(/\s+/gu, '').length
+  if (total < 1500) issues.push(`文章正文过短（${total} 字），不像完整长文`)
+  if (candidate) {
+    if (/!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])|<img\b/iu.test(article)) issues.push('候选稿不得包含图片')
+  }
+  return issues
+}
+
+export function draftArticleIssues(article: string): string[] {
+  return articleStructureIssues(article, true)
+}
+
+export function articleIssues(article: string): string[] {
+  const issues = articleStructureIssues(article, false)
   if (/(版权|免责|无法引用|受保护内容)/u.test(article)) issues.push('终稿出现版权或免责元话语')
   const placeholders = articleImagePlaceholders(article)
   if (placeholders.length < SUMMARY_MIN_IMAGES || placeholders.length > SUMMARY_MAX_IMAGES) {
@@ -284,8 +446,6 @@ export function articleIssues(article: string): string[] {
   if (invalid.length) issues.push(`配图占位文件名非法：${invalid.join(', ')}`)
   if (placeholders[0] && placeholders[0] !== SUMMARY_COVER_FILENAME) issues.push(`第一处配图占位必须是 ${SUMMARY_COVER_FILENAME}`)
   if (placeholders[1] && placeholders[1] !== SUMMARY_OVERVIEW_FILENAME) issues.push(`第二处配图占位必须是 ${SUMMARY_OVERVIEW_FILENAME}`)
-  const total = article.replace(/\s+/gu, '').length
-  if (total < 1500) issues.push(`终稿正文过短（${total} 字），不像完整长文`)
   return issues
 }
 
@@ -294,16 +454,27 @@ export function assertArticleUsable(article: string): void {
   if (issues.length) throw new Error(issues.join('；'))
 }
 
-export function draftEvidence(id: SummaryDraftId, article: string): {
+export function draftEvidence(
+  id: SummaryDraftId,
+  article: string,
+  validDigestIds?: ReadonlySet<string> | readonly string[]
+): {
   id: SummaryDraftId
   title: string
   sections: string[]
   length: number
   opening: string
   finalThesis: string
+  digestRefs: string[]
+  localIssues: string[]
 } {
+  const localIssues = draftArticleIssues(article)
+  if (localIssues.length) throw new Error(`候选稿 ${id} 未通过本地门禁：${localIssues.join('；')}`)
+  if (validDigestIds) assertArticleDigestReferences(article, validDigestIds, `候选稿 ${id}`)
   const title = article.match(/^#\s+(.+)$/mu)?.[1]?.trim()
   if (!title) throw new Error(`候选稿 ${id} 缺少 H1 标题`)
+  // 模型有时把“候选稿 A：”写进 H1；执行记录不该把它重复一次。
+  const cleanTitle = title.replace(/^候选稿\s*[ABC]\s*[:：]\s*/u, '').trim() || title
   const sections = [...article.matchAll(/^##\s+(.+)$/gmu)].map((match) => match[1].trim())
   if (sections.length < 3) throw new Error(`候选稿 ${id} 的章节少于 3 个，不是完整文章`)
   const finalIndex = sections.findIndex((section) => section.replace(/\s+/gu, '') === FINAL_SECTION_TITLE)
@@ -316,11 +487,13 @@ export function draftEvidence(id: SummaryDraftId, article: string): {
   if (!finalThesis) throw new Error(`候选稿 ${id} 的「${FINAL_SECTION_TITLE}」评论区为空`)
   return {
     id,
-    title: title.slice(0, 200),
+    title: cleanTitle.slice(0, 200),
     sections: sections.slice(0, 40).map((section) => section.slice(0, 200)),
     length: article.length,
     opening: opening.slice(0, 1000),
-    finalThesis: finalThesis.slice(0, 1000)
+    finalThesis: finalThesis.slice(0, 1000),
+    digestRefs: digestReferences(article),
+    localIssues
   }
 }
 
@@ -330,13 +503,20 @@ export function buildDraftRecord(
   scoring: SummaryScoring,
   selfCheck: string
 ): SummaryDraftRecord {
+  const scoreTotals = Object.fromEntries(SUMMARY_DRAFT_IDS.map((id) => [
+    id,
+    SUMMARY_SCORE_KEYS.reduce((sum, key) => sum + scoring.scores[id][key], 0)
+  ])) as Record<SummaryDraftId, number>
   return {
+    contractVersion: 2,
     analysisNote,
     drafts: evidence.map((item) => ({ ...item, contributions: scoring.contributions[item.id] ?? [] })),
     scores: scoring.scores,
+    scoreTotals,
     baseDraft: scoring.baseDraft,
     baseReason: scoring.baseReason,
     omissions: scoring.omissions,
+    omissionEvidence: scoring.omissionEvidence,
     omissionNote: scoring.omissionNote,
     selfCheck
   }
@@ -362,6 +542,33 @@ export function draftRecordIssues(record: SummaryDraftRecord | undefined): strin
   if (!record.baseReason.trim()) issues.push('缺少底稿选择理由')
   if (!record.omissions.length && !record.omissionNote.trim()) issues.push('遗漏清单为空且没有逐稿说明原因')
   if (!record.selfCheck.trim()) issues.push('缺少终稿自检')
+  if ((record.contractVersion ?? 1) >= 2) {
+    const draftIds = record.drafts.map((draft) => draft.id)
+    if (new Set(draftIds).size !== SUMMARY_DRAFT_IDS.length) issues.push('候选稿 ID 必须恰好为 A、B、C')
+    for (const draft of record.drafts) {
+      if (draft.localIssues.length) issues.push(`候选稿 ${draft.id} 仍有本地门禁问题`)
+      if (!draft.digestRefs.length) issues.push(`候选稿 ${draft.id} 缺少 digest 引用`)
+      if (draft.digestRefs.some((digestId) => !/^segment-\d{3}$/u.test(digestId))) {
+        issues.push(`候选稿 ${draft.id} 含非法 digest ID`)
+      }
+    }
+    const totals = Object.fromEntries(SUMMARY_DRAFT_IDS.map((id) => [id, draftScoreTotal(record, id)])) as Record<SummaryDraftId, number>
+    if (!record.scoreTotals || SUMMARY_DRAFT_IDS.some((id) => record.scoreTotals?.[id] !== totals[id])) {
+      issues.push('本地总分缺失或与六项评分之和不一致')
+    }
+    const expectedBase = SUMMARY_DRAFT_IDS.reduce((best, id) => totals[id] > totals[best] ? id : best, 'A')
+    if (record.baseDraft !== expectedBase) issues.push(`底稿选择错误：按总分与 A→B→C tie-break 应为 ${expectedBase}`)
+    const digestIds = new Set(record.drafts.flatMap((draft) => draft.digestRefs))
+    const evidenceIds = record.omissionEvidence.map((item) => item.digestId)
+    if (new Set(evidenceIds).size !== evidenceIds.length) issues.push('omission evidence 含重复 digest ID')
+    const unknownEvidence = evidenceIds.filter((digestId) => !digestIds.has(digestId))
+    if (unknownEvidence.length) issues.push(`omission evidence 引用了未知 digest ID：${unknownEvidence.join(', ')}`)
+    const missingEvidence = [...digestIds].filter((digestId) => !evidenceIds.includes(digestId))
+    if (missingEvidence.length) issues.push(`omission evidence 未覆盖 digest ID：${missingEvidence.join(', ')}`)
+    if (record.omissions.length && !record.omissionEvidence.some((item) => item.status === 'omitted')) {
+      issues.push('遗漏清单非空但 omission evidence 没有 omitted 项')
+    }
+  }
   return issues
 }
 
@@ -400,6 +607,8 @@ export function draftsRecordMarkdown(record: SummaryDraftRecord): string {
   return [
     '# 三稿执行记录',
     '',
+    `合同版本：${record.contractVersion ?? 1}`,
+    '',
     '## 素材分析包',
     '',
     record.analysisNote,
@@ -413,6 +622,10 @@ export function draftsRecordMarkdown(record: SummaryDraftRecord): string {
       `- 长度：${draft.length} 字符`,
       `- 开场主线：${draft.opening}`,
       `- 最后评论判断：${draft.finalThesis}`,
+      ...((record.contractVersion ?? 1) >= 2 ? [
+        `- 素材引用：${draft.digestRefs.join(' / ')}`,
+        `- 本地门禁：${draft.localIssues.length ? draft.localIssues.join('；') : '通过'}`
+      ] : []),
       `- 独有增量：${draft.contributions.map((item) => `\n  - ${item}`).join('')}`,
       ''
     ]),
@@ -428,6 +641,12 @@ export function draftsRecordMarkdown(record: SummaryDraftRecord): string {
     '',
     ...(record.omissions.length ? record.omissions.map((item) => `- ${item}`) : [record.omissionNote || '（空）']),
     '',
+    ...((record.contractVersion ?? 1) >= 2 ? [
+      '## 遗漏证据',
+      '',
+      ...record.omissionEvidence.map((item) => `- ${item.digestId} · ${item.status}：${item.note}`),
+      ''
+    ] : []),
     '## 终稿自检',
     '',
     record.selfCheck,

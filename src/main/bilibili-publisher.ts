@@ -176,6 +176,7 @@ export class BilibiliPublisher {
 
   async considerAuto(taskDirectory: string): Promise<void> {
     const manifest = await this.options.store.load(taskDirectory)
+    if (manifest.kind !== 'subtitle') return
     if (!manifest.publication.autoPublish || manifest.pipeline.stages.verify?.status !== 'completed') return
     if (!['idle', 'waiting_config'].includes(manifest.publication.status) || this.hasTask(manifest.taskId)) return
     const template = this.options.settings().bilibiliPublishTemplate
@@ -392,6 +393,7 @@ export class BilibiliPublisher {
   }
 
   async #preflight(taskDirectory: string, manifest: TaskManifest, draft: BilibiliPublicationDraft): Promise<void> {
+    if (manifest.kind !== 'subtitle') throw new Error('只有双语硬字幕任务可以投稿')
     if (manifest.pipeline.stages.verify?.status !== 'completed') throw new Error('只有验证完成的任务才能投稿')
     const final = manifest.artifacts.final
     if (!final?.valid || !manifest.runtime.finalRelativePath) throw new Error('任务没有可投稿的有效成片')

@@ -88,7 +88,7 @@ test('turns the runtime footer red when a running stage finds a tool gone', asyn
     // Same as `brew uninstall ffmpeg ffmpeg-full` while Etch keeps running.
     await rm(join(fixture.binDirectory, 'ffmpeg'), { force: true })
 
-    await window.evaluate(() => window.etch.createUrls(['https://example.com/ffmpeg-vanished'], 'codex'))
+    await window.evaluate(() => window.etch.createUrls(['https://vimeo.com/100000006'], 'codex'))
 
     // The footer must follow the stage detection without anyone pressing 重新检测.
     await expect(footer).toHaveText('环境 8/9 可用', { timeout: 60_000 })

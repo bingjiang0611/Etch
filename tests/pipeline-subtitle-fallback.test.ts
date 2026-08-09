@@ -59,12 +59,13 @@ async function runSource(
   authenticationRequired = false,
   formatsUnavailable = false,
   fallbackFormatsUnavailable = false,
-  firstDownloadTimesOut = false
+  firstDownloadTimesOut = false,
+  url = 'https://youtube.com/watch?v=test'
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'etch-subtitle-fallback-'))
   directories.push(directory)
   const store = new TaskStore()
-  const manifest = createTaskManifest({ kind: 'url', url: 'https://youtube.com/watch?v=test' }, '', 'codex')
+  const manifest = createTaskManifest({ kind: 'url', url }, '', 'codex')
   for (const stage of STAGE_IDS) manifest.pipeline.stages[stage].status = stage === 'source' ? 'ready' : 'skipped'
   await store.create(directory, manifest)
 
@@ -154,6 +155,21 @@ describe('TaskPipeline independent subtitle fallback', () => {
     const { manifest } = await runSource({}, 1)
     expect(manifest.runtime.subtitleKind).toBe('whisper')
     expect(manifest.artifacts.english).toBeUndefined()
+  })
+
+  it('keeps Vimeo on the generic downloader path without YouTube credentials or subtitle probes', async () => {
+    const { manifest } = await runSource({}, 0, false, false, false, false, false, 'https://vimeo.com/100000009')
+    const ytDlpCalls = runProcessMock.mock.calls
+      .map(([spec]) => spec as { command: string; args: string[] })
+      .filter((spec) => spec.command === '/mock/yt-dlp')
+    expect(ytDlpCalls).toHaveLength(1)
+    expect(ytDlpCalls[0].args).toContain('--no-playlist')
+    expect(ytDlpCalls[0].args).not.toContain('--cookies-from-browser')
+    expect(ytDlpCalls[0].args).not.toContain('--remote-components')
+    expect(ytDlpCalls[0].args).not.toContain('--extractor-args')
+    expect(chromeCookieStateMock).not.toHaveBeenCalled()
+    expect(manifest.video.sourcePlatform).toBe('generic')
+    expect(manifest.runtime.subtitleKind).toBe('whisper')
   })
 
   it('retries without Chrome cookies when the browser database is unavailable', async () => {

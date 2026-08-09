@@ -3,6 +3,15 @@ export const WHISPER_MODEL = {
   revision: 'a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb'
 } as const
 
+const SINGLE_MEDIA_ARGS = [
+  '--no-playlist',
+  '--socket-timeout', '30',
+  '--retries', '3',
+  '--fragment-retries', '3'
+] as const
+
+const BOUNDED_MEDIA_ARGS = [...SINGLE_MEDIA_ARGS, '--max-filesize', '4G'] as const
+
 function browserCookieArgs(browserCookie: string | false): string[] {
   return browserCookie ? ['--cookies-from-browser', browserCookie] : []
 }
@@ -21,6 +30,7 @@ export function youtubeMediaFormatsUnavailable(stderr: string): boolean {
 
 export function youtubeSubtitleArgs(url: string, outputTemplate: string, browserCookie: string | false = 'chrome'): string[] {
   return [
+    ...SINGLE_MEDIA_ARGS,
     ...browserCookieArgs(browserCookie), '--remote-components', 'ejs:github',
     '--skip-download', '--write-info-json', '--write-subs', '--write-auto-subs', '--sub-langs', 'en.*,en',
     '--sub-format', 'srt/best', '--convert-subs', 'srt', '-o', outputTemplate, url
@@ -29,6 +39,7 @@ export function youtubeSubtitleArgs(url: string, outputTemplate: string, browser
 
 export function sourceDownloadArgs(url: string, ffmpegLocation: string, browserCookie: string | false = 'chrome'): string[] {
   return [
+    ...BOUNDED_MEDIA_ARGS,
     ...browserCookieArgs(browserCookie), '--remote-components', 'ejs:github',
     '--extractor-args', 'youtube:player_client=web_safari',
     '--ffmpeg-location', ffmpegLocation, '--continue', '--no-overwrites',
@@ -39,9 +50,20 @@ export function sourceDownloadArgs(url: string, ffmpegLocation: string, browserC
 
 export function sourceDownloadFallbackArgs(url: string, ffmpegLocation: string, browserCookie: string | false = 'chrome'): string[] {
   return [
+    ...BOUNDED_MEDIA_ARGS,
     ...browserCookieArgs(browserCookie), '--remote-components', 'ejs:github',
     '--ffmpeg-location', ffmpegLocation, '--continue', '--no-overwrites',
     '-f', 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/b',
+    '--merge-output-format', 'mp4', '--remux-video', 'mp4',
+    '--write-info-json', '--write-thumbnail', '-o', 'source.%(ext)s', url
+  ]
+}
+
+export function genericSourceDownloadArgs(url: string, ffmpegLocation: string): string[] {
+  return [
+    ...BOUNDED_MEDIA_ARGS,
+    '--ffmpeg-location', ffmpegLocation, '--continue', '--no-overwrites',
+    '-f', 'bv*[height<=1080]+ba/b[height<=1080]/b',
     '--merge-output-format', 'mp4', '--remux-video', 'mp4',
     '--write-info-json', '--write-thumbnail', '-o', 'source.%(ext)s', url
   ]

@@ -307,6 +307,7 @@ export class HistoricalGlossaryService {
   }
 
   async #loadCandidates(taskDirectory: string, manifest: TaskManifest): Promise<HistoricalCandidate[] | undefined> {
+    if (manifest.kind !== 'subtitle') return undefined
     const delivered = STAGE_IDS.every((stage) => ['completed', 'skipped'].includes(manifest.pipeline.stages[stage]?.status))
     const reviewed = manifest.pipeline.stages.review?.status === 'completed'
     const verified = manifest.pipeline.stages.verify?.status === 'completed'

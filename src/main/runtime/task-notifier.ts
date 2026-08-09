@@ -1,5 +1,5 @@
 import type { AppSettings } from '../../shared/settings-schema'
-import { STAGE_IDS, type TaskManifest } from '../../shared/task-schema'
+import { STAGE_IDS, lastStageForKind, type TaskManifest } from '../../shared/task-schema'
 
 type NotificationKind = keyof AppSettings['notifications']
 type TaskSignals = Record<NotificationKind, string | undefined>
@@ -30,7 +30,7 @@ export class TaskNotifier {
 
     for (const kind of ['completion', 'failure', 'checkpoint'] as const) {
       if (!next[kind] || next[kind] === previous[kind] || !this.settings()[kind]) continue
-      this.adapter.show(manifest.title, notificationBody(kind), () => this.adapter.focusWindow())
+      this.adapter.show(manifest.title, notificationBody(kind, manifest), () => this.adapter.focusWindow())
     }
   }
 
@@ -42,9 +42,10 @@ export class TaskNotifier {
 function signals(manifest: TaskManifest): TaskSignals {
   const failedStage = STAGE_IDS.find((stage) => manifest.pipeline.stages[stage]?.status === 'failed')
   const checkpointStage = STAGE_IDS.find((stage) => manifest.pipeline.stages[stage]?.status === 'checkpoint')
+  const finalStage = lastStageForKind(manifest.kind)
   return {
-    completion: manifest.pipeline.stages.verify?.status === 'completed'
-      ? `verify:${manifest.artifacts.final?.sha256 ?? manifest.revision}`
+    completion: manifest.pipeline.stages[finalStage]?.status === 'completed'
+      ? `${finalStage}:${manifest.runtime.completedAt ?? manifest.revision}`
       : undefined,
     failure: failedStage
       ? `${failedStage}:${manifest.pipeline.stages[failedStage].attempt}:${manifest.pipeline.stages[failedStage].errorCode ?? ''}`
@@ -55,8 +56,12 @@ function signals(manifest: TaskManifest): TaskSignals {
   }
 }
 
-function notificationBody(kind: NotificationKind): string {
-  if (kind === 'completion') return '成片处理已完成'
+function notificationBody(kind: NotificationKind, manifest: TaskManifest): string {
+  if (kind === 'completion') {
+    if (manifest.kind === 'document') return '网页翻译已完成'
+    if (manifest.kind === 'summary') return '视频总结已完成'
+    return '成片处理已完成'
+  }
   if (kind === 'failure') return '任务处理失败，请打开 Etch 查看详情'
   return '任务正在等待你的确认'
 }

@@ -10,6 +10,19 @@ export { SubtitlePresetSchema, type SubtitlePreset }
 export const ThemePreferenceSchema = z.enum(['system', 'light', 'dark'])
 export type ThemePreference = z.infer<typeof ThemePreferenceSchema>
 
+// 分类色只引用已有语义 token，不新增品牌色；分类本体存在设置里，任务只存 id。
+export const TASK_CATEGORY_COLORS = ['blue', 'ok', 'warn', 'audit', 'danger', 'idle'] as const
+export const TaskCategoryColorSchema = z.enum(TASK_CATEGORY_COLORS)
+export type TaskCategoryColor = z.infer<typeof TaskCategoryColorSchema>
+export const TASK_CATEGORY_NAME_MAX = 20
+export const TASK_CATEGORY_MAX = 30
+export const TaskCategorySchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().trim().min(1).max(TASK_CATEGORY_NAME_MAX),
+  color: TaskCategoryColorSchema
+})
+export type TaskCategory = z.infer<typeof TaskCategorySchema>
+
 export const AppSettingsSchema = z.object({
   schemaVersion: z.literal(2),
   workspaceRoot: z.string().min(1),
@@ -23,6 +36,7 @@ export const AppSettingsSchema = z.object({
   subtitlePreset: SubtitlePresetSchema,
   theme: ThemePreferenceSchema.default('system'),
   globalGlossary: z.record(z.string(), z.string()).default({}),
+  taskCategories: z.array(TaskCategorySchema).max(TASK_CATEGORY_MAX).default([]),
   bilibiliPublishTemplate: BilibiliPublishTemplateSchema
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>
@@ -53,6 +67,7 @@ export function defaultSettings(homeDirectory: string): AppSettings {
     subtitlePreset: 'standard',
     theme: 'system',
     globalGlossary: {},
+    taskCategories: [],
     bilibiliPublishTemplate: {}
   })
 }

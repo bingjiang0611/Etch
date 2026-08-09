@@ -51,7 +51,7 @@ async function sourceFixture(onManifest: () => void = () => undefined) {
   const directory = await mkdtemp(join(tmpdir(), 'etch-artifact-publish-'))
   directories.push(directory)
   const store = new TaskStore()
-  const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/video' })
+  const manifest = createTaskManifest({ kind: 'url', url: 'https://vimeo.com/100000003' })
   for (const stage of STAGE_IDS) manifest.pipeline.stages[stage].status = stage === 'source' ? 'ready' : 'skipped'
   await store.create(directory, manifest)
   await writeFile(join(directory, 'source.mp4'), 'existing canonical bytes')

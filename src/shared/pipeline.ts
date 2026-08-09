@@ -22,6 +22,7 @@ export const POOL_BY_STAGE: Partial<Record<StageId, PoolKind>> = {
   audit: 'audit',
   burn: 'ffmpeg',
   digest: 'agent',
+  research: 'agent',
   summary: 'agent',
   illustrate: 'image'
 }

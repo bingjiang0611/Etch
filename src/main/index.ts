@@ -3,10 +3,11 @@ import { constants as fsConstants } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, safeStorage, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
-import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, ExportSummaryResultSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ResolveIllustrationAgentSchema, ResolveIllustrationCoverSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, SummaryImageDataUrlSchema, SummaryImagePayloadSchema, SummaryPageSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, safeStorage, session, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
+import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateCompanionSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, DocumentHtmlPageSchema, DocumentPageSchema, ExportDocumentHtmlResultSchema, ExportDocumentResultSchema, ExportSummaryResultSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ResolveDocumentHtmlStyleSchema, ResolveDocumentTranslationCostSchema, ResolveIllustrationAgentSchema, ResolveIllustrationCoverSchema, ResolveResearchCheckpointSchema, ResolveVideoCheckpointSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, SetTaskCategoryPayloadSchema, StartDocumentHtmlSchema, SummaryImageDataUrlSchema, SummaryImagePayloadSchema, SummaryPageSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateDocumentTranslationSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
 import { ToolIdSchema, type ThemePreference, type ToolId } from '../shared/settings-schema'
-import { createTaskManifest, type ProviderId } from '../shared/task-schema'
+import { createTaskManifest, taskThumbnailArtifact, type ProviderId } from '../shared/task-schema'
+import { isSupportedMediaSourceUrl } from '../shared/media-source'
 import { chromeCookieState, fullDiskAccessSettingsUrl } from './media/browser-cookies'
 import { IndexStore } from './storage/index-store'
 import { HiddenTaskStore } from './storage/hidden-task-store'
@@ -28,6 +29,8 @@ import { moveTaskToTrash, removeTaskRecord, revealTaskInFinder, type DeleteClean
 import { TaskReviewService } from './task-review'
 import { TaskThumbnailService } from './task-thumbnail'
 import { SummaryService } from './summary-service'
+import { DocumentService } from './document-service'
+import { DocumentHtmlService, type DocumentHtmlBrowserVerifier } from './document-html-service'
 import { RunRegistry } from './runtime/run-registry'
 import { removeStaleCodexTextOnlyExecutableSnapshots } from './providers/codex-capability'
 import { confirmProviderRecovery, recoverProviderRunsAtStartup } from './runtime/startup-recovery'
@@ -35,6 +38,7 @@ import { runProcess, type ProcessSpec } from './runtime/process-runner'
 import { ENVIRONMENT_RUN_STAGE, coordinateShutdown, handleShutdownResult, type ShutdownMode } from './runtime/shutdown-coordinator'
 import { PipelinePowerManager } from './runtime/power'
 import { TaskNotifier } from './runtime/task-notifier'
+import { createCompanionManifest } from './task-companion'
 import { AsyncRunScope } from './runtime/async-run-scope'
 import { isVideoFullscreenEscape } from './video-fullscreen'
 import { BilibiliAuthService } from './bilibili-auth'
@@ -70,9 +74,11 @@ let runtimeDiagnostics: RuntimeDiagnostics = {
 }
 const taskStore = new TaskStore()
 const deletingTaskIds = new Set<string>()
+const creatingCompanionRootIds = new Set<string>()
 const videoFullscreenWindowIds = new Set<number>()
 const taskThumbnails = new TaskThumbnailService()
-const summaries = new SummaryService()
+const decodePng = (bytes: Buffer): boolean => !nativeImage.createFromBuffer(bytes).isEmpty()
+const summaries = new SummaryService(decodePng)
 
 if (process.env.ETCH_USER_DATA_DIR) app.setPath('userData', process.env.ETCH_USER_DATA_DIR)
 const isolatedE2EInstance = process.env.ETCH_E2E_ALLOW_MULTIPLE_INSTANCES === '1' && Boolean(process.env.ETCH_USER_DATA_DIR)
@@ -252,6 +258,67 @@ function createWindow(): BrowserWindow {
   return window
 }
 
+const verifyDocumentHtmlInBrowser: DocumentHtmlBrowserVerifier = async (htmlPath, desktopScreenshotPath, mobileScreenshotPath) => {
+  const issues = new Set<string>()
+  const partition = `etch-document-html-verifier-${randomUUID()}`
+  const verifierSession = session.fromPartition(partition, { cache: false })
+  verifierSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
+    (details, callback) => {
+      issues.add(`阻止外部请求：${new URL(details.url).protocol}`)
+      callback({ cancel: true })
+    }
+  )
+  const verifyViewport = async (label: 'desktop' | 'mobile', width: number, height: number, screenshotPath: string): Promise<void> => {
+    const window = new BrowserWindow({
+      show: false,
+      width,
+      height,
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, partition }
+    })
+    window.webContents.setWindowOpenHandler(() => {
+      issues.add(`${label} 视口尝试打开新窗口`)
+      return { action: 'deny' }
+    })
+    window.webContents.on('will-navigate', (event) => {
+      event.preventDefault()
+      issues.add(`${label} 视口尝试离开验收页面`)
+    })
+    window.webContents.on('will-attach-webview', (event) => {
+      event.preventDefault()
+      issues.add(`${label} 视口尝试附加 webview`)
+    })
+    try {
+      await window.loadFile(htmlPath)
+      const result = await window.webContents.executeJavaScript(`(async () => {
+        await Promise.race([document.fonts.ready, new Promise((resolve) => setTimeout(resolve, 5000))]);
+        const ids = [...document.querySelectorAll('[id]')].map((element) => element.id);
+        const brokenImages = [...document.images].filter((image) => !image.complete || image.naturalWidth < 1).length;
+        return {
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+          duplicateIds: ids.filter((id, index) => ids.indexOf(id) !== index),
+          brokenImages,
+          fontsLoaded: document.fonts.status === 'loaded'
+        };
+      })()`) as { overflow: boolean; duplicateIds: string[]; brokenImages: number; fontsLoaded: boolean }
+      if (result.overflow) issues.add(`${label} 视口存在横向溢出`)
+      if (result.duplicateIds.length) issues.add(`存在重复 id：${[...new Set(result.duplicateIds)].join(', ')}`)
+      if (result.brokenImages) issues.add(`${label} 视口有 ${result.brokenImages} 张图片加载失败`)
+      if (!result.fontsLoaded) issues.add(`${label} 视口字体加载未完成`)
+      await writeFile(screenshotPath, (await window.webContents.capturePage()).toPNG())
+    } finally {
+      if (!window.isDestroyed()) window.destroy()
+    }
+  }
+  try {
+    await verifyViewport('desktop', 1440, 1000, desktopScreenshotPath)
+    await verifyViewport('mobile', 390, 844, mobileScreenshotPath)
+    return { issues: [...issues] }
+  } finally {
+    verifierSession.webRequest.onBeforeRequest(null)
+  }
+}
+
 function showSettings(): void {
   if (!initialized) return
   if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
@@ -363,10 +430,13 @@ ipcMain.handle('app:bootstrap', async () => {
 
 function queuePage(offset = 0, limit = 100): unknown {
   if (!indexStore) throw new Error('Etch 尚未初始化')
-  const items = indexStore.list(Math.min(Math.max(limit, 1), 100), Math.max(offset, 0)).map(({ taskId, title, kind, status, revision, updatedAt, location }) => ({
+  const items = indexStore.list(Math.min(Math.max(limit, 1), 100), Math.max(offset, 0)).map(({ taskId, rootTaskId, reusedFromTaskId, title, kind, category, status, revision, updatedAt, location }) => ({
     taskId,
+    rootTaskId: rootTaskId ?? taskId,
+    reusedFromTaskId,
     title,
     kind,
+    category,
     status,
     revision,
     updatedAt,
@@ -501,7 +571,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     }
     try { taskNotifier.observe(manifest) }
     catch (error) { console.error('task notification observer failed', { taskId: manifest.taskId, revision: manifest.revision, error }) }
-    if (manifest.pipeline.stages.verify.status === 'completed') {
+    if (manifest.kind === 'subtitle' && manifest.pipeline.stages.verify.status === 'completed') {
       void historicalGlossary.sync().catch((error) => console.error('global glossary sync failed', error))
       if (!recoveryHold) void publisher.considerAuto(taskDirectory).catch((error) => console.error('B站自动投稿排队失败', { taskId: manifest.taskId, error }))
     }
@@ -514,7 +584,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   }, (health) => {
     if (!mainWindow || mainWindow.isDestroyed()) return
     mainWindow.webContents.send('tools:health-changed', ToolHealthSnapshotSchema.parse(health))
-  })
+  }, undefined, (url) => session.defaultSession.resolveProxy(url), decodePng)
   activePipeline = pipeline
   const sidecarPath = app.isPackaged
     ? join(process.resourcesPath, 'biliup', 'biliup')
@@ -561,16 +631,22 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   const startPendingPublications = (): void => {
     if (recoveryHold) return
     for (const task of indexStore!.all()) {
+      if (task.kind !== 'subtitle') continue
       void publisher!.considerAuto(task.location).catch((error) => console.error('B站自动投稿排队失败', { taskId: task.taskId, error }))
     }
   }
   restartPendingTasks = startPendingTasks
   const review = new TaskReviewService(taskStore, (taskDirectory) => pipeline.isRunning(taskDirectory), publishManifest)
+  const documents = new DocumentService(taskStore, indexStore!, () => mainWindow)
+  const documentHtml = new DocumentHtmlService(taskStore, indexStore!, verifyDocumentHtmlInBrowser)
+  await documentHtml.recoverInterrupted()
   const detail = async (taskId: string): Promise<unknown> => {
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
     const manifest = await taskStore.load(indexed.location)
-    const artifact = manifest.runtime.finalRelativePath && manifest.artifacts.final?.valid ? manifest.artifacts.final : manifest.artifacts.source
+    const artifact = manifest.kind === 'document'
+      ? undefined
+      : manifest.runtime.finalRelativePath && manifest.artifacts.final?.valid ? manifest.artifacts.final : manifest.artifacts.source
     let mediaUrl: string | undefined
     if (artifact) {
       const root = resolve(indexed.location)
@@ -581,12 +657,60 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   }
   ipcMain.handle('queue:page', (_event, raw) => queuePage(Number(raw?.offset ?? 0), Number(raw?.limit ?? 100)))
   ipcMain.handle('task:detail', async (_event, raw) => detail(TaskIdPayloadSchema.parse(raw).taskId))
+  ipcMain.handle('task:document-page', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    return DocumentPageSchema.parse(await documents.page(taskId))
+  })
+  ipcMain.handle('task:update-document-translation', async (_event, raw) => {
+    const { taskId, expectedRevision, markdown } = UpdateDocumentTranslationSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    await documents.updateTranslation(taskId, expectedRevision, markdown)
+    return detail(taskId)
+  })
+  ipcMain.handle('task:export-document', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    return ExportDocumentResultSchema.parse(await documents.export(taskId))
+  })
+  ipcMain.handle('task:open-document-source', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    await documents.openSource(taskId)
+  })
+  ipcMain.handle('task:document-html-page', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    return DocumentHtmlPageSchema.parse(await documentHtml.page(taskId))
+  })
+  ipcMain.handle('task:start-document-html', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, expectedRevision, route, templateId } = StartDocumentHtmlSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    await documentHtml.start(taskId, expectedRevision, route, templateId)
+    return detail(taskId)
+  })
+  ipcMain.handle('task:resolve-document-html-style', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, expectedRevision, direction } = ResolveDocumentHtmlStyleSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    await documentHtml.resolveStyle(taskId, expectedRevision, direction)
+    return detail(taskId)
+  })
+  ipcMain.handle('task:export-document-html', async (_event, raw) => {
+    const { taskId } = TaskIdPayloadSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const options = { title: '选择 HTML 导出位置', properties: ['openDirectory' as const, 'createDirectory' as const] }
+    const selection = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    if (selection.canceled || !selection.filePaths[0]) return ExportDocumentHtmlResultSchema.parse({ cancelled: true })
+    const path = await documentHtml.exportTo(taskId, selection.filePaths[0])
+    return ExportDocumentHtmlResultSchema.parse({ cancelled: false, path })
+  })
   ipcMain.handle('task:thumbnail', async (_event, raw) => {
     const { taskId, expectedSha256 } = TaskThumbnailPayloadSchema.parse(raw)
     const indexed = indexStore!.get(taskId)
     if (!indexed) return undefined
     const manifest = await taskStore.load(indexed.location)
-    const artifact = manifest.artifacts.thumbnail
+    const artifact = taskThumbnailArtifact(manifest)
     if (!artifact?.valid || artifact.sha256 !== expectedSha256) return undefined
     try {
       return TaskThumbnailDataUrlSchema.parse(await taskThumbnails.read(taskId, indexed.location, artifact))
@@ -604,12 +728,14 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const { taskId, offset, limit } = ReviewPagePayloadSchema.parse(raw)
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     return review.page(indexed.location, offset, limit)
   })
   ipcMain.handle('task:review-timeline-window', async (_event, raw) => {
     const payload = ReviewTimelineWindowPayloadSchema.parse(raw)
     const indexed = indexStore!.get(payload.taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     return ReviewTimelineWindowSchema.parse(await review.timelineWindow(indexed.location, payload))
   })
   ipcMain.handle('glossary:catalog-page', async (_event, raw) => {
@@ -627,6 +753,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     await review.update(indexed.location, expectedRevision, edits)
     return detail(taskId)
   })
@@ -635,6 +762,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     await review.updateGlossary(indexed.location, expectedRevision, edits)
     return detail(taskId)
   })
@@ -643,6 +771,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     await review.updateSubtitlePreset(indexed.location, expectedRevision, preset)
     return detail(taskId)
   })
@@ -651,6 +780,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     return GlossaryImpactPreviewSchema.parse(await review.previewGlossaryApply(indexed.location, expectedRevision, edits))
   })
   ipcMain.handle('task:apply-glossary', async (_event, raw) => {
@@ -658,6 +788,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     const applied = await review.applyGlossary(indexed.location, expectedRevision, impactFingerprint, edits)
     return GlossaryApplyResultSchema.parse({ detail: await detail(taskId), preview: applied.preview })
   })
@@ -712,6 +843,18 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       deletingTaskIds.delete(taskId)
     }
   })
+  ipcMain.handle('task:set-category', async (_event, raw) => {
+    const { taskId, category } = SetTaskCategoryPayloadSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    // 分类只是归档位，不碰阶段状态，所以运行中的任务也允许改。
+    const manifest = await taskStore.mutate(indexed.location, (draft) => {
+      draft.category = category
+    })
+    indexStore!.upsert(indexed.location, manifest)
+    return queuePage()
+  })
   ipcMain.handle('recovery:state', () => RecoveryStateSchema.parse({ hold: recoveryHold, interruptedTasks }))
   ipcMain.handle('recovery:release', async () => {
     const confirmation = await confirmProviderRecovery(runRegistry, appStateStore!)
@@ -726,7 +869,41 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
     await pipeline.resolveAudit(indexed.location, decisions)
+    if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
+    return detail(taskId)
+  })
+  ipcMain.handle('task:resolve-video-checkpoint', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, expectedRevision, decision } = ResolveVideoCheckpointSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind === 'document') throw new Error('当前任务不是视频任务')
+    await pipeline.resolveVideoCheckpoint(indexed.location, expectedRevision, decision)
+    if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
+    return detail(taskId)
+  })
+  ipcMain.handle('task:resolve-research-checkpoint', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, expectedRevision, decision } = ResolveResearchCheckpointSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'summary') throw new Error('当前任务不是视频总结任务')
+    await pipeline.resolveResearchCheckpoint(indexed.location, expectedRevision, decision)
+    if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
+    return detail(taskId)
+  })
+  ipcMain.handle('task:resolve-document-translation-cost', async (_event, raw) => {
+    assertRecoveryReleased()
+    const { taskId, expectedRevision, decision } = ResolveDocumentTranslationCostSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
+    const indexed = indexStore!.get(taskId)
+    if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'document') throw new Error('当前任务不是网页翻译任务')
+    await pipeline.resolveDocumentTranslationCost(indexed.location, expectedRevision, decision)
     if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
     return detail(taskId)
   })
@@ -736,6 +913,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'summary') throw new Error('当前任务不是视频总结任务')
     await pipeline.resolveIllustrationAgent(indexed.location, expectedRevision, choice)
     if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
     return detail(taskId)
@@ -746,6 +924,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'summary') throw new Error('当前任务不是视频总结任务')
     await pipeline.resolveIllustrationCover(indexed.location, expectedRevision, decision)
     if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
     return detail(taskId)
@@ -755,6 +934,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
     const manifest = await taskStore.load(indexed.location)
+    if (manifest.kind !== 'summary') throw new Error('当前任务不是视频总结任务')
     return SummaryPageSchema.parse(await summaries.page(taskId, indexed.location, manifest))
   })
   ipcMain.handle('task:summary-image', async (_event, raw) => {
@@ -762,6 +942,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const indexed = indexStore!.get(taskId)
     if (!indexed) return undefined
     const manifest = await taskStore.load(indexed.location)
+    if (manifest.kind !== 'summary') return undefined
     try {
       return SummaryImageDataUrlSchema.parse(await summaries.image(taskId, indexed.location, manifest, filename, expectedSha256))
     } catch (error) {
@@ -775,6 +956,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
     const manifest = await taskStore.load(indexed.location)
+    if (manifest.kind !== 'summary') throw new Error('当前任务不是视频总结任务')
     const options = { title: '选择总结导出位置', properties: ['openDirectory' as const, 'createDirectory' as const] }
     const selection = mainWindow && !mainWindow.isDestroyed()
       ? await dialog.showOpenDialog(mainWindow, options)
@@ -848,6 +1030,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (publisher!.hasTask(taskId)) throw new Error('投稿已经开始，不能再更换封面')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('只有硬字幕视频可以投稿 B站')
     const result = mainWindow && !mainWindow.isDestroyed()
       ? await dialog.showOpenDialog(mainWindow, { title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
       : await dialog.showOpenDialog({ title: '选择 B站投稿封面', properties: ['openFile'], filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
@@ -867,6 +1050,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('只有硬字幕视频可以投稿 B站')
     await publisher!.start(indexed.location, draft)
     return detail(taskId)
   })
@@ -874,6 +1058,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const { taskId } = TaskIdPayloadSchema.parse(raw)
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('只有硬字幕视频可以投稿 B站')
     await publisher!.stop(indexed.location)
     return detail(taskId)
   })
@@ -882,6 +1067,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const { taskId } = TaskIdPayloadSchema.parse(raw)
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
+    if (indexed.kind !== 'subtitle') throw new Error('只有硬字幕视频可以投稿 B站')
     await publisher!.continue(indexed.location)
     return detail(taskId)
   })
@@ -912,8 +1098,26 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   })
   ipcMain.handle('task:create-urls', async (_event, raw) => {
     const payload = CreateUrlsSchema.parse(raw)
+    if (payload.kind !== 'document') {
+      const unsupported = payload.urls.find((url) => !isSupportedMediaSourceUrl(url))
+      if (unsupported) throw new Error('视频链接仅支持 YouTube、Vimeo、X 或 Twitter 的公开 HTTPS URL')
+    }
     for (const url of payload.urls) {
-      const manifest = createTaskManifest({ kind: 'url', url }, '', payload.provider, payload.styleNote, settings.subtitlePreset, payload.autoPublish, payload.kind)
+      const documentProvider = payload.kind === 'document' && payload.documentMode === 'convert' ? undefined : payload.provider
+      const manifest = createTaskManifest(
+        { kind: 'url', url },
+        '',
+        documentProvider,
+        payload.styleNote,
+        settings.subtitlePreset,
+        payload.autoPublish,
+        payload.kind,
+        payload.category,
+        payload.documentMode,
+        payload.documentTranslationMode,
+        payload.documentAudience,
+        payload.documentWritingStyle
+      )
       const safeTitle = 'pending'
       const taskDirectory = join(settings.workspaceRoot, `${safeTitle}--${manifest.taskId.slice(0, 8)}`)
       await mkdir(taskDirectory, { recursive: true })
@@ -923,6 +1127,40 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     }
     startPendingTasks()
     return queuePage()
+  })
+  ipcMain.handle('task:create-companion', async (_event, raw) => {
+    assertRecoveryReleased()
+    const payload = CreateCompanionSchema.parse(raw)
+    const sourceTask = indexStore!.get(payload.taskId)
+    if (!sourceTask || deletingTaskIds.has(payload.taskId)) throw new Error('任务不存在或正在删除')
+    if (sourceTask.kind === 'document') throw new Error('网页翻译任务不支持追加视频成果')
+    const targetKind = sourceTask.kind === 'subtitle' ? 'summary' : 'subtitle'
+    const sourceRootTaskId = sourceTask.rootTaskId ?? sourceTask.taskId
+    if (creatingCompanionRootIds.has(sourceRootTaskId)) throw new Error('另一种成果正在创建，请稍候')
+    creatingCompanionRootIds.add(sourceRootTaskId)
+    try {
+      const existing = indexStore!.all().find((task) => (task.rootTaskId ?? task.taskId) === sourceRootTaskId && task.kind === targetKind)
+      if (existing) return detail(existing.taskId)
+
+      const source = await taskStore.load(sourceTask.location)
+      const targetTaskId = randomUUID()
+      const targetDirectory = join(settings.workspaceRoot, `pending--${targetTaskId.slice(0, 8)}`)
+      let registered = false
+      try {
+        const manifest = await createCompanionManifest(sourceTask.location, targetDirectory, source, { ...payload, targetTaskId })
+        await taskStore.create(targetDirectory, manifest)
+        await registry.addTaskLocation(targetDirectory)
+        registered = true
+        indexStore!.upsert(targetDirectory, manifest)
+        restartPendingTasks?.()
+        return detail(manifest.taskId)
+      } catch (error) {
+        if (!registered) await rm(targetDirectory, { recursive: true, force: true }).catch(() => undefined)
+        throw error
+      }
+    } finally {
+      creatingCompanionRootIds.delete(sourceRootTaskId)
+    }
   })
   initialized = true
   mainWindow = createWindow()

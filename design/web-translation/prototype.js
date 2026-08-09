@@ -253,3 +253,4 @@
   renderRoutes()
   setView('new-task')
 })()
+/* global document, window, clearTimeout, URL, FormData, getComputedStyle */

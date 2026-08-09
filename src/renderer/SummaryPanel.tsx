@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ImageCapabilityInfo, SummaryPage, TaskDetail } from '../shared/ipc'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ImageCapabilityInfo, SummaryPage, TaskDetail, ToolHealthSnapshot } from '../shared/ipc'
 import { SUMMARY_DRAFT_IDS, SUMMARY_SCORE_KEYS, SUMMARY_SCORE_LABELS, summaryImageArtifactKey, type ModelSelection, type ProviderId } from '../shared/task-schema'
+import { providerAvailability } from './provider-availability'
 import { parseSummaryMarkdown, type InlineToken, type SummaryBlock } from './summary-markdown'
 import { Icon, providerNames } from './ui'
 
@@ -142,14 +143,6 @@ export function SummaryPanel({ taskId, page, error }: { taskId: string; page?: S
           配图 {page.images.length - pending.length} / {page.images.length}
           {pending.length ? ` · ${pending.length} 张待补` : ''}
         </span>
-        <span className="summary-toolbar-actions">
-          <button className="text-button" type="button" onClick={() => { void window.etch.revealTask(taskId) }}>
-            在 Finder 中显示
-          </button>
-          <button className="text-button" type="button" disabled={exporting} onClick={() => { void exportSummary() }}>
-            {exporting ? '正在导出…' : '导出总结'}
-          </button>
-        </span>
       </div>
       {exportNotice && <p className="summary-notice" role="status">{exportNotice}</p>}
       <SummaryBody taskId={taskId} page={page} />
@@ -167,6 +160,14 @@ export function SummaryPanel({ taskId, page, error }: { taskId: string; page?: S
           </ul>
         </section>
       )}
+      <footer className="summary-actions">
+        <button className="secondary-button" type="button" onClick={() => { void window.etch.revealTask(taskId) }}>
+          在 Finder 中显示
+        </button>
+        <button className="primary-button" type="button" disabled={exporting} onClick={() => { void exportSummary() }}>
+          {exporting ? '正在导出…' : '导出总结'}
+        </button>
+      </footer>
     </div>
   )
 }
@@ -235,6 +236,7 @@ export function SummaryDraftsPanel({ page }: { page?: SummaryPage }): React.JSX.
 interface IllustrationCheckpointEditorProps {
   detail: TaskDetail
   capabilities: readonly ImageCapabilityInfo[]
+  toolHealth: readonly ToolHealthSnapshot[]
   busy: boolean
   onResolveAgent: (choice: IllustrationChoice) => Promise<void>
   onResolveCover: (decision: 'accept' | 'retry-with-agent' | 'skip') => Promise<void>
@@ -243,27 +245,57 @@ interface IllustrationCheckpointEditorProps {
 export function IllustrationCheckpointEditor({
   detail,
   capabilities,
+  toolHealth,
   busy,
   onResolveAgent,
   onResolveCover,
 }: IllustrationCheckpointEditorProps): React.JSX.Element | null {
   const stage = detail.manifest.pipeline.stages.illustrate
   const checkpointId = stage?.status === 'checkpoint' ? stage.checkpointId : undefined
-  const available = capabilities.filter((capability) => capability.available)
+  // 有图像能力不等于本机 CLI 就绪，两者都满足才能选。
+  const options = capabilities.map((capability) => {
+    const cli = providerAvailability(capability.provider, toolHealth)
+    return {
+      ...capability,
+      selectable: capability.available && cli.available,
+      note: !capability.available
+        ? capability.reason ?? '不具备配图能力'
+        : cli.available
+          ? cli.summary ?? '已就绪'
+          : `CLI 不可用：${cli.summary ?? '环境尚未检测'}`,
+    }
+  })
+  const available = options.filter((option) => option.selectable)
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>()
   const provider = selectedProvider ?? available[0]?.provider
   const [modelId, setModelId] = useState('')
+  const [coverCollapsed, setCoverCollapsed] = useState(false)
   const coverSha = detail.manifest.artifacts[summaryImageArtifactKey('00-cover.png')]?.sha256
   const [coverUrl, setCoverUrl] = useState<string>()
+  const [coverState, setCoverState] = useState<'loading' | 'ready' | 'error'>('loading')
   const taskId = detail.manifest.taskId
-  const requestedCover = useRef<string | undefined>(undefined)
 
   useEffect(() => {
-    if (checkpointId !== 'illustration-cover' || !coverSha || requestedCover.current === coverSha) return
-    requestedCover.current = coverSha
+    let cancelled = false
+    if (checkpointId !== 'illustration-cover' || !coverSha) {
+      setCoverUrl(undefined)
+      setCoverState('loading')
+      return () => { cancelled = true }
+    }
+    setCoverUrl(undefined)
+    setCoverState('loading')
     void window.etch.summaryImage(taskId, '00-cover.png', coverSha)
-      .then(setCoverUrl)
-      .catch(() => setCoverUrl(undefined))
+      .then((url) => {
+        if (cancelled) return
+        setCoverUrl(url)
+        if (!url) setCoverState('error')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setCoverUrl(undefined)
+        setCoverState('error')
+      })
+    return () => { cancelled = true }
   }, [checkpointId, coverSha, taskId])
 
   if (!checkpointId) return null
@@ -279,19 +311,19 @@ export function IllustrationCheckpointEditor({
           Etch 的翻译与写作调用是纯文本隔离的；只有你在这里显式选定的 agent 会被允许调用图像生成工具，并且只能往本次配图目录写文件。
         </p>
         <div className="illustration-providers" role="radiogroup" aria-label="配图 agent">
-          {capabilities.map((capability) => (
-            <label className="illustration-provider" data-disabled={capability.available ? undefined : 'true'} key={capability.provider}>
+          {options.map((option) => (
+            <label className="illustration-provider" data-disabled={option.selectable ? undefined : 'true'} key={option.provider}>
               <input
                 type="radio"
                 name="illustration-provider"
-                value={capability.provider}
-                checked={provider === capability.provider}
-                disabled={busy || !capability.available}
-                onChange={() => setSelectedProvider(capability.provider)}
+                value={option.provider}
+                checked={provider === option.provider}
+                disabled={busy || !option.selectable}
+                onChange={() => setSelectedProvider(option.provider)}
               />
               <span>
-                <strong>{providerNames[capability.provider]}</strong>
-                <small>{capability.available ? '已验证可生成配图' : capability.reason}</small>
+                <strong>{providerNames[option.provider]}</strong>
+                <small>{option.note}</small>
               </span>
             </label>
           ))}
@@ -336,28 +368,46 @@ export function IllustrationCheckpointEditor({
       <div className="head">
         <Icon name="warning" />
         <span id="illustration-cover-title">封面已生成，请验收后决定是否生成其余配图</span>
+        <button
+          className="illustration-collapse"
+          type="button"
+          aria-controls="illustration-cover-body"
+          aria-expanded={!coverCollapsed}
+          onClick={() => setCoverCollapsed((collapsed) => !collapsed)}
+        >
+          <span>{coverCollapsed ? '展开配图' : '收起配图'}</span>
+          <Icon name="chevron" />
+        </button>
       </div>
-      <div className="illustration-cover">
-        {coverUrl
-          ? <img src={coverUrl} alt="封面试片" />
-          : <div className="summary-image-placeholder"><Icon name="empty" /><span>正在读取封面…</span></div>}
-        <ul className="illustration-cover-checklist">
-          <li>暖白纸面、明亮背景，不是暗色或霓虹</li>
-          <li>手绘马克笔轮廓与铅笔排线，不是 3D 或摄影</li>
-          <li>中文手写大标题 + 红色下划线 + 3-6 个可读短标签</li>
-          <li>一眼能解释全篇主线</li>
-        </ul>
-      </div>
-      <div className="audit-actions">
-        <button className="secondary-button" type="button" disabled={busy} onClick={() => { void onResolveCover('skip') }}>
-          跳过剩余配图
-        </button>
-        <button className="secondary-button" type="button" disabled={busy} onClick={() => { void onResolveCover('retry-with-agent') }}>
-          换 agent 重做封面
-        </button>
-        <button className="primary-button" type="button" disabled={busy} onClick={() => { void onResolveCover('accept') }}>
-          {busy ? '正在提交…' : '接受并生成其余配图'}
-        </button>
+      <div id="illustration-cover-body" hidden={coverCollapsed}>
+        <div className="illustration-cover">
+          {coverUrl
+            ? <img
+                key={coverSha}
+                src={coverUrl}
+                alt="封面试片"
+                onLoad={() => setCoverState('ready')}
+                onError={() => setCoverState('error')}
+              />
+            : <div className="summary-image-placeholder"><Icon name="empty" /><span>{coverState === 'error' ? '封面读取或解码失败' : '正在读取封面…'}</span></div>}
+          <ul className="illustration-cover-checklist">
+            <li>暖白纸面、明亮背景，不是暗色或霓虹</li>
+            <li>手绘马克笔轮廓与铅笔排线，不是 3D 或摄影</li>
+            <li>中文手写大标题 + 红色下划线 + 3-6 个可读短标签</li>
+            <li>一眼能解释全篇主线</li>
+          </ul>
+        </div>
+        <div className="audit-actions">
+          <button className="secondary-button" type="button" disabled={busy} onClick={() => { void onResolveCover('skip') }}>
+            跳过剩余配图
+          </button>
+          <button className="secondary-button" type="button" disabled={busy} onClick={() => { void onResolveCover('retry-with-agent') }}>
+            换 agent 重做封面
+          </button>
+          <button className="primary-button" type="button" disabled={busy || coverState !== 'ready'} onClick={() => { void onResolveCover('accept') }}>
+            {busy ? '正在提交…' : '接受并生成其余配图'}
+          </button>
+        </div>
       </div>
     </section>
   )

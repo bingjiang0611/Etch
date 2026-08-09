@@ -4,8 +4,11 @@ import {
   SUMMARY_OVERVIEW_FILENAME,
   articleImagePlaceholders,
   articleIssues,
+  assertArticleDigestReferences,
   assertDraftRecordComplete,
+  assertScoringDigestEvidence,
   buildDraftRecord,
+  draftArticleIssues,
   draftEvidence,
   draftPrompt,
   draftRecordIssues,
@@ -15,10 +18,11 @@ import {
   parseImagePlan,
   partitionTranscript,
   scoringPrompt,
+  SummaryScoringSchema,
   type SummaryDigest,
   type SummaryScoring
 } from '../src/core/summary'
-import type { SummaryDraftRecord, SummaryImagePlanEntry } from '../src/shared/task-schema'
+import { SummaryDraftRecordSchema, type SummaryDraftRecord, type SummaryImagePlanEntry } from '../src/shared/task-schema'
 
 function article(options: { images?: string[]; final?: boolean; overview?: boolean } = {}): string {
   const images = options.images ?? [
@@ -41,7 +45,11 @@ function article(options: { images?: string[]; final?: boolean; overview?: boole
     '',
     '## 要点速览',
     '',
-    '一，**利润被算力吃掉**：主持人称成本结构已经变形。',
+    '1. **利润被算力吃掉**：主持人称成本结构已经变形。',
+    '2. **模型优势正在缩短**：产品差异越来越依赖分发。',
+    '3. **资本开支先于收入**：投入与回报存在明显时差。',
+    '4. **组织速度成为瓶颈**：工具升级没有自动带来协作升级。',
+    '5. **验证比预测重要**：真正可信的是后续可追踪信号。',
     '',
     `![要点](images/${images[1]})`,
     '',
@@ -50,12 +58,27 @@ function article(options: { images?: string[]; final?: boolean; overview?: boole
       '',
       body,
       '',
+      '<!-- digest-refs: segment-001 -->',
+      '',
       `![章节图](images/${filename})`,
       ''
     ]),
     ...(options.overview === false ? [] : []),
+    '## 代表性短摘与中文转述',
+    '',
+    '“Compute is becoming the cost of intelligence.” 中文转述：算力正在成为智能产品最直接的成本。',
+    '',
+    '## 注',
+    '',
+    '文中数字均按节目原始口径保留，尚未独立核验。',
+    '',
     ...(options.final === false ? [] : ['## 最后', '', '这里是作者视角的批判性评论，指出矛盾与可追踪信号。', ''])
   ].join('\n')
+}
+
+function candidateArticle(): string {
+  return article()
+    .replace(/^!\[[^\]]*\]\(images\/[^)]+\)\s*$/gmu, '')
 }
 
 function imagePlan(filenames: readonly string[]): SummaryImagePlanEntry[] {
@@ -81,6 +104,7 @@ const scoring: SummaryScoring = {
     C: ['指出嘉宾回避', '给出追踪信号']
   },
   omissions: ['B 稿的季度年化数字', 'C 稿关于回避提问的判断'],
+  omissionEvidence: [{ digestId: 'segment-001', status: 'omitted', note: '底稿缺少季度数字，终稿需要吸收。' }],
   omissionNote: ''
 }
 
@@ -130,23 +154,59 @@ describe('终稿本地门禁', () => {
 
 describe('候选稿证据本地推导', () => {
   it('从 Markdown 里推导标题、章节、开场与最后评论', () => {
-    const evidence = draftEvidence('A', article())
+    const evidence = draftEvidence('A', candidateArticle())
     expect(evidence.title).toBe('一场关于算力与利润的对谈')
     expect(evidence.sections).toContain('最后')
     expect(evidence.opening.length).toBeGreaterThan(0)
     expect(evidence.finalThesis).toContain('批判性评论')
+    expect(evidence.digestRefs).toEqual(['segment-001'])
+    expect(evidence.localIssues).toEqual([])
   })
 
-  it('章节太少或缺少最后评论的稿子不算完整文章', () => {
-    expect(() => draftEvidence('B', '# 标题\n\n正文')).toThrow('章节少于 3 个')
-    expect(() => draftEvidence('B', '# 标题\n\n开场\n\n## 一\n\n## 二\n\n## 三\n')).toThrow('最后')
+  it('模型把“候选稿 A：”写进 H1 时不重复编号前缀', () => {
+    const withPrefix = candidateArticle().replace('# 一场关于算力与利润的对谈', '# 候选稿 A：一场关于算力与利润的对谈')
+    expect(draftEvidence('A', withPrefix).title).toBe('一场关于算力与利润的对谈')
+  })
+
+  it('逐层拒绝非中文 H1、断号、章节缺失、图片和短稿', () => {
+    expect(draftArticleIssues(candidateArticle().replace(/^# .+$/mu, '# OpenAI GPT API')).join('；')).toContain('中文为主')
+    expect(draftArticleIssues(candidateArticle().replace('3. **资本开支先于收入**', '7. **资本开支先于收入**')).join('；')).toContain('连续递增')
+    expect(draftArticleIssues(candidateArticle().replace('## 代表性短摘与中文转述', '## 摘录')).join('；')).toContain('最后三个 H2')
+    expect(draftArticleIssues(`${candidateArticle()}\n![图](x.png)`).join('；')).toContain('不得包含图片')
+    expect(draftArticleIssues(candidateArticle().replace('<!-- digest-refs: segment-001 -->', '')).join('；')).toContain('缺少 digest ID')
+    expect(() => draftEvidence('B', '# 中文标题足够明确\n\n正文')).toThrow('本地门禁')
+  })
+
+  it('拒绝候选稿、评分证据与终稿伪造 segment-999', () => {
+    const validDigestIds = ['segment-001']
+    const forgedDraft = candidateArticle().replaceAll('segment-001', 'segment-999')
+    expect(() => draftEvidence('A', forgedDraft, validDigestIds)).toThrow('不存在的 digest ID：segment-999')
+
+    const forgedScoring = structuredClone(scoring)
+    forgedScoring.omissionEvidence = [{ digestId: 'segment-999', status: 'omitted', note: '伪造引用' }]
+    expect(() => assertScoringDigestEvidence(forgedScoring, validDigestIds))
+      .toThrow('不存在的 digest ID：segment-999')
+
+    const forgedFinal = article().replaceAll('segment-001', 'segment-999')
+    expect(() => assertArticleDigestReferences(forgedFinal, validDigestIds, '终稿'))
+      .toThrow('终稿引用了不存在的 digest ID：segment-999')
+  })
+
+  it('三稿共同漏掉真实 segment-002 时仍要求评分证据覆盖', () => {
+    const validDigestIds = ['segment-001', 'segment-002']
+    const missingEvidence = structuredClone(scoring)
+
+    expect(() => assertScoringDigestEvidence(missingEvidence, validDigestIds))
+      .toThrow('未覆盖真实 digest ID：segment-002')
+    expect(scoringPrompt([{ id: 'A', article: candidateArticle() }], [], validDigestIds))
+      .toContain('segment-001、segment-002')
   })
 })
 
 describe('三稿硬门禁', () => {
   const record = (): SummaryDraftRecord => buildDraftRecord(
     '素材分析包已覆盖 3 段',
-    ['A', 'B', 'C'].map((id) => draftEvidence(id as 'A', article())),
+    ['A', 'B', 'C'].map((id) => draftEvidence(id as 'A', candidateArticle())),
     scoring,
     '逐项核对无编造，「最后」评论区保留'
   )
@@ -156,6 +216,8 @@ describe('三稿硬门禁', () => {
     expect(draftRecordIssues(value)).toEqual([])
     expect(() => assertDraftRecordComplete(value)).not.toThrow()
     expect(draftScoreTotal(value, 'A')).toBe(49)
+    expect(value.contractVersion).toBe(2)
+    expect(value.scoreTotals).toEqual({ A: 49, B: 45, C: 47 })
   })
 
   it('缺记录、缺增量、遗漏清单为空且无说明时都拒绝', () => {
@@ -170,6 +232,35 @@ describe('三稿硬门禁', () => {
     const noSelfCheck = record()
     noSelfCheck.selfCheck = ''
     expect(() => assertDraftRecordComplete(noSelfCheck)).toThrow('三稿执行记录不完整')
+  })
+
+  it('v2 拒绝伪造总分、错误底稿与未覆盖的 digest ID', () => {
+    const badTotals = record()
+    badTotals.scoreTotals = { A: 1, B: 2, C: 3 }
+    expect(draftRecordIssues(badTotals).join('；')).toContain('六项评分之和')
+
+    const badBase = record()
+    badBase.baseDraft = 'B'
+    expect(draftRecordIssues(badBase).join('；')).toContain('tie-break')
+
+    const missingEvidence = record()
+    missingEvidence.drafts[0].digestRefs.push('segment-002')
+    expect(draftRecordIssues(missingEvidence).join('；')).toContain('未覆盖 digest ID')
+  })
+
+  it('v1 旧记录不要求 v2 派生字段', () => {
+    const legacy = record() as unknown as Record<string, unknown>
+    delete legacy.contractVersion
+    delete legacy.scoreTotals
+    delete legacy.omissionEvidence
+    for (const draft of legacy.drafts as Array<Record<string, unknown>>) {
+      delete draft.digestRefs
+      delete draft.localIssues
+    }
+    const parsed = SummaryDraftRecordSchema.parse(legacy)
+    expect(parsed.contractVersion).toBe(1)
+    expect(parsed.omissionEvidence).toEqual([])
+    expect(draftRecordIssues(parsed)).toEqual([])
   })
 
   it('执行记录 Markdown 保留评分表与遗漏清单', () => {
@@ -229,9 +320,22 @@ describe('写作提示词边界', () => {
 
   it('评分与终稿提示词把候选稿和终稿都当不可信数据', () => {
     expect(scoringPrompt([{ id: 'A', article: 'x' }])).toContain('BEGIN_UNTRUSTED_JSON_SECTION "summary-drafts"')
+    expect(scoringPrompt([{ id: 'A', article: 'x' }])).toContain('omissionEvidence')
     const prompt = finalizePrompt('x', digest, ['00-cover.png'])
     expect(prompt).toContain('BEGIN_UNTRUSTED_JSON_SECTION "summary-final-article"')
     expect(prompt).toContain('00-cover.png')
     expect(prompt).toContain('#FFFDF5')
+    expect(prompt).toContain('digest-refs 是否保留')
+  })
+
+  it('评分解析器按本地总分校验底稿，并以 A→B→C 处理同分', () => {
+    expect(() => SummaryScoringSchema.parse({ ...scoring, baseDraft: 'B' })).toThrow('应为 A')
+    const tied = structuredClone(scoring)
+    tied.scores.B = { ...tied.scores.A }
+    tied.scores.C = { ...tied.scores.A }
+    tied.baseDraft = 'A'
+    expect(SummaryScoringSchema.parse(tied).baseDraft).toBe('A')
+    tied.baseDraft = 'C'
+    expect(() => SummaryScoringSchema.parse(tied)).toThrow('应为 A')
   })
 })

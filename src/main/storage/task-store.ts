@@ -146,6 +146,38 @@ export class TaskStore {
     })
   }
 
+  async persistLeaseProgress(
+    taskDirectory: string,
+    lease: StepLease,
+    currentFingerprint: string,
+    change: (manifest: TaskManifest) => void
+  ): Promise<{ lease: StepLease; manifest: TaskManifest }> {
+    return this.#serial(taskDirectory, async () => {
+      const current = await this.load(taskDirectory)
+      const state = current.pipeline.stages[lease.stage]
+      if (
+        current.revision !== lease.manifestRevision
+        || currentFingerprint !== lease.inputFingerprint
+        || state?.activeLease?.runId !== lease.runId
+      ) {
+        throw new StaleStepError()
+      }
+
+      const nextRevision = current.revision + 1
+      const nextLease = { ...lease, manifestRevision: nextRevision }
+      const next = structuredClone(current)
+      change(next)
+      next.pipeline.stages[lease.stage].activeLease = nextLease
+      const validated = migrateTaskManifest({
+        ...next,
+        revision: nextRevision,
+        updatedAt: new Date().toISOString()
+      })
+      await writeTaskManifest(join(taskDirectory, 'task.json'), validated)
+      return { lease: nextLease, manifest: validated }
+    })
+  }
+
   async failLease(taskDirectory: string, lease: StepLease, errorCode: string): Promise<TaskManifest> {
     return this.mutate(taskDirectory, (manifest) => {
       const state = manifest.pipeline.stages[lease.stage]

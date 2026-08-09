@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { formatTimestamp } from '../src/core/srt'
 import { sha256File } from '../src/main/core/fingerprint'
+import { NEW_TASK_PROVIDER_STORAGE_KEY } from '../src/renderer/new-task-provider'
 import { defaultSettings } from '../src/shared/settings-schema'
 import { createTaskManifest } from '../src/shared/task-schema'
 import {
@@ -18,13 +19,13 @@ async function openNewTaskDialog(window: Page) {
   await window.getByRole('button', { name: '新建任务', exact: true }).click()
   const dialog = window.getByRole('dialog', { name: '新建任务' })
   await expect(dialog).toBeVisible()
-  await expect(dialog.locator('#video-url')).toBeFocused()
+  await expect(dialog.locator('#content-url')).toBeFocused()
   return dialog
 }
 
 async function addUrlTask(window: Page, url: string, styleNote?: string): Promise<void> {
   const dialog = await openNewTaskDialog(window)
-  await dialog.locator('#video-url').fill(url)
+  await dialog.locator('#content-url').fill(url)
   if (styleNote !== undefined) await dialog.getByLabel(/翻译风格/).fill(styleNote)
   await expect(dialog.locator('#provider option:checked')).toBeEnabled({ timeout: 75_000 })
   await dialog.getByRole('button', { name: /^(?:创建并开始|加入暂停队列)(?:（\d+）)?$/u }).click()
@@ -53,7 +54,16 @@ async function quitApplication(application: ElectronApplication): Promise<void> 
       }
     }).catch(() => undefined)
     const health = window.locator('.runtime-state strong')
-    if (await health.count()) await expect(health).toHaveText(/环境 9\/9 可用/, { timeout: 30_000 })
+    if (await health.count()) {
+      try {
+        await expect(health).toHaveText(/环境 9\/9 可用/, { timeout: 30_000 })
+      } catch (error) {
+        // 只在断言已经失败之后再探一次，用来指名到底是哪个工具掉了；不会把失败改写成通过。
+        const snapshots = await window.evaluate(() => window.etch.detectTools())
+        const broken = snapshots.filter((snapshot) => snapshot.status !== 'ready')
+        throw new Error(`${(error as Error).message}\n未就绪工具：${JSON.stringify(broken)}`)
+      }
+    }
   }
   const userData = await application.evaluate(({ app }) => app.getPath('userData'))
   await expect.poll(async () => {
@@ -144,12 +154,26 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
     await expect(window.locator('nav').getByRole('button', { name: '设置', exact: true })).toHaveCount(0)
     await expect(window.locator('.url-entry')).toHaveCount(0)
     let newTaskDialog = await openNewTaskDialog(window)
-    await newTaskDialog.locator('#video-url').fill('https://example.com/preserved-draft')
+    await newTaskDialog.getByRole('radio', { name: /网页翻译/u }).check()
+    await expect(newTaskDialog.getByLabel('翻译 Agent')).toBeEnabled({ timeout: 75_000 })
+    await newTaskDialog.getByLabel('翻译 Agent').selectOption('codex')
+    await expect(newTaskDialog.getByLabel('翻译 Agent')).toHaveValue('codex')
+    await newTaskDialog.getByLabel('处理模式').selectOption('convert')
+    await expect(newTaskDialog.getByLabel('翻译 Agent')).toBeDisabled()
+    await expect(newTaskDialog.getByLabel('翻译 Agent')).toHaveValue('none')
+    await expect(newTaskDialog).toContainText('当前模式只转换结构，不会调用 Agent')
+    await newTaskDialog.getByLabel('处理模式').selectOption('translate')
+    await expect(newTaskDialog.getByLabel('翻译 Agent')).toBeEnabled()
+    await expect(newTaskDialog.getByLabel('翻译 Agent')).toHaveValue('codex')
+    await newTaskDialog.getByLabel('翻译 Agent').selectOption('qoder')
+    await newTaskDialog.getByRole('radio', { name: /双语硬字幕/u }).check()
+    await newTaskDialog.locator('#content-url').fill('https://example.com/preserved-draft')
     await window.keyboard.press('Escape')
     await expect(newTaskDialog).toBeHidden()
     newTaskDialog = await openNewTaskDialog(window)
-    await expect(newTaskDialog.locator('#video-url')).toHaveValue('https://example.com/preserved-draft')
-    await newTaskDialog.locator('#video-url').fill('https://example.com/etch-smoke\nhttps://example.com/etch-smoke')
+    await expect(newTaskDialog.locator('#content-url')).toHaveValue('https://example.com/preserved-draft')
+    await newTaskDialog.getByLabel(/翻译 Provider/u).selectOption('claude')
+    await newTaskDialog.locator('#content-url').fill('https://vimeo.com/100000010\nhttps://vimeo.com/100000010')
     await expect(newTaskDialog).toContainText('已输入 1 个')
     await newTaskDialog.getByLabel(/翻译风格/).fill('简洁自然，保留现场感')
     await newTaskDialog.getByRole('button', { name: '加入暂停队列', exact: true }).evaluate((button: HTMLButtonElement) => {
@@ -157,10 +181,10 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
       button.click()
     })
     await expect(newTaskDialog).toBeHidden()
-    await expect.poll(() => window.evaluate(() => document.querySelector('.count-badge')?.textContent)).toBe('1')
+    await expect(window.getByRole('tab', { name: /全部任务/u }).locator('.tab-count')).toHaveText('1')
     await expect
       .poll(() => window.evaluate(() => document.querySelector('.task-row')?.textContent))
-      .toContain('https://example.com/etch-smoke')
+      .toContain('https://vimeo.com/100000010')
     await expect(window.locator('.task-row .thumb img')).toHaveCount(0)
     await expect(window.locator('nav .nav-item')).toHaveCount(2)
     await expect(window.getByRole('button', { name: '工作台', exact: true })).toHaveCount(0)
@@ -168,24 +192,26 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
       .poll(() =>
         window.evaluate(async () => {
           const page = await window.etch.queuePage()
-          return (await window.etch.taskDetail(page.items[0].taskId)).manifest.translation.styleNote
+          const translation = (await window.etch.taskDetail(page.items[0].taskId)).manifest.translation
+          return { styleNote: translation.styleNote, provider: translation.selectedProvider }
         }),
       )
-      .toBe('简洁自然，保留现场感')
+      .toEqual({ styleNote: '简洁自然，保留现场感', provider: 'claude' })
+    await expect.poll(() => window.evaluate((key) => window.localStorage.getItem(key), NEW_TASK_PROVIDER_STORAGE_KEY)).toContain('claude')
     newTaskDialog = await openNewTaskDialog(window)
-    await expect(newTaskDialog.locator('#video-url')).toHaveValue('')
+    await expect(newTaskDialog.locator('#content-url')).toHaveValue('')
     await expect(newTaskDialog.getByLabel(/翻译风格/)).toHaveValue('')
     await newTaskDialog.getByRole('button', { name: '取消', exact: true }).click()
     await expect(newTaskDialog).toBeHidden()
     await window.locator('.task-row').click()
-    await expect(window.locator('.task-source')).toContainText('https://example.com/etch-smoke')
+    await expect(window.locator('.task-source')).toContainText('https://vimeo.com/100000010')
     await expect(window.getByRole('button', { name: '任务队列', exact: true })).toBeVisible()
     const workbenchHeaderBox = await window.locator('.wb-header').boundingBox()
-    const glossaryTaskBox = await window.getByRole('button', { name: '查看审计术语表' }).boundingBox()
     const startTaskBox = await window.getByRole('button', { name: '开始处理' }).boundingBox()
     expect(workbenchHeaderBox).not.toBeNull()
-    expect(glossaryTaskBox).not.toBeNull()
     expect(startTaskBox).not.toBeNull()
+    await expect(window.getByRole('button', { name: /追加视频总结/u })).toBeDisabled()
+    await expect(window.getByRole('button', { name: '查看审计术语表', exact: true })).toHaveCount(0)
     expect(await window.evaluate(() => {
       const appRegion = (selector: string): string => getComputedStyle(document.querySelector(selector)!).getPropertyValue('-webkit-app-region')
       return {
@@ -204,8 +230,6 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
     })
     await expect(window.locator('.recovery-banner')).toHaveCount(0)
     await expect(window.getByRole('button', { name: '确认恢复并继续' })).toHaveCount(0)
-    expect(Math.abs((glossaryTaskBox?.x ?? 0) - (startTaskBox?.x ?? 0))).toBeLessThan(1)
-    expect((glossaryTaskBox?.y ?? 0) + (glossaryTaskBox?.height ?? 0)).toBeLessThan(startTaskBox?.y ?? 0)
     await expect(window.locator('.pipeline-collapse')).toHaveAttribute('open', '')
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1360, 680))
     await expect.poll(() => window.locator('.editor-shell').evaluate((element) => Math.round(element.getBoundingClientRect().height))).toBeGreaterThanOrEqual(430)
@@ -267,12 +291,18 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
       .toEqual({ stageConcurrency: 2, queuePaused: false, preventSleep: false, completion: false, failure: false, checkpoint: false, subtitlePreset: 'compact', defaultProvider: 'qoder' })
     await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
     newTaskDialog = await openNewTaskDialog(window)
-    await expect(newTaskDialog.locator('#provider')).toHaveValue('qoder')
+    await expect(newTaskDialog.locator('#provider')).toHaveValue('claude')
     await newTaskDialog.getByRole('button', { name: '取消', exact: true }).click()
     await openSettingsFromApplicationMenu(application, window)
     await window.locator('#settings-default-provider').selectOption('codex')
     await window.getByRole('button', { name: '保存设置' }).click()
     await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
+    newTaskDialog = await openNewTaskDialog(window)
+    // 上一次真的建过任务的 Provider 优先于设置里的默认值，所以这里仍然是 claude。
+    await expect(newTaskDialog.locator('#provider')).toHaveValue('claude')
+    await newTaskDialog.getByRole('button', { name: '取消', exact: true }).click()
+    // 清掉这份记忆之后，新任务才回落到设置里的默认 Provider。
+    await window.evaluate((key) => window.localStorage.removeItem(key), NEW_TASK_PROVIDER_STORAGE_KEY)
     newTaskDialog = await openNewTaskDialog(window)
     await expect(newTaskDialog.locator('#provider')).toHaveValue('codex')
     await newTaskDialog.getByRole('button', { name: '取消', exact: true }).click()
@@ -294,9 +324,9 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
       const settings = await window.etch.getSettings()
       await window.etch.updateSettings({ ...settings, queuePaused: true })
     })
-    await addUrlTask(window, 'https://example.com/delete-me')
+    await addUrlTask(window, 'https://vimeo.com/100000011')
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(2)
-    await window.locator('.task-row').filter({ hasText: 'https://example.com/delete-me' }).click({ button: 'right' })
+    await window.locator('.task-row').filter({ hasText: 'https://vimeo.com/100000011' }).click({ button: 'right' })
     await window.getByRole('menuitem', { name: '删除任务及全部产物', exact: true }).click()
     const deleteDialog = window.locator('.task-delete-dialog')
     await expect(deleteDialog.getByRole('button', { name: '取消', exact: true })).toBeFocused()
@@ -334,12 +364,12 @@ test('starts a queued task from its card and lets the workbench stop and continu
   const application = await launchHermeticEtch(userData)
   try {
     const window = await application.firstWindow()
-    await window.evaluate(() => window.etch.createUrls(['https://example.com/auto-start'], 'codex'))
+    await window.evaluate(() => window.etch.createUrls(['https://vimeo.com/100000007'], 'codex'))
     const taskId = await window.evaluate(() => window.etch.queuePage().then((page) => page.items[0].taskId))
     await expect.poll(() => window.evaluate((id) =>
       window.etch.taskDetail(id).then((detail) => detail.manifest.pipeline.stages.source.status), taskId
     )).toBe('ready')
-    const queueStart = window.getByRole('button', { name: '开始处理：https://example.com/auto-start', exact: true })
+    const queueStart = window.getByRole('button', { name: '开始处理：https://vimeo.com/100000007', exact: true })
     await expect(queueStart).toBeEnabled()
     await queueStart.click()
     await expect(window.getByRole('heading', { name: '任务队列', exact: true })).toBeVisible()
@@ -361,9 +391,8 @@ test('starts a queued task from its card and lets the workbench stop and continu
     const stopButton = window.getByRole('button', { name: '停止处理', exact: true })
     await expect(stopButton).toBeVisible()
     const stopButtonBox = await stopButton.boundingBox()
-    const glossaryButtonBox = await window.getByRole('button', { name: '查看审计术语表', exact: true }).boundingBox()
     const stopIconBox = await stopButton.locator('svg').boundingBox()
-    expect(stopButtonBox?.height).toBeLessThanOrEqual((glossaryButtonBox?.height ?? 0) + 1)
+    expect(stopButtonBox?.height).toBeLessThanOrEqual(36)
     expect(stopIconBox?.width).toBeLessThanOrEqual(13)
     expect(stopIconBox?.height).toBeLessThanOrEqual(13)
     await stopButton.click()
@@ -422,7 +451,7 @@ test('starts a paused backlog when queue auto-run is enabled', async () => {
   const application = await launchHermeticEtch(userData)
   try {
     const window = await application.firstWindow()
-    await window.evaluate(() => window.etch.createUrls(['https://example.com/waiting-before-unpause'], 'codex'))
+    await window.evaluate(() => window.etch.createUrls(['https://vimeo.com/100000008'], 'codex'))
     const taskId = await window.evaluate(() => window.etch.queuePage().then((page) => page.items[0].taskId))
     await expect.poll(() => window.evaluate((id) =>
       window.etch.taskDetail(id).then((detail) => detail.manifest.pipeline.stages.source.status), taskId
@@ -463,9 +492,9 @@ test('offers Finder, record-only, and full-artifact actions from a task row cont
   try {
     let window = await application.firstWindow()
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(0)
-    await addUrlTask(window, 'https://example.com/record-only')
+    await addUrlTask(window, 'https://vimeo.com/100000012')
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
-    const recordRow = window.locator('.task-row').filter({ hasText: 'https://example.com/record-only' })
+    const recordRow = window.locator('.task-row').filter({ hasText: 'https://vimeo.com/100000012' })
     const recordTask = await window.evaluate(async () => {
       const page = await window.etch.queuePage()
       return window.etch.taskDetail(page.items[0].taskId)
@@ -495,13 +524,13 @@ test('offers Finder, record-only, and full-artifact actions from a task row cont
     window = await application.firstWindow()
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(0)
 
-    await addUrlTask(window, 'https://example.com/all-artifacts')
+    await addUrlTask(window, 'https://vimeo.com/100000013')
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
     const fullTask = await window.evaluate(async () => {
       const page = await window.etch.queuePage()
       return window.etch.taskDetail(page.items[0].taskId)
     })
-    const fullRow = window.locator('.task-row').filter({ hasText: 'https://example.com/all-artifacts' })
+    const fullRow = window.locator('.task-row').filter({ hasText: 'https://vimeo.com/100000013' })
     await fullRow.click({ button: 'right' })
     await window.getByRole('menuitem', { name: '删除任务及全部产物', exact: true }).click()
     await expect(window.locator('.task-delete-dialog')).toContainText(fullTask.taskDirectory)
@@ -557,7 +586,8 @@ test('merges every completed audit into one deduplicated glossary and supports d
   const userData = await mkdtemp(join(tmpdir(), 'etch-glossary-catalog-e2e-'))
   const workspaceRoot = join(userData, 'workspace')
   await mkdir(workspaceRoot)
-  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  // 下面要比对具体的 danger 色值，而 system 主题在 Playwright 里会解析成浅色，所以把主题钉成 dark。
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true, theme: 'dark' })
   await writeFile(
     join(userData, 'app-state.json'),
     `${JSON.stringify({ schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() }, null, 2)}\n`,
@@ -717,6 +747,190 @@ test('renders manifest-backed queue metadata and pipeline diagnostics without in
     await expect(window.locator('.rail-node')).toHaveCount(10)
     await window.getByRole('button', { name: '任务队列', exact: true }).click()
     await expect(window.getByRole('heading', { name: '任务队列' })).toBeVisible()
+  } finally {
+    await quitApplication(application)
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('reuses validated media as the queue cover for a legacy X document', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'etch-document-cover-e2e-'))
+  const workspaceRoot = join(userData, 'workspace')
+  const taskDirectory = join(workspaceRoot, 'document-cover--fixture')
+  await mkdir(taskDirectory, { recursive: true })
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  await writeFile(
+    join(userData, 'app-state.json'),
+    `${JSON.stringify({ schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+  const manifest = createTaskManifest(
+    { kind: 'url', url: 'https://x.com/author/status/123' },
+    'Document Cover Fixture',
+    'codex',
+    '',
+    'standard',
+    false,
+    'document',
+  )
+  manifest.document.resolvedSource = 'x-article'
+  manifest.pipeline.stages.source.status = 'completed'
+  manifest.pipeline.stages.inspect.status = 'completed'
+  const coverPath = join(taskDirectory, 'media-001.png')
+  await writeFile(coverPath, thumbnailPng)
+  manifest.artifacts['documentMedia:media-001'] = {
+    relativePath: 'media-001.png',
+    sha256: await sha256File(coverPath),
+    size: thumbnailPng.length,
+    valid: true,
+    producer: 'etch-document-media-v1',
+    inputFingerprint: '4'.repeat(64),
+  }
+  await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+
+  const application = await launchHermeticEtch(userData)
+  try {
+    const window = await application.firstWindow()
+    await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
+    const cover = window.locator('.task-row .thumb img')
+    await expect(cover).toHaveAttribute('src', /^data:image\/png;base64,/)
+    await expect.poll(() => cover.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+    await expect(window.locator('.task-row .thumb-placeholder')).toHaveCount(0)
+  } finally {
+    await quitApplication(application)
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('renders a blocking document budget failure as an error instead of a warning', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'etch-document-budget-error-e2e-'))
+  const workspaceRoot = join(userData, 'workspace')
+  const taskDirectory = join(workspaceRoot, 'document-budget-error--fixture')
+  await mkdir(taskDirectory, { recursive: true })
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  await writeFile(
+    join(userData, 'app-state.json'),
+    `${JSON.stringify({ schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+  const manifest = createTaskManifest(
+    { kind: 'url', url: 'https://example.com/oversized' },
+    'Oversized Document Fixture',
+    'codex',
+    '',
+    'standard',
+    false,
+    'document',
+  )
+  const failure = '网页正文边界识别失败：识别到 427 个可翻译区块、694251 个字符，需要 64 个翻译批次，超过安全上限 12'
+  manifest.document.resolvedSource = 'web'
+  manifest.document.warnings = ['未检测到 article/main，已从页面主体提取；请检查正文边界']
+  manifest.pipeline.stages.source.status = 'completed'
+  manifest.pipeline.stages.inspect.status = 'completed'
+  manifest.pipeline.stages.translate.status = 'failed'
+  manifest.pipeline.stages.translate.attempt = 1
+  manifest.pipeline.stages.translate.errorCode = failure
+  manifest.runtime.currentMessage = '网页正文边界识别失败'
+  await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+
+  const application = await launchHermeticEtch(userData)
+  try {
+    const window = await application.firstWindow()
+    await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
+    await window.locator('.task-row').click()
+    await expect(window.locator('.pc-mini .error')).toHaveText('处理失败')
+    await expect(window.locator('.document-warning')).toHaveCount(0)
+    const failurePanel = window.locator('.document-failure')
+    await expect(failurePanel).toBeVisible()
+    await expect(failurePanel.getByText('文档翻译失败', { exact: true })).toBeVisible()
+    await expect(failurePanel).toContainText(failure)
+  } finally {
+    await quitApplication(application)
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('publishes verified Markdown as offline HTML through the real BrowserWindow verifier', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'etch-document-html-e2e-'))
+  const workspaceRoot = join(userData, 'workspace')
+  const taskDirectory = join(workspaceRoot, 'document-html--00000000')
+  await mkdir(taskDirectory, { recursive: true })
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  await writeFile(
+    join(userData, 'app-state.json'),
+    `${JSON.stringify({ schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+  const markdown = [
+    '# 离线网页发布验收',
+    '',
+    '这是一段用于真实浏览器验收的正文，包含 **中文排版** 与 `inline code`。',
+    '',
+    '## 核心结论',
+    '',
+    '| 项目 | 结果 |',
+    '| --- | --- |',
+    '| 桌面视口 | 通过 |',
+    '| 移动视口 | 通过 |',
+    '',
+    '> HTML 必须完全离线，不加载远程脚本或字体。',
+    '',
+  ].join('\n')
+  const sourcePath = join(taskDirectory, 'source.md')
+  await writeFile(sourcePath, markdown, 'utf8')
+  const manifest = createTaskManifest(
+    { kind: 'url', url: 'https://example.com/document-html' },
+    '离线网页发布验收',
+    undefined,
+    '',
+    'standard',
+    false,
+    'document',
+    '',
+    'convert',
+  )
+  manifest.document.resolvedAction = 'convert'
+  manifest.pipeline.stages.verify.status = 'completed'
+  manifest.runtime.completedAt = new Date().toISOString()
+  manifest.artifacts.sourceMarkdown = {
+    relativePath: 'source.md',
+    sha256: await sha256File(sourcePath),
+    size: Buffer.byteLength(markdown),
+    valid: true,
+    producer: 'e2e-fixture',
+    inputFingerprint: 'd'.repeat(64),
+  }
+  await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+
+  const application = await launchHermeticEtch(userData)
+  try {
+    const window = await application.firstWindow()
+    await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
+    const taskId = manifest.taskId
+    const checkpoint = await window.evaluate(async (id) => {
+      const detail = await window.etch.taskDetail(id)
+      return window.etch.startDocumentHtml(id, detail.manifest.revision, 'preview')
+    }, taskId)
+    expect(checkpoint.manifest.document.htmlPublication).toMatchObject({ status: 'checkpoint', phase: 'preview' })
+    const preview = await window.evaluate((id) => window.etch.documentHtmlPage(id), taskId)
+    expect(preview.previewHtml).toContain('四方向试衣间')
+
+    const completed = await window.evaluate(
+      ({ id, revision }) => window.etch.resolveDocumentHtmlStyle(id, revision, 'B'),
+      { id: taskId, revision: checkpoint.manifest.revision },
+    )
+    expect(completed.manifest.document.htmlPublication).toMatchObject({ status: 'completed', phase: 'done', selectedDirection: 'B' })
+    const page = await window.evaluate((id) => window.etch.documentHtmlPage(id), taskId)
+    expect(page.verification).toEqual({ staticValid: true, browserValid: true, issues: [] })
+
+    const htmlArtifact = completed.manifest.artifacts.documentHtml
+    const desktop = completed.manifest.artifacts['documentHtmlScreenshot:desktop']
+    const mobile = completed.manifest.artifacts['documentHtmlScreenshot:mobile']
+    const html = await readFile(join(taskDirectory, htmlArtifact.relativePath), 'utf8')
+    expect(html).toContain('Content-Security-Policy')
+    expect(html).not.toMatch(/<script\b|fonts\.googleapis\.com|cdn\.tailwindcss\.com/iu)
+    expect((await stat(join(taskDirectory, desktop.relativePath))).size).toBeGreaterThan(1000)
+    expect((await stat(join(taskDirectory, mobile.relativePath))).size).toBeGreaterThan(1000)
   } finally {
     await quitApplication(application)
     await rm(userData, { recursive: true, force: true })
@@ -1182,7 +1396,7 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await expect(window.getByText('等待自动保存…')).toBeVisible()
     await expect(window.getByText('字幕修改已保存，等待重新生成成片。')).toBeVisible()
     const videoTimeBeforeGlossary = await video.evaluate((element) => element.currentTime)
-    await window.getByRole('button', { name: '查看审计术语表', exact: true }).click()
+    await window.getByRole('tab', { name: /审计术语/ }).click()
     await expect(window.getByLabel('术语 1 原文')).toHaveValue('World Cup')
     await expect(window.getByLabel('术语 1 统一写法')).toHaveValue('世界杯')
     await expect(window.getByRole('tab', { name: /审计术语/ })).toHaveAttribute('aria-selected', 'true')
@@ -1190,10 +1404,10 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await window.getByLabel('术语 1 统一写法').fill('世界杯锦标赛')
     await expect(window.getByText('已自动保存', { exact: true })).toBeVisible()
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => window.etch.reviewPage(page.items[0].taskId, 0, 1).then((review) => review.glossary[0]?.target)))).toBe('世界杯锦标赛')
-    await window.getByRole('button', { name: '返回字幕校对', exact: true }).click()
+    await window.getByRole('tab', { name: /校对/ }).click()
     await expect(window.getByRole('tab', { name: /校对/ })).toHaveAttribute('aria-selected', 'true')
     await expect(window.getByLabel('Cue 2 中文译文')).toHaveValue('世界杯赛事。')
-    await window.getByRole('button', { name: '查看审计术语表', exact: true }).click()
+    await window.getByRole('tab', { name: /审计术语/ }).click()
     await expect(window.getByLabel('术语 1 统一写法')).toHaveValue('世界杯锦标赛')
     await video.evaluate((element) => {
       element.pause()
@@ -1206,14 +1420,14 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await window.locator('.task-row').click()
     await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeCloseTo(8, 1)
     await expect.poll(() => video.evaluate((element) => element.paused)).toBe(true)
-    await window.getByRole('button', { name: '查看审计术语表', exact: true }).click()
+    await window.getByRole('tab', { name: /审计术语/ }).click()
     await expect(window.getByLabel('术语 1 原文')).toHaveValue('FIFA World Cup')
     await expect(window.getByText('已自动保存', { exact: true })).toBeVisible()
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => window.etch.reviewPage(page.items[0].taskId, 0, 1).then((review) => review.glossary[0]?.source)))).toBe('FIFA World Cup')
-    await window.getByRole('button', { name: '返回字幕校对', exact: true }).click()
+    await window.getByRole('tab', { name: /校对/ }).click()
     await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
     await window.locator('.task-row').click()
-    await window.getByRole('button', { name: '查看审计术语表', exact: true }).click()
+    await window.getByRole('tab', { name: /审计术语/ }).click()
     await expect(window.getByLabel('术语 1 原文')).toHaveValue('FIFA World Cup')
     await expect(window.getByLabel('术语 1 统一写法')).toHaveValue('世界杯锦标赛')
     await window.getByLabel('术语 1 统一写法').fill('我的草稿译法')
@@ -1235,13 +1449,13 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await window.reload()
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
     await window.locator('.task-row').click()
-    await window.getByRole('button', { name: '查看审计术语表', exact: true }).click()
+    await window.getByRole('tab', { name: /审计术语/ }).click()
     await expect(window.getByText('检测到版本冲突', { exact: true })).toBeVisible()
     await expect(window.getByLabel('术语 1 统一写法')).toHaveValue('我的草稿译法')
     await window.getByRole('button', { name: '用当前草稿覆盖' }).click()
     await expect(window.getByText('已自动保存', { exact: true })).toBeVisible()
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => window.etch.reviewPage(page.items[0].taskId, 0, 1).then((review) => review.glossary[0]?.target)))).toBe('我的草稿译法')
-    await window.getByRole('button', { name: '返回字幕校对', exact: true }).click()
+    await window.getByRole('tab', { name: /校对/ }).click()
     await expect(window.getByLabel('Cue 2 中文译文')).toHaveValue('世界杯赛事。')
     await window.getByRole('button', { name: '重新生成成片' }).click()
     await expect(window.locator('.pipeline-collapse')).toHaveAttribute('open', '')
@@ -1327,6 +1541,271 @@ test('serves source video ranges and previews cues beyond the editor page', asyn
     await application.evaluate(({ ipcMain }) => ipcMain.removeHandler('queue:page'))
     await expect(window.getByRole('alert')).toContainText('任务队列刷新失败')
     await expect(window.locator('.task-row')).toHaveCount(1)
+  } finally {
+    await quitApplication(application)
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('reuses the audited English base when adding the other output', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'etch-companion-e2e-'))
+  const workspaceRoot = join(userData, 'workspace')
+  await mkdir(workspaceRoot)
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  await writeFile(
+    join(userData, 'app-state.json'),
+    `${JSON.stringify({ schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+
+  const taskDirectory = join(workspaceRoot, 'companion-source--00000000')
+  await mkdir(join(taskDirectory, '.etch-artifacts', 'shared'), { recursive: true })
+  const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/reusable-output' }, 'Reusable Output Fixture', 'qoder')
+  const sharedArtifacts = [
+    ['source', 'source.mp4'],
+    ['metadata', 'metadata.json'],
+    ['probe', 'probe.json'],
+    ['english', 'english.srt'],
+    ['englishClean', 'english.clean.srt'],
+    ['englishCues', 'english-cues.tsv'],
+  ] as const
+  for (const [key, filename] of sharedArtifacts) {
+    const relativePath = `.etch-artifacts/shared/${filename}`
+    const path = join(taskDirectory, relativePath)
+    const content = `${key}-fixture`
+    await writeFile(path, content, 'utf8')
+    manifest.artifacts[key] = {
+      relativePath,
+      sha256: await sha256File(path),
+      size: Buffer.byteLength(content),
+      valid: true,
+      producer: 'e2e-fixture',
+      inputFingerprint: 'c'.repeat(64),
+    }
+  }
+  for (const stage of ['source', 'inspect', 'english', 'cues'] as const) manifest.pipeline.stages[stage] = { status: 'completed', attempt: 1 }
+  manifest.pipeline.stages.translate.status = 'ready'
+  manifest.runtime.currentMessage = '英文底稿已完成'
+  manifest.runtime.subtitleKind = 'manual'
+  await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+
+  const application = await launchHermeticEtch(userData)
+  try {
+    const window = await application.firstWindow()
+    await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
+    await window.locator('.task-row').filter({ hasText: 'Reusable Output Fixture' }).click()
+    await expect(window.locator('.shared-pipeline .rail-node')).toHaveCount(4)
+    await expect(window.locator('.output-lane')).toHaveCount(2)
+    await expect(window.getByRole('button', { name: /追加视频总结/u })).toBeEnabled({ timeout: 75_000 })
+    await window.getByRole('button', { name: /追加视频总结/u }).first().click()
+
+    const dialog = window.getByRole('dialog', { name: '生成视频总结' })
+    await expect(dialog).toContainText('直接复用 4 个已完成阶段')
+    await expect(dialog.locator('#companion-provider option:checked')).toBeEnabled({ timeout: 75_000 })
+    await dialog.getByLabel(/总结要求/u).fill('重点保留数字与争议')
+    await dialog.getByRole('button', { name: '加入暂停队列 · 只跑 4 步' }).click()
+    await expect(dialog).toBeHidden()
+
+    await expect.poll(async () => window.evaluate(async () => {
+      const page = await window.etch.queuePage()
+      const details = await Promise.all(page.items.map((item) => window.etch.taskDetail(item.taskId)))
+      return details.map((detail) => ({
+        taskId: detail.manifest.taskId,
+        rootTaskId: detail.manifest.lineage.rootTaskId,
+        reusedFromTaskId: detail.manifest.lineage.reusedFromTaskId,
+        kind: detail.manifest.kind,
+        cues: detail.manifest.pipeline.stages.cues.status,
+        firstOutput: detail.manifest.kind === 'summary' ? detail.manifest.pipeline.stages.digest.status : detail.manifest.pipeline.stages.translate.status,
+        directory: detail.taskDirectory,
+        sourcePath: detail.manifest.artifacts.source.relativePath,
+      }))
+    })).toHaveLength(2)
+    const details = await window.evaluate(async () => {
+      const page = await window.etch.queuePage()
+      return Promise.all(page.items.map((item) => window.etch.taskDetail(item.taskId).then((detail) => ({
+        taskId: detail.manifest.taskId,
+        rootTaskId: detail.manifest.lineage.rootTaskId,
+        reusedFromTaskId: detail.manifest.lineage.reusedFromTaskId,
+        kind: detail.manifest.kind,
+        cues: detail.manifest.pipeline.stages.cues.status,
+        firstOutput: detail.manifest.kind === 'summary' ? detail.manifest.pipeline.stages.digest.status : detail.manifest.pipeline.stages.translate.status,
+        directory: detail.taskDirectory,
+        sourcePath: detail.manifest.artifacts.source.relativePath,
+      }))))
+    })
+    const subtitle = details.find((detail) => detail.kind === 'subtitle')!
+    const summary = details.find((detail) => detail.kind === 'summary')!
+    expect(summary).toMatchObject({ rootTaskId: subtitle.taskId, reusedFromTaskId: subtitle.taskId, cues: 'completed', firstOutput: 'ready' })
+    expect((await stat(join(summary.directory, summary.sourcePath))).ino).toBe((await stat(join(subtitle.directory, subtitle.sourcePath))).ino)
+    await expect(window.getByRole('group', { name: '视频成果' }).getByRole('button')).toHaveCount(2)
+    await expect(window.locator('.output-lane')).toHaveCount(2)
+    await expect(window.locator('.output-lane')).toContainText(['双语硬字幕', '视频总结'])
+  } finally {
+    await quitApplication(application)
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('creates a summary task from the dialog and gates illustration on a user-chosen image-capable agent', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'etch-summary-e2e-'))
+  const workspaceRoot = join(userData, 'workspace')
+  await mkdir(workspaceRoot)
+  await writeHermeticSettings(userData, { ...defaultSettings(userData), workspaceRoot, queuePaused: true })
+  await writeFile(
+    join(userData, 'app-state.json'),
+    `${JSON.stringify({ schemaVersion: 1, cleanExit: true, recoveryHold: false, fullDiskAccessOnboardingShown: true, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+
+  const seeded = join(workspaceRoot, 'summary-seeded--00000000')
+  await mkdir(join(seeded, '.etch-artifacts', 'summary', 'run'), { recursive: true })
+  const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/summary-seeded' }, 'Seeded Summary', 'qoder', '', 'standard', false, 'summary')
+  for (const stage of Object.keys(manifest.pipeline.stages)) {
+    if (manifest.pipeline.stages[stage].status === 'skipped') continue
+    manifest.pipeline.stages[stage].status = stage === 'illustrate' ? 'checkpoint' : 'completed'
+  }
+  manifest.pipeline.stages.illustrate.checkpointId = 'illustration-agent'
+  manifest.pipeline.stages.illustrate.errorCode = '请确认并选择一个具备配图能力的 agent，或跳过配图'
+  const summaryMarkdown = [
+    '# 算力账单如何改写利润表',
+    '',
+    '![封面](images/00-cover.png)',
+    '',
+    '开场段：这场对谈发生在一场行业会议上。',
+    '',
+    '## 要点速览',
+    '',
+    '一，**利润被算力吃掉**：节目称成本结构已经变形。',
+    '',
+    // 面板滚动需要真的超出可见高度，所以种子正文必须足够长。
+    ...Array.from({ length: 12 }, (_unused, index) => [
+      `## 【${index + 1}】第 ${index + 1} 个判断`,
+      '',
+      '这是一段足够长的正文内容，用来把总结面板撑到需要滚动的高度。'.repeat(6),
+      ''
+    ]).flat(),
+    '## 最后',
+    '',
+    '这里是作者视角的批判性评论。',
+    '',
+  ].join('\n')
+  const articlePath = join(seeded, '.etch-artifacts', 'summary', 'run', 'summary.md')
+  await writeFile(articlePath, summaryMarkdown, 'utf8')
+  manifest.artifacts.summaryArticle = {
+    relativePath: '.etch-artifacts/summary/run/summary.md',
+    sha256: await sha256File(articlePath),
+    size: Buffer.byteLength(summaryMarkdown),
+    valid: true,
+    producer: 'qoder',
+    inputFingerprint: 'b'.repeat(64),
+  }
+  manifest.summary.illustration = {
+    phase: 'agent-pending',
+    planned: [{ filename: '00-cover.png', alt: '封面', anchor: '开场', prompt: 'hand drawn editorial card on warm ivory paper with a red underline and Chinese labels' }],
+    generated: [],
+    pending: [],
+  }
+  const longText = '这是三稿执行记录里足够长的证据文本，用来把面板撑到需要滚动的高度。'.repeat(4)
+  manifest.summary.draftRecord = {
+    analysisNote: `素材分析包已覆盖 1 段。${longText}`,
+    drafts: (['A', 'B', 'C'] as const).map((id) => ({
+      id,
+      title: `候选稿 ${id} 的标题`,
+      sections: ['要点速览', '【1】第一个判断', '最后'],
+      length: 5000,
+      opening: longText,
+      finalThesis: longText,
+      contributions: [`${id} 稿独有增量一`, `${id} 稿独有增量二`],
+    })),
+    scores: {
+      A: { factuality: 9, completeness: 8, structure: 8, readability: 9, conversation: 8, finalComment: 7 },
+      B: { factuality: 8, completeness: 9, structure: 7, readability: 8, conversation: 6, finalComment: 7 },
+      C: { factuality: 8, completeness: 7, structure: 8, readability: 8, conversation: 7, finalComment: 9 },
+    },
+    baseDraft: 'A',
+    baseReason: `叙事主线最完整。${longText}`,
+    omissions: [`B 稿的季度数字。${longText}`, `C 稿关于回避提问的判断。${longText}`],
+    omissionNote: '',
+    selfCheck: `逐项核对无编造。${longText}`,
+  }
+  await writeFile(join(seeded, 'task.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+
+  const application = await launchHermeticEtch(userData)
+  try {
+    const window = await application.firstWindow()
+    await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
+
+    // 新建任务对话框可以创建总结任务，且总结任务不显示 B站自动投稿开关。
+    const dialog = await openNewTaskDialog(window)
+    await dialog.getByRole('radio', { name: /视频总结/ }).check()
+    await expect(dialog.getByLabel(/总结要求/)).toBeVisible()
+    await expect(dialog.getByText('完成后自动投稿到 B站')).toHaveCount(0)
+    await dialog.locator('#content-url').fill('https://vimeo.com/100000014')
+    await expect(dialog.locator('#provider option:checked')).toBeEnabled({ timeout: 75_000 })
+    await dialog.getByRole('button', { name: /^(?:创建并开始|加入暂停队列)(?:（\d+）)?$/u }).click()
+    await expect(dialog).toBeHidden()
+    await expect.poll(() => window.evaluate(async () => {
+      const page = await window.etch.queuePage()
+      return page.items.filter((item) => item.kind === 'summary').length
+    })).toBe(2)
+
+    // 打开已就绪的总结任务：只有总结相关的 tab，没有校对与压制入口。
+    await window.locator('.task-row').filter({ hasText: 'Seeded Summary' }).click()
+    // 阶段集合按任务类型收敛：只显示总结链路，翻译与压制阶段不出现。
+    await expect(window.locator('.rail .rail-node')).toHaveCount(8)
+    const outputRail = window.locator('.output-lane .rail')
+    await expect(outputRail).toContainText('素材分析')
+    await expect(outputRail).toContainText('外部核验')
+    await expect(outputRail).toContainText('长文整理')
+    await expect(outputRail).toContainText('配图')
+    await expect(window.locator('.pipeline')).not.toContainText('压制')
+    await expect(window.locator('.pipeline')).not.toContainText('人工校对')
+    await expect(window.locator('.pipeline-pools .pool-tag')).toHaveCount(5)
+    await expect(window.getByRole('tab', { name: '总结' })).toBeVisible()
+    await expect(window.getByRole('tab', { name: '三稿记录' })).toBeVisible()
+    await expect(window.getByRole('tab', { name: '校对' })).toHaveCount(0)
+    await expect(window.getByRole('button', { name: '查看审计术语表' })).toHaveCount(0)
+    await expect(window.locator('.summary-article h1')).toHaveText('算力账单如何改写利润表')
+    await expect(window.locator('.summary-image.is-pending')).toHaveCount(1)
+    // 总结与三稿记录面板必须真的能滚动（内层超出可见高度，且 scrollTop 可推进）。
+    const scrollable = async (selector: string): Promise<{ overflowing: boolean; moved: boolean }> =>
+      window.locator(selector).evaluate((element) => {
+        const overflowing = element.scrollHeight > element.clientHeight + 4
+        element.scrollTop = 400
+        return { overflowing, moved: element.scrollTop > 0 }
+      })
+    expect(await scrollable('.summary-panel-body')).toEqual({ overflowing: true, moved: true })
+    await window.getByRole('tab', { name: '三稿记录' }).click()
+    await expect(window.locator('.summary-score-table')).toContainText('事实保真')
+    expect(await scrollable('.summary-drafts')).toEqual({ overflowing: true, moved: true })
+    await window.getByRole('tab', { name: '总结' }).click()
+    // 面板底部提供导出与 Finder 入口。
+    await expect(window.locator('.summary-actions').getByRole('button', { name: '导出总结' })).toBeEnabled()
+    await expect(window.locator('.summary-actions').getByRole('button', { name: '在 Finder 中显示' })).toBeEnabled()
+    // 队列卡片区分任务类型。
+    await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
+    await expect(window.locator('.task-row').filter({ hasText: 'Seeded Summary' }).locator('.task-card-overline')).toContainText('视频总结')
+    await window.locator('.task-row').filter({ hasText: 'Seeded Summary' }).click()
+
+    // 配图 checkpoint：只展示有内置图像能力的 Qoder 与 Codex。
+    const checkpoint = window.locator('.illustration-checkpoint')
+    await expect(checkpoint).toContainText('配图需要具备图像生成能力的 agent')
+    await expect(checkpoint.getByRole('radio')).toHaveCount(2)
+    await expect(checkpoint.getByRole('radio', { name: /Qoder/ })).toBeEnabled()
+    await expect(checkpoint.getByRole('radio', { name: /Codex/ })).toBeAttached()
+    for (const name of ['Claude Code', 'OpenCode']) {
+      await expect(checkpoint.getByRole('radio', { name: new RegExp(name) })).toHaveCount(0)
+    }
+    await expect(window.getByRole('button', { name: '等待配图确认' })).toBeDisabled()
+
+    // 跳过配图会直接推进 phase，不调用任何图像 CLI。
+    await checkpoint.getByRole('button', { name: '跳过配图' }).click()
+    await expect.poll(() => window.evaluate(async () => {
+      const page = await window.etch.queuePage()
+      const seededTask = page.items.find((item) => item.title === 'Seeded Summary')!
+      const detail = await window.etch.taskDetail(seededTask.taskId)
+      return detail.manifest.summary.illustration.phase
+    })).toBe('skipped')
   } finally {
     await quitApplication(application)
     await rm(userData, { recursive: true, force: true })

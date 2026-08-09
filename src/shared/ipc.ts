@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationDraftSchema, BilibiliQrStateSchema, type BilibiliAccount, type BilibiliPartition, type BilibiliPublicationDraft, type BilibiliQrState } from './bilibili'
-import { ModelSelectionSchema, ProviderIdSchema, StageIdSchema, StageStatusSchema, SubtitlePresetSchema, SummaryDraftRecordSchema, SummaryImagePlanEntrySchema, TaskKindSchema, TaskManifestSchema } from './task-schema'
+import { DocumentProcessingModeSchema, DocumentTranslationModeSchema, ModelSelectionSchema, ProviderIdSchema, StageIdSchema, StageStatusSchema, SubtitlePresetSchema, SummaryDraftRecordSchema, SummaryImagePlanEntrySchema, TaskKindSchema, TaskManifestSchema } from './task-schema'
 import { AppSettingsSchema, ToolIdSchema, type AppSettings } from './settings-schema'
 import { POOL_KINDS } from './pipeline'
 
@@ -32,8 +32,11 @@ export type TaskSchedule = z.infer<typeof TaskScheduleSchema>
 
 export const TaskSummarySchema = z.object({
   taskId: z.string().uuid(),
+  rootTaskId: z.string().uuid().optional(),
+  reusedFromTaskId: z.string().uuid().optional(),
   title: z.string(),
   kind: TaskKindSchema.default('subtitle'),
+  category: z.string().max(64).default(''),
   status: StageStatusSchema,
   revision: z.number().int().nonnegative(),
   updatedAt: z.string().datetime({ offset: true }),
@@ -67,6 +70,25 @@ export const CreateUrlsSchema = z.object({
   provider: ProviderIdSchema,
   kind: TaskKindSchema.default('subtitle'),
   styleNote: z.string().trim().max(1000).default(''),
+  autoPublish: z.boolean().default(false),
+  category: z.string().trim().max(64).default(''),
+  documentMode: DocumentProcessingModeSchema.default('auto'),
+  documentTranslationMode: DocumentTranslationModeSchema.exclude(['legacy-direct']).default('normal'),
+  documentAudience: z.string().trim().min(1).max(200).default('general'),
+  documentWritingStyle: z.string().trim().min(1).max(200).default('storytelling')
+}).superRefine((value, context) => {
+  value.urls.forEach((url, index) => {
+    const protocol = new URL(url).protocol
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      context.addIssue({ code: 'custom', path: ['urls', index], message: '内容链接只支持 http 或 https' })
+    }
+  })
+})
+
+export const CreateCompanionSchema = z.object({
+  taskId: z.string().uuid(),
+  provider: ProviderIdSchema,
+  styleNote: z.string().trim().max(1000).default(''),
   autoPublish: z.boolean().default(false)
 })
 
@@ -79,6 +101,7 @@ export const TaskThumbnailDataUrlSchema = z.string().startsWith('data:image/').m
 export const DeleteTaskModeSchema = z.enum(['record-only', 'all-artifacts'])
 export type DeleteTaskMode = z.infer<typeof DeleteTaskModeSchema>
 export const DeleteTaskPayloadSchema = TaskIdPayloadSchema.extend({ mode: DeleteTaskModeSchema })
+export const SetTaskCategoryPayloadSchema = TaskIdPayloadSchema.extend({ category: z.string().trim().max(64) })
 export const BilibiliQrSessionPayloadSchema = z.object({ sessionId: z.string().uuid() })
 export const BilibiliPublicationStartPayloadSchema = TaskIdPayloadSchema.extend({ draft: BilibiliPublicationDraftSchema })
 export const BilibiliPublicationCoverSchema = z.object({
@@ -340,6 +363,24 @@ export const ResolveIllustrationCoverSchema = z.object({
   decision: z.enum(['accept', 'retry-with-agent', 'skip'])
 })
 
+export const ResolveVideoCheckpointSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  decision: z.enum(['accept', 'retry', 'cancel'])
+})
+
+export const ResolveResearchCheckpointSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  decision: z.enum(['continue-unverified', 'retry', 'cancel'])
+})
+
+export const ResolveDocumentTranslationCostSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  decision: z.enum(['proceed', 'cancel'])
+})
+
 export const ExportSummaryResultSchema = z.object({
   cancelled: z.boolean(),
   directory: z.string().optional(),
@@ -348,24 +389,128 @@ export const ExportSummaryResultSchema = z.object({
 export type ExportSummaryResult = z.infer<typeof ExportSummaryResultSchema>
 export type SummaryImagePlanEntry = z.infer<typeof SummaryImagePlanEntrySchema>
 
+export const DocumentMetadataSchema = z.object({
+  sourceUrl: z.string().url(),
+  sourceTitle: z.string().max(1000).default(''),
+  siteName: z.string().max(500).optional(),
+  author: z.string().max(500).optional(),
+  screenName: z.string().max(100).optional(),
+  publishedAt: z.string().max(100).optional(),
+  contentType: z.enum(['web', 'x-post', 'x-article']),
+  mediaExpected: z.number().int().nonnegative().default(0),
+  mediaLocalized: z.number().int().nonnegative().default(0),
+  engagement: z.object({
+    replies: z.number().int().nonnegative().optional(),
+    retweets: z.number().int().nonnegative().optional(),
+    likes: z.number().int().nonnegative().optional(),
+    bookmarks: z.number().int().nonnegative().optional(),
+    views: z.number().int().nonnegative().optional()
+  }).optional()
+})
+export type DocumentMetadata = z.infer<typeof DocumentMetadataSchema>
+
+export const DocumentVerificationSchema = z.object({
+  valid: z.boolean(),
+  sourceBlocks: z.number().int().nonnegative(),
+  translatedBlocks: z.number().int().nonnegative(),
+  sourceHeadings: z.number().int().nonnegative(),
+  translatedHeadings: z.number().int().nonnegative(),
+  expectedMedia: z.number().int().nonnegative(),
+  localizedMedia: z.number().int().nonnegative(),
+  warnings: z.array(z.string().max(500)).max(100).default([])
+})
+export type DocumentVerification = z.infer<typeof DocumentVerificationSchema>
+
+export const DocumentPageSchema = z.object({
+  taskId: z.string().uuid(),
+  revision: z.number().int().nonnegative(),
+  availability: z.enum(['ready', 'not-ready']),
+  message: z.string().max(500).optional(),
+  sourceMarkdown: z.string().max(5_000_000).default(''),
+  translatedMarkdown: z.string().max(5_000_000).default(''),
+  metadata: DocumentMetadataSchema.optional(),
+  verification: DocumentVerificationSchema.optional()
+})
+export type DocumentPage = z.infer<typeof DocumentPageSchema>
+
+export const UpdateDocumentTranslationSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  markdown: z.string().min(1).max(5_000_000)
+})
+
+export const ExportDocumentResultSchema = z.object({
+  cancelled: z.boolean(),
+  directory: z.string().optional(),
+  media: z.number().int().nonnegative().default(0)
+})
+export type ExportDocumentResult = z.infer<typeof ExportDocumentResultSchema>
+
+export const DocumentHtmlRouteSchema = z.enum(['preview', 'template', 'frontend-design'])
+export const StartDocumentHtmlSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  route: DocumentHtmlRouteSchema.default('preview'),
+  templateId: z.string().trim().min(1).max(100).optional()
+})
+export const ResolveDocumentHtmlStyleSchema = z.object({
+  taskId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  direction: z.enum(['A', 'B', 'C', 'D'])
+})
+export const DocumentHtmlPageSchema = z.object({
+  taskId: z.string().uuid(),
+  revision: z.number().int().nonnegative(),
+  status: z.enum(['idle', 'running', 'checkpoint', 'failed', 'completed']),
+  phase: z.enum(['route', 'preview', 'generate', 'verify', 'done']),
+  previewHtml: z.string().max(3_000_000).optional(),
+  selectedDirection: z.enum(['A', 'B', 'C', 'D']).optional(),
+  templateId: z.string().max(100).optional(),
+  errorCode: z.string().max(500).optional(),
+  verification: z.object({
+    staticValid: z.boolean(),
+    browserValid: z.boolean(),
+    issues: z.array(z.string().max(500)).max(100)
+  }).optional()
+})
+export type DocumentHtmlPage = z.infer<typeof DocumentHtmlPageSchema>
+export const ExportDocumentHtmlResultSchema = z.object({
+  cancelled: z.boolean(),
+  path: z.string().optional()
+})
+export type ExportDocumentHtmlResult = z.infer<typeof ExportDocumentHtmlResultSchema>
+
 export interface EtchApi {
   bootstrap(): Promise<Bootstrap>
   queuePage(offset?: number, limit?: number): Promise<QueuePage>
-  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string, autoPublish?: boolean, kind?: z.infer<typeof TaskKindSchema>): Promise<QueuePage>
+  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string, autoPublish?: boolean, kind?: z.infer<typeof TaskKindSchema>, category?: string, documentMode?: z.infer<typeof DocumentProcessingModeSchema>, documentTranslationMode?: 'normal' | 'refined', documentAudience?: string, documentWritingStyle?: string): Promise<QueuePage>
+  createCompanion(taskId: string, provider: z.infer<typeof ProviderIdSchema>, styleNote?: string, autoPublish?: boolean): Promise<TaskDetail>
   taskDetail(taskId: string): Promise<TaskDetail>
   taskThumbnail(taskId: string, expectedSha256: string): Promise<string | undefined>
   startTask(taskId: string): Promise<TaskDetail>
   stopTask(taskId: string): Promise<TaskDetail>
   deleteTask(taskId: string, mode: DeleteTaskMode): Promise<QueuePage>
+  setTaskCategory(taskId: string, category: string): Promise<QueuePage>
   revealTask(taskId: string): Promise<void>
   recoveryState(): Promise<RecoveryState>
   releaseRecovery(): Promise<RecoveryState>
   resolveAudit(taskId: string, decisions: Array<{ cueId: number; translation: string }>): Promise<TaskDetail>
+  resolveVideoCheckpoint(taskId: string, expectedRevision: number, decision: z.infer<typeof ResolveVideoCheckpointSchema>['decision']): Promise<TaskDetail>
+  resolveResearchCheckpoint(taskId: string, expectedRevision: number, decision: z.infer<typeof ResolveResearchCheckpointSchema>['decision']): Promise<TaskDetail>
+  resolveDocumentTranslationCost(taskId: string, expectedRevision: number, decision: z.infer<typeof ResolveDocumentTranslationCostSchema>['decision']): Promise<TaskDetail>
   resolveIllustrationAgent(taskId: string, expectedRevision: number, choice: z.infer<typeof ResolveIllustrationAgentSchema>['choice']): Promise<TaskDetail>
   resolveIllustrationCover(taskId: string, expectedRevision: number, decision: z.infer<typeof ResolveIllustrationCoverSchema>['decision']): Promise<TaskDetail>
   summaryPage(taskId: string): Promise<SummaryPage>
   summaryImage(taskId: string, filename: string, expectedSha256: string): Promise<string | undefined>
   exportSummary(taskId: string): Promise<ExportSummaryResult>
+  documentPage(taskId: string): Promise<DocumentPage>
+  updateDocumentTranslation(taskId: string, expectedRevision: number, markdown: string): Promise<TaskDetail>
+  exportDocument(taskId: string): Promise<ExportDocumentResult>
+  openDocumentSource(taskId: string): Promise<void>
+  documentHtmlPage(taskId: string): Promise<DocumentHtmlPage>
+  startDocumentHtml(taskId: string, expectedRevision: number, route?: z.infer<typeof DocumentHtmlRouteSchema>, templateId?: string): Promise<TaskDetail>
+  resolveDocumentHtmlStyle(taskId: string, expectedRevision: number, direction: z.infer<typeof ResolveDocumentHtmlStyleSchema>['direction']): Promise<TaskDetail>
+  exportDocumentHtml(taskId: string): Promise<ExportDocumentHtmlResult>
   completeReview(taskId: string, expectedRevision: number): Promise<TaskDetail>
   reviewPage(taskId: string, offset?: number, limit?: number): Promise<TaskReviewPage>
   reviewTimelineWindow(taskId: string, milliseconds: number, expectedRevision: number, expectedEnglishSha256?: string, expectedChineseSha256?: string, limit?: number): Promise<ReviewTimelineWindow>

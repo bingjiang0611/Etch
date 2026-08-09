@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,6 +21,7 @@ vi.mock('../src/main/runtime/tool-detector', () => ({
 }))
 
 import { HistoricalGlossaryService } from '../src/main/historical-glossary'
+import { fingerprint, sha256File } from '../src/main/core/fingerprint'
 import { TaskPipeline } from '../src/main/pipeline/task-pipeline'
 import { TaskStore } from '../src/main/storage/task-store'
 import { defaultSettings } from '../src/shared/settings-schema'
@@ -81,6 +82,44 @@ async function createIllustrateTask(store: TaskStore): Promise<string> {
   return directory
 }
 
+async function seedRestProgress(store: TaskStore, directory: string, persistOverview: boolean): Promise<string | undefined> {
+  let overviewPath: string | undefined
+  if (persistOverview) {
+    overviewPath = join(directory, '.etch-artifacts', 'illustrate', 'previous-run', '01-overview.png')
+    await mkdir(join(overviewPath, '..'), { recursive: true })
+    await writeFile(overviewPath, png())
+  }
+  const overviewIdentity = overviewPath ? { sha256: await sha256File(overviewPath), size: (await stat(overviewPath)).size } : undefined
+  const current = await store.load(directory)
+  await store.mutate(directory, (manifest) => {
+    manifest.summary.illustration = {
+      phase: 'rest',
+      provider: 'qoder',
+      model: { source: 'cli-default' },
+      planned: PLAN,
+      generated: persistOverview ? ['00-cover.png', '01-overview.png'] : ['00-cover.png'],
+      pending: [],
+      coverAcceptedAt: '2026-08-09T10:00:00.000Z'
+    }
+    if (overviewPath) {
+      const target = PLAN[1]
+      manifest.artifacts[summaryImageArtifactKey(target.filename)] = {
+        relativePath: '.etch-artifacts/illustrate/previous-run/01-overview.png',
+        sha256: overviewIdentity!.sha256,
+        size: overviewIdentity!.size,
+        valid: true,
+        producer: 'qoder',
+        inputFingerprint: fingerprint('etch:summary-image', 1, {
+          provider: 'qoder',
+          model: { source: 'cli-default' },
+          target
+        })
+      }
+    }
+  }, current.revision)
+  return overviewPath
+}
+
 function imageRun(cwd: string, stdin: string) {
   const base = /name 必须是 "([^"]+)"/u.exec(stdin)?.[1] ?? 'unknown'
   return { base, path: join(cwd, 'vibe_images', `${base}_1786177295.png`) }
@@ -96,6 +135,18 @@ function providerStdout(): string {
 
 function result(stdout = '', stderr = '', exitCode = 0) {
   return { pid: 1, exitCode, signal: null, stdout, stderr, stdoutTruncated: false, stderrTruncated: false, timedOut: false, cancelled: false }
+}
+
+interface MockImageSpec {
+  cwd: string
+  stdin: string
+  onStdout?: (chunk: string) => void
+}
+
+function imageResult(spec: MockImageSpec) {
+  const stdout = providerStdout()
+  spec.onStdout?.(`${stdout}\n`)
+  return result(stdout)
 }
 
 describe('配图 checkpoint 状态机', () => {
@@ -136,11 +187,11 @@ describe('配图 checkpoint 状态机', () => {
     const directory = await createIllustrateTask(store)
     const pipeline = pipelineFor(store)
     await pipeline.start(directory)
-    runProcessMock.mockImplementation(async (spec: { cwd: string; stdin: string }) => {
+    runProcessMock.mockImplementation(async (spec: MockImageSpec) => {
       const { path } = imageRun(spec.cwd, spec.stdin)
       await mkdir(join(spec.cwd, 'vibe_images'), { recursive: true })
       await writeFile(path, png())
-      return result(providerStdout())
+      return imageResult(spec)
     })
 
     const chosen = await pipeline.resolveIllustrationAgent(directory, (await store.load(directory)).revision, {
@@ -166,11 +217,11 @@ describe('配图 checkpoint 状态机', () => {
     const store = new TaskStore()
     const directory = await createIllustrateTask(store)
     const pipeline = pipelineFor(store)
-    runProcessMock.mockImplementation(async (spec: { cwd: string; stdin: string }) => {
+    runProcessMock.mockImplementation(async (spec: MockImageSpec) => {
       const { path } = imageRun(spec.cwd, spec.stdin)
       await mkdir(join(spec.cwd, 'vibe_images'), { recursive: true })
       await writeFile(path, png())
-      return result(providerStdout())
+      return imageResult(spec)
     })
     await pipeline.start(directory)
     await pipeline.resolveIllustrationAgent(directory, (await store.load(directory)).revision, {
@@ -185,7 +236,12 @@ describe('配图 checkpoint 状态机', () => {
     expect(retried.summary.illustration.generated).toEqual([])
     expect(retried.summary.illustration.provider).toBeUndefined()
 
-    await pipeline.resolveIllustrationAgent(directory, retried.revision, {
+    // 换 agent 后流水线会重新停在选 agent 的 checkpoint，不会直接出图。
+    await pipeline.start(directory)
+    const waiting = await store.load(directory)
+    expect(waiting.pipeline.stages.illustrate.checkpointId).toBe('illustration-agent')
+
+    await pipeline.resolveIllustrationAgent(directory, waiting.revision, {
       mode: 'generate',
       provider: 'qoder',
       model: { source: 'cli-default' }
@@ -224,12 +280,12 @@ describe('配图 checkpoint 状态机', () => {
     const directory = await createIllustrateTask(store)
     const pipeline = pipelineFor(store)
     await pipeline.start(directory)
-    runProcessMock.mockImplementation(async (spec: { cwd: string; stdin: string }) => {
+    runProcessMock.mockImplementation(async (spec: MockImageSpec) => {
       const { base, path } = imageRun(spec.cwd, spec.stdin)
-      if (base === '02-alpha') return result(providerStdout())
+      if (base === '02-alpha') return imageResult(spec)
       await mkdir(join(spec.cwd, 'vibe_images'), { recursive: true })
       await writeFile(path, png())
-      return result(providerStdout())
+      return imageResult(spec)
     })
     await pipeline.resolveIllustrationAgent(directory, (await store.load(directory)).revision, {
       mode: 'generate',
@@ -246,5 +302,81 @@ describe('配图 checkpoint 状态机', () => {
     expect(manifest.summary.illustration.pending).toHaveLength(1)
     expect(manifest.summary.illustration.pending[0]).toMatchObject({ filename: '02-alpha.png' })
     expect(manifest.summary.illustration.pending[0].reason).toContain('未找到生成的 PNG 文件')
+  })
+
+  it('剩余配图每张验收后立即持久化，下一张开始前已能从 manifest 恢复', async () => {
+    const store = new TaskStore()
+    const directory = await createIllustrateTask(store)
+    await seedRestProgress(store, directory, false)
+    let observedDurableOverview = false
+    runProcessMock.mockImplementation(async (spec: MockImageSpec) => {
+      const { base, path } = imageRun(spec.cwd, spec.stdin)
+      if (base === '02-alpha') {
+        const running = await store.load(directory)
+        const overview = running.artifacts[summaryImageArtifactKey('01-overview.png')]
+        expect(running.pipeline.stages.illustrate.status).toBe('running')
+        expect(running.summary.illustration.generated).toContain('01-overview.png')
+        expect(overview?.valid).toBe(true)
+        expect(await sha256File(join(directory, overview!.relativePath))).toBe(overview!.sha256)
+        observedDurableOverview = true
+      }
+      await mkdir(join(spec.cwd, 'vibe_images'), { recursive: true })
+      await writeFile(path, png())
+      return imageResult(spec)
+    })
+
+    await pipelineFor(store).start(directory)
+
+    expect(observedDurableOverview).toBe(true)
+    const manifest = await store.load(directory)
+    expect(manifest.summary.illustration.generated).toEqual(PLAN.map((image) => image.filename))
+  })
+
+  it('恢复时按 artifact hash 与目标复用，并且 generated 不改变 illustrate 输入指纹', async () => {
+    const emptyStore = new TaskStore()
+    const emptyDirectory = await createIllustrateTask(emptyStore)
+    await seedRestProgress(emptyStore, emptyDirectory, false)
+    const emptyAcquire = vi.spyOn(emptyStore, 'acquireLease')
+    const callsByDirectory = new Map<string, string[]>()
+    runProcessMock.mockImplementation(async (spec: MockImageSpec) => {
+      const { base, path } = imageRun(spec.cwd, spec.stdin)
+      const taskDirectory = spec.cwd.split('/.etch-artifacts/')[0]
+      callsByDirectory.set(taskDirectory, [...(callsByDirectory.get(taskDirectory) ?? []), base])
+      await mkdir(join(spec.cwd, 'vibe_images'), { recursive: true })
+      await writeFile(path, png())
+      return imageResult(spec)
+    })
+    await pipelineFor(emptyStore).start(emptyDirectory)
+
+    const resumedStore = new TaskStore()
+    const resumedDirectory = await createIllustrateTask(resumedStore)
+    await seedRestProgress(resumedStore, resumedDirectory, true)
+    const resumedAcquire = vi.spyOn(resumedStore, 'acquireLease')
+    await pipelineFor(resumedStore).start(resumedDirectory)
+
+    expect(emptyAcquire.mock.calls[0][2]).toBe(resumedAcquire.mock.calls[0][2])
+    expect(callsByDirectory.get(emptyDirectory)).toEqual(['01-overview', '02-alpha'])
+    expect(callsByDirectory.get(resumedDirectory)).toEqual(['02-alpha'])
+    expect((await resumedStore.load(resumedDirectory)).summary.illustration.generated)
+      .toEqual(PLAN.map((image) => image.filename))
+  })
+
+  it('恢复记录的文件 hash 不匹配时重新生成该目标', async () => {
+    const store = new TaskStore()
+    const directory = await createIllustrateTask(store)
+    const overviewPath = await seedRestProgress(store, directory, true)
+    await writeFile(overviewPath!, Buffer.alloc(20_000))
+    const generated: string[] = []
+    runProcessMock.mockImplementation(async (spec: MockImageSpec) => {
+      const { base, path } = imageRun(spec.cwd, spec.stdin)
+      generated.push(base)
+      await mkdir(join(spec.cwd, 'vibe_images'), { recursive: true })
+      await writeFile(path, png())
+      return imageResult(spec)
+    })
+
+    await pipelineFor(store).start(directory)
+
+    expect(generated).toEqual(['01-overview', '02-alpha'])
   })
 })

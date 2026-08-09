@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.1.29/Etch-0.1.29-arm64.dmg"><strong>Download the v0.1.29 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.13/Etch-0.2.13-arm64.dmg"><strong>Download the v0.2.13 DMG</strong></a>
   ·
   <a href="#start-in-3-steps">Start in 3 steps</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <sub>v0.1.29 · Apple Silicon · macOS 13.5+ · HTTP(S) URL input · public DMG includes Bilibili publishing</sub>
+  <sub>v0.2.13 · Apple Silicon · macOS 13.5+ · HTTP(S) URL input · public DMG includes Bilibili publishing</sub>
 </p>
 
 ## A reviewable, recoverable video pipeline
@@ -41,11 +41,13 @@ Etch does not reduce long-video translation to one opaque “Generate with AI”
 3. Review every cue beside the video, preview the impact of terminology changes, and generate a bilingual SRT.
 4. Burn in the subtitles with FFmpeg and treat the output as complete only after ffprobe verification. Bilibili publishing remains an independent, optional step after completion.
 
+Web translation uses a separate pipeline: safely fetch a normal webpage or one X status, normalize it into structured Markdown, localize static images, translate in recoverable normal/refined batches, review source and output side by side, then verify structure and media. Verified Markdown can be published independently as an offline single-file HTML page after a four-direction style preview and desktop/mobile browser checks. V1 supports one X post or X Article; threads, quotes, polls, and video are explicitly reported as not expanded.
+
 ## Start in 3 steps
 
 ### 1. Install
 
-1. Download `Etch-0.1.29-arm64.dmg` from [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest).
+1. Download `Etch-0.2.13-arm64.dmg` from [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/latest).
 2. Open the DMG and drag `Etch.app` into `Applications`.
 3. If Gatekeeper blocks the first launch, right-click Etch in Finder and choose **Open**. If it is still blocked, use **System Settings → Privacy & Security → Open Anyway**.
 
@@ -53,7 +55,7 @@ Etch does not reduce long-video translation to one opaque “Generate with AI”
 
 ### 2. Check local tools
 
-At startup, Etch checks executable paths, versions, required capabilities, and authentication state. Before creating a task, you need:
+At startup, Etch checks executable paths, versions, required capabilities, and authentication state. Video tasks need:
 
 - An Apple Silicon Mac running macOS 13.5+
 - `yt-dlp`
@@ -61,13 +63,15 @@ At startup, Etch checks executable paths, versions, required capabilities, and a
 - Python 3.12 and `mlx_whisper`
 - At least one installed and authenticated CLI: `claude`, `codex`, `qodercli`, or `opencode`
 
+Web “convert to Markdown only” does not need video tools or a Provider. Web translation still requires one authenticated Agent CLI.
+
 If a tool is not on the normal `PATH`, set its absolute executable path in Settings.
 
 ### 3. Create a task
 
-Paste 1–50 HTTP(S) video URLs into the task queue, choose a Provider, and optionally describe the translation style. A task can be stopped and later resumed from its last committed stage.
+Paste 1–50 HTTPS video URLs from a supported platform, or HTTP(S) normal webpage / X status URLs, choose the task type, and optionally describe the translation style. A task can be stopped and later resumed from its last committed stage.
 
-Current release: `0.1.29`. Input is limited to **HTTP(S) URLs**; local file import remains planned. GitHub Releases provides an Apple Silicon DMG.
+Current source version: `0.2.14`. Input is limited to **HTTP(S) URLs**; local file import remains planned. GitHub Releases provides an Apple Silicon DMG.
 
 ## Publish to Bilibili
 
@@ -99,7 +103,9 @@ The publishing path requires no Bilibili Open Platform application and does not 
 | Status | Capability | Current boundary |
 | --- | --- | --- |
 | Implemented | URL to bilingual hard-subtitle video | Subtitle retrieval/local transcription, four Agent CLIs, terminology audit, cue-by-cue review, bilingual SRT generation, FFmpeg rendering, and ffprobe verification. |
+| Implemented | Webpage / X to Markdown and HTML | Normal webpages and one X status, body cleanup, static-image localization, recoverable normal/refined translation or conversion only, side-by-side review, structural verification, Markdown export, and offline single-file HTML publication after a four-direction preview. Full threads, quotes, polls, and X video are not expanded yet. |
 | Implemented | Recoverable tasks | `task.json` is authoritative; artifact commits are guarded by lease, revision, and fingerprint checks. |
+| Partial | Video summary (three-draft long-form article with illustrations) | New tasks can be created as "video summary": subtitle extraction, an analysis pack, an external-evidence ledger, three scored drafts merged into one final Chinese article, and 8-12 illustrations that can be previewed in the workbench and exported. Illustration requires the user to pick the verified Qoder or Codex path at a checkpoint; after the cover passes review, each remaining image is generated and committed independently. Real-video L3 summarization remains unverified. |
 | Implemented | Direct Bilibili publishing | The public v0.1.11 DMG includes single-account QR login, manual/automatic publishing, one concurrent publication, and verifiable receipts. Real-account L3 publishing remains unverified. |
 | Partial | Providers, long media, and public distribution | Automated tests cover all four Provider protocols, but real accounts and current server behavior require on-machine verification. There is no global disk budget, Developer ID signing, notarization, or auto-update. |
 | Planned | Local file import | The schema reserves this input type, but the UI, APFS clone/copy, space checks, and recovery path are not implemented. |
@@ -117,7 +123,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` builds and verifies `dist/mac-arm64/Etch.app`; `npm run dist:mac` builds, mounts, and verifies `dist/Etch-0.1.29-arm64.dmg`. DMG verification covers the mounted-volume allowlist, app signature, entitlements, arm64 architecture, version, minimum macOS version, and the pinned `biliup` sidecar's architecture, version, executable permissions, and SHA-256.
+`npm run pack` builds and verifies `dist/mac-arm64/Etch.app`; `npm run dist:mac` builds, mounts, and verifies `dist/Etch-0.2.14-arm64.dmg`. DMG verification covers the mounted-volume allowlist, app signature, entitlements, arm64 architecture, version, minimum macOS version, and the pinned `biliup` sidecar's architecture, version, executable permissions, and SHA-256.
 
 </details>
 

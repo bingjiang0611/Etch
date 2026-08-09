@@ -76,6 +76,7 @@ async function historicalTask(options: {
       location: directory,
       title: manifest.title,
       kind: manifest.kind,
+      category: manifest.category,
       revision: manifest.revision,
       status: options.indexedStatus ?? 'completed',
       updatedAt: manifest.updatedAt

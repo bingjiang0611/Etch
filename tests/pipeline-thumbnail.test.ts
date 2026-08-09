@@ -55,11 +55,11 @@ function result(stdout = '', stderr = '', exitCode = 0) {
   }
 }
 
-async function runThumbnailPipeline(options: { platformThumbnail?: boolean; fallbackFails?: boolean } = {}) {
+async function runThumbnailPipeline(options: { platformThumbnail?: boolean; fallbackFails?: boolean; height?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'etch-pipeline-thumbnail-'))
   directories.push(directory)
   const store = new TaskStore()
-  const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/video' }, '', 'codex')
+  const manifest = createTaskManifest({ kind: 'url', url: 'https://vimeo.com/100000004' }, '', 'codex')
   for (const stage of STAGE_IDS) manifest.pipeline.stages[stage].status = stage === 'source' ? 'ready' : stage === 'inspect' ? 'pending' : 'skipped'
   await store.create(directory, manifest)
 
@@ -87,7 +87,7 @@ async function runThumbnailPipeline(options: { platformThumbnail?: boolean; fall
       if (spec.command.endsWith('/ffprobe')) {
         return result(JSON.stringify({
           streams: [
-            { codec_type: 'video', width: 1920, height: 1080 },
+            { codec_type: 'video', width: 1920, height: options.height ?? 1080 },
             { codec_type: 'audio' }
           ],
           format: { duration: '60' }
@@ -148,5 +148,28 @@ describe('TaskPipeline thumbnail artifacts', () => {
 
     expect(manifest.pipeline.stages.inspect.status).toBe('completed')
     expect(manifest.artifacts.thumbnail).toBeUndefined()
+  })
+
+  it('checkpoints a low-resolution source with probe artifacts and resumes after acceptance', async () => {
+    const { directory, manifest } = await runThumbnailPipeline({ height: 480 })
+
+    expect(manifest.pipeline.stages.inspect).toMatchObject({
+      status: 'checkpoint',
+      checkpointId: manifest.video.checkpoint?.checkpointId
+    })
+    expect(manifest.video.checkpoint).toMatchObject({
+      kind: 'low-resolution',
+      stage: 'inspect',
+      metrics: { width: 1920, height: 480 }
+    })
+    expect(manifest.artifacts.probe.valid).toBe(true)
+    expect(manifest.runtime).toMatchObject({ width: 1920, height: 480 })
+
+    const store = new TaskStore()
+    const pipeline = new TaskPipeline(store, defaultSettings('/Users/test'), new HistoricalGlossaryService(store, () => []), () => undefined)
+    const accepted = await pipeline.resolveVideoCheckpoint(directory, manifest.revision, 'accept')
+    expect(accepted.pipeline.stages.inspect.status).toBe('completed')
+    expect(accepted.video.checkpoint).toBeUndefined()
+    expect(accepted.video.decisions.at(-1)).toMatchObject({ kind: 'low-resolution', decision: 'accept' })
   })
 })

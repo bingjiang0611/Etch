@@ -7,6 +7,7 @@ const DISABLED_FEATURE_MARKERS = CODEX_TEXT_ONLY_DISABLED_FEATURES.map(normalize
 const FROZEN_CAPABILITY_ALIASES = ['fanout'].map(normalizeCapabilityMarker)
 const CODEX_RETRY_MESSAGE = /^Reconnecting\.\.\. [1-5]\/5 \([\s\S]{1,4096}\)$/u
 const CODEX_FALLBACK_MESSAGE = /^Falling back from WebSockets to HTTPS transport\. [\s\S]{1,4096}$/u
+const CODEX_CODE_MODE_FAIL_CLOSED_MESSAGE = /^Code Mode is unavailable because code-mode host is disabled\. Code mode will fail closed; enable `features\.code_mode_host` and install `codex-code-mode-host`\.$/u
 const CODEX_ALLOWED_STDERR = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z (?:ERROR|WARN) codex_api::endpoint::responses_websocket: [^\r\n]{1,4096}, url: wss:\/\/chatgpt\.com\/backend-api\/codex\/responses$/u
 const NON_TOOL_EVENT_MARKERS = new Set(['error_during_execution'])
 const DEFAULT_LINE_LIMIT_BYTES = 1024 * 1024
@@ -352,6 +353,11 @@ function validateCodexTextOnlyEnvelope(
       const itemError = validateCodexTextItem(value.item)
       if (itemError) return itemError
       if (!isRecord(value.item)) return 'item.completed item must be an object'
+      if (isCodexCodeModeFailClosedItem(value.item)) {
+        return lifecycle.state === 'expect-turn'
+          ? undefined
+          : `code mode fail-closed diagnostic is not allowed in state ${lifecycle.state}`
+      }
       if (value.item.type === 'agent_message') {
         lifecycle.agentMessage += 1
         if (lifecycle.state !== 'turn-preamble' && lifecycle.state !== 'agent-messages') {
@@ -390,9 +396,19 @@ function validateCodexTextItem(value: unknown): string | undefined {
     const keysError = exactKeys(value, ['id', 'type', 'message'])
     if (keysError) return keysError
     if (!nonEmptyString(value.id)) return 'error item id must be a non-empty string'
-    return allowedCodexTransportMessage(value.message, 'fallback') ? undefined : 'unapproved error item message'
+    return isCodexCodeModeFailClosedItem(value) || allowedCodexTransportMessage(value.message, 'fallback')
+      ? undefined
+      : 'unapproved error item message'
   }
   return `unknown item type ${type}`
+}
+
+function isCodexCodeModeFailClosedItem(value: unknown): boolean {
+  return isRecord(value)
+    && value.type === 'error'
+    && nonEmptyString(value.id)
+    && typeof value.message === 'string'
+    && CODEX_CODE_MODE_FAIL_CLOSED_MESSAGE.test(value.message)
 }
 
 function allowedCodexTransportMessage(message: unknown, kind: 'retry' | 'fallback'): boolean {

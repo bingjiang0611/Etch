@@ -84,7 +84,7 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
       return settings ? { label: settings.label, accelerator: settings.accelerator } : undefined
     })).toEqual({ label: '设置…', accelerator: 'CommandOrControl+,' })
 
-    await window.evaluate(() => window.etch.createUrls(['https://example.com/installed-smoke'], 'codex'))
+    await window.evaluate(() => window.etch.createUrls(['https://vimeo.com/100000005'], 'codex'))
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
     await quitInstalled(application)
     application = undefined
@@ -100,7 +100,7 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
         source: detail.manifest.pipeline.stages.source.status
       }
     })).toEqual({
-      input: { kind: 'url', url: 'https://example.com/installed-smoke' },
+      input: { kind: 'url', url: 'https://vimeo.com/100000005' },
       source: 'ready'
     })
   } finally {

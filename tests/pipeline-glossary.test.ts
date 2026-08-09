@@ -611,6 +611,7 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
       location: historyDirectory,
       title: history.title,
       kind: history.kind,
+      category: history.category,
       revision: history.revision,
       status: 'completed',
       updatedAt: history.updatedAt
@@ -1196,7 +1197,9 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('repair-limit-session')), "
     const failed = await store.load(taskDirectory)
     expect(failed.pipeline.stages.translate).toMatchObject({ status: 'failed', attempt: 1 })
     expect(failed.pipeline.stages.audit.status).toBe('pending')
-    expect(failed.translation.batches).toEqual([])
+    expect(failed.translation.batches).toEqual([
+      expect.objectContaining({ id: 'batch-001', status: 'failed', attempt: 3 })
+    ])
     expect(failed.artifacts.chineseCues).toBeUndefined()
     await expect(readFile(join(taskDirectory, 'zh_cues.tsv'), 'utf8')).rejects.toThrow()
     expect((await readFile(argsLog, 'utf8')).trim().split('\n')).toHaveLength(3)

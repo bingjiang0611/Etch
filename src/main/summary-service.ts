@@ -32,6 +32,8 @@ function exportDirectoryName(manifest: TaskManifest): string {
 export class SummaryService {
   readonly #imageCache = new Map<string, { sha256: string; dataUrl: string }>()
 
+  constructor(readonly decodeImage?: (bytes: Buffer) => boolean) {}
+
   async page(taskId: string, taskDirectory: string, manifest: TaskManifest): Promise<SummaryPage> {
     const base = {
       taskId,
@@ -87,6 +89,7 @@ export class SummaryService {
       expectedSha256: artifact.sha256
     })
     if (!file.bytes.subarray(0, 8).equals(PNG_MAGIC)) throw new Error('总结配图不是 PNG')
+    if (this.decodeImage && !this.decodeImage(file.bytes)) throw new Error('总结配图无法实际解码')
     const dataUrl = `data:image/png;base64,${file.bytes.toString('base64')}`
     if (this.#imageCache.size > 24) this.#imageCache.clear()
     this.#imageCache.set(cacheKey, { sha256: artifact.sha256, dataUrl })
