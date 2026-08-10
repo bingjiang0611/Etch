@@ -8,7 +8,11 @@ const FROZEN_CAPABILITY_ALIASES = ['fanout'].map(normalizeCapabilityMarker)
 const CODEX_RETRY_MESSAGE = /^Reconnecting\.\.\. [1-5]\/5 \([\s\S]{1,4096}\)$/u
 const CODEX_FALLBACK_MESSAGE = /^Falling back from WebSockets to HTTPS transport\. [\s\S]{1,4096}$/u
 const CODEX_CODE_MODE_FAIL_CLOSED_MESSAGE = /^Code Mode is unavailable because code-mode host is disabled\. Code mode will fail closed; enable `features\.code_mode_host` and install `codex-code-mode-host`\.$/u
-const CODEX_ALLOWED_STDERR = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z (?:ERROR|WARN) codex_api::endpoint::responses_websocket: [^\r\n]{1,4096}, url: wss:\/\/chatgpt\.com\/backend-api\/codex\/responses$/u
+const CODEX_ALLOWED_STDERR = [
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z (?:ERROR|WARN) codex_api::endpoint::responses_websocket: [^\r\n]{1,4096}, url: wss:\/\/chatgpt\.com\/backend-api\/codex\/responses$/u,
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z (?:ERROR|WARN) codex_models_manager::manager: failed to refresh available models: [^\r\n]{1,4096}$/u
+]
+const STDERR_SUMMARY_LIMIT = 200
 const NON_TOOL_EVENT_MARKERS = new Set(['error_during_execution'])
 const DEFAULT_LINE_LIMIT_BYTES = 1024 * 1024
 const DEFAULT_RESULT_LIMIT_BYTES = 5 * 1024 * 1024
@@ -184,8 +188,11 @@ export class ProviderStreamInspector {
     this.#stderrLine += 1
     for (const tool of observedProviderToolDiagnostics(line)) this.#recordTool(tool)
     if (this.#provider === 'codex'
-      && (!CODEX_ALLOWED_STDERR.test(line) || containsCapabilityMarker(line))) {
-      this.#record(this.#protocolViolations, `stderr line ${this.#stderrLine}: unapproved stderr diagnostic`)
+      && (!CODEX_ALLOWED_STDERR.some((pattern) => pattern.test(line)) || containsCapabilityMarker(line))) {
+      this.#record(
+        this.#protocolViolations,
+        `stderr line ${this.#stderrLine}: unapproved stderr diagnostic: ${safeStderrSummary(line)}`
+      )
     }
   }
 
@@ -414,6 +421,12 @@ function isCodexCodeModeFailClosedItem(value: unknown): boolean {
 function allowedCodexTransportMessage(message: unknown, kind: 'retry' | 'fallback'): boolean {
   if (typeof message !== 'string' || containsCapabilityMarker(message)) return false
   return kind === 'retry' ? CODEX_RETRY_MESSAGE.test(message) : CODEX_FALLBACK_MESSAGE.test(message)
+}
+
+function safeStderrSummary(line: string): string {
+  const truncated = line.slice(0, STDERR_SUMMARY_LIMIT)
+  const sanitized = truncated.replace(/\p{C}/gu, '?')
+  return line.length > STDERR_SUMMARY_LIMIT ? `${sanitized}…` : sanitized
 }
 
 function containsCapabilityMarker(value: string): boolean {

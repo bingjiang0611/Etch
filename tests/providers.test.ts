@@ -292,12 +292,44 @@ describe('provider adapters', () => {
     )).toEqual([])
     expect(codexTextOnlyStderrViolations(
       'WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)'
-    )).toEqual(['line 1: unapproved stderr diagnostic'])
+    )).toEqual([
+      'line 1: unapproved stderr diagnostic: WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)'
+    ])
     expect(codexTextOnlyStderrViolations('ordinary provider diagnostic')).toEqual([
-      'line 1: unapproved stderr diagnostic'
+      'line 1: unapproved stderr diagnostic: ordinary provider diagnostic'
     ])
     expect(codexTextOnlyStderrViolations('WARNING shell read_file browser computer image exec function_call mcp file_change collab todo'))
-      .toEqual(['line 1: unapproved stderr diagnostic'])
+      .toEqual([
+        'line 1: unapproved stderr diagnostic: WARNING shell read_file browser computer image exec function_call mcp file_change collab todo'
+      ])
+  })
+  it('accepts the frozen Codex models-refresh diagnostic without widening the stderr allowlist', () => {
+    expect(codexTextOnlyStderrViolations(
+      '2026-08-10T09:15:19.226495Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit\n'
+    )).toEqual([])
+    expect(codexTextOnlyStderrViolations(
+      '2026-08-10T01:02:03Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 503 Service Unavailable'
+    )).toEqual([])
+    expect(codexTextOnlyStderrViolations(
+      '2026-08-10T01:02:03.456789Z WARN codex_models_manager::manager: failed to refresh available models: apply_patch tool rejected'
+    )).toEqual([
+      'line 1: unapproved stderr diagnostic: 2026-08-10T01:02:03.456789Z WARN codex_models_manager::manager: failed to refresh available models: apply_patch tool rejected'
+    ])
+    expect(codexTextOnlyStderrViolations(
+      '2026-08-10T01:02:03.456789Z WARN codex_models_manager::manager: failed to load available models: request timed out'
+    )).toEqual([
+      'line 1: unapproved stderr diagnostic: 2026-08-10T01:02:03.456789Z WARN codex_models_manager::manager: failed to load available models: request timed out'
+    ])
+    expect(codexTextOnlyStderrViolations(
+      'prefix 2026-08-10T01:02:03.456789Z WARN codex_models_manager::manager: failed to refresh available models: request timed out'
+    )).toEqual([
+      'line 1: unapproved stderr diagnostic: prefix 2026-08-10T01:02:03.456789Z WARN codex_models_manager::manager: failed to refresh available models: request timed out'
+    ])
+  })
+  it('bounds and sanitizes the stderr summary attached to a contamination violation', () => {
+    const [violation] = codexTextOnlyStderrViolations(`ordinary\u0007diagnostic ${'x'.repeat(4096)}`)
+    expect(violation).toBe(`line 1: unapproved stderr diagnostic: ordinary?diagnostic ${'x'.repeat(180)}…`)
+    expect(violation).toHaveLength('line 1: unapproved stderr diagnostic: '.length + 201)
   })
   it('accepts the stable Codex text-only lifecycle envelope shapes', () => {
     const jsonl = [
