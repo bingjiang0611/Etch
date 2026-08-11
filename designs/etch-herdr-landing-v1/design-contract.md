@@ -28,8 +28,8 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 | # | 假设 | 依据 / 风险 |
 |---|---|---|
 | A1 | 当前公开版是 **v0.2.18** | `package.json` version = `0.2.18`，且 `website/index.html` 的 CTA、JSON-LD、标题都是 0.2.18。注意 git tag 最新只到 `v0.2.14`，**下载链接的可用性以官网现有链接为准，本原型只是原样沿用，未做可达性验证**。 |
-| A2 | 落地页正文沿用官网现有文案 | 用户要求「保留官网真实信息和 CTA」。三类任务、B站三条事实、运行环境四行、当前边界，均逐字沿用 `website/index.html`；“为什么能恢复”整段按后续反馈删除。 |
-| A3 | 原型里的任务标题、URL、cue 正文、长文段落、术语表是**示例数据** | 页面上以「这是原型，不是真实 App」+「正文是标注过的示例数据」显式标注；`示例任务 ·` 前缀、`EXAMPLE-ID`、`example.com` 都是可辨识占位符。 |
+| A2 | 落地页正文沿用官网现有文案 | 用户要求「保留官网真实信息和 CTA」。三类任务、B站三条事实、运行环境四行均逐字沿用 `website/index.html`；“为什么能恢复”、版本说明小字和“当前边界”警告按后续反馈删除。 |
+| A3 | 原型里的任务标题、URL、cue 正文、长文段落、术语表是**示例数据** | 不再额外放原型说明小字；`示例任务 ·` 前缀、`EXAMPLE-ID`、`example.com` 仍保留为可辨识占位符。 |
 | A4 | 示例 cue 主题选「注意力头」 | 不是凭空编的：`src/renderer/ui.tsx` 的 `PresetDemo` 组件内置的演示 cue 就是 `attention head / 注意力头`。示例句子不署名任何讲者。 |
 | A5 | 落地页叙述文本用 SF Pro 栈，App 区域用 Menlo 栈 | 真实 App 现在整体等宽（`app.css --font-nib: Menlo, "PingFang SC", monospace`），官网正文用 `-apple-system / SF Pro Text / PingFang SC`。两者都是真实来源，原型按「App 区 = App 字体，叙述区 = 官网字体」分工。**未使用 Inter。** |
 | A6 | 三类任务各停在一个不同的真实状态 | 字幕停在 `review` checkpoint、总结停在 `illustrate` checkpoint、文档停在 `review` checkpoint；文档完成校对后才进入完整性验证与 HTML 四方向预览。三者都是 schema 允许的合法状态组合。 |
@@ -41,7 +41,7 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 - **没有 source/final 媒体切换、没有本地文件导入、没有托盘**——`CLAUDE.md` 列为未实现或 planned。
 - **没有编造 AI 能力**：不写「AI 自动配音」「一键成片」「智能纠错」之类；配图、外部核验都按真实白名单与 checkpoint 语义描述。
 - **没有编造指标**：不放「10 万用户」「节省 90% 时间」这类 data slop（这也是刻意不借 herdr 首屏 metrics 的原因）。
-- **没有承诺公证**：release-note 保留「Apple Development 签名，未经公证」。
+- **没有承诺公证**：状态说明小字已删除，CTA 与正文也没有加入公证承诺。
 
 ---
 

@@ -343,14 +343,6 @@ img {
   font-size: 15.5px;
 }
 
-.release-note {
-  max-width: 760px;
-  margin-top: 22px;
-  color: var(--muted);
-  font: 12.5px/1.7 var(--font-app);
-  text-wrap: pretty;
-}
-
 /* ---------------- 交互原型 ---------------- */
 
 .proto-head {
@@ -2256,24 +2248,6 @@ button.rail-node:active .rail-dot {
   line-height: 1.6;
 }
 
-.publish-boundary {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin-top: 32px;
-  padding: 2px 0 2px 15px;
-  border-left: 2px solid var(--warn);
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.65;
-}
-
-.publish-boundary strong {
-  flex: none;
-  color: var(--warn);
-  font-weight: 600;
-}
-
 /* ---------------- 运行环境 ---------------- */
 
 .runtime-lines {
@@ -2645,11 +2619,6 @@ footer {
     padding: 14px 0;
   }
 
-  .publish-boundary {
-    display: grid;
-    gap: 4px;
-  }
-
   .shot figcaption {
     display: grid;
     gap: 4px;
@@ -2743,16 +2712,7 @@ footer {
   margin-top: 20px;
 }
 
-.hero-support .release-note {
-  margin-top: 16px;
-  font-size: 10px;
-}
-
 .prototype-intro {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 28px;
   margin: 46px 0 18px;
 }
 
@@ -2763,17 +2723,6 @@ footer {
   font-weight: 600;
   letter-spacing: -.025em;
   line-height: 1.12;
-}
-
-.prototype-intro > p {
-  max-width: 390px;
-  color: var(--muted);
-  font: 11px/1.65 var(--font-app);
-}
-
-.prototype-intro > p strong {
-  color: var(--warn);
-  font-weight: 600;
 }
 
 .etch-window {
@@ -3424,13 +3373,6 @@ footer {
 .glossary-table b { color: var(--fg-soft); font-weight: 500; }
 .glossary-table em { color: var(--ok); }
 
-.prototype-footnote {
-  max-width: 960px;
-  margin: 14px 0 0;
-  color: var(--faint);
-  font: 10px/1.6 var(--font-app);
-}
-
 .publish-grid.publish-grid-single {
   grid-template-columns: minmax(0, 760px);
 }
@@ -3453,8 +3395,7 @@ footer {
 
 @media (max-width: 720px) {
   .hero-product { padding: 48px 0 58px; }
-  .prototype-intro { align-items: flex-start; flex-direction: column; margin-top: 54px; }
-  .prototype-intro > p { max-width: none; }
+  .prototype-intro { margin-top: 54px; }
   .etch-window { min-height: 820px; }
   .etch-app-grid { grid-template-columns: 58px minmax(0, 1fr); }
   .etch-sidebar { padding-inline: 6px; }
