@@ -113,6 +113,7 @@
     link: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M11 6l1-1a3.5 3.5 0 0 1 5 5l-1 1M13 18l-1 1a3.5 3.5 0 0 1-5-5l1-1"/></svg>',
     back: '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg>',
     folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
     empty: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><line x1="7" y1="10" x2="17" y2="10"/><line x1="7" y1="14" x2="14" y2="14"/></svg>'
   };
 
@@ -328,6 +329,7 @@
     view: 'workbench',
     kind: 'document',
     tab: { subtitle: 'glossary', summary: 'summary', document: 'compare' },
+    pipelineOpen: { subtitle: false, summary: false, document: true },
     cueId: 101,
     cuePage: 0,
     stage: null,
@@ -517,22 +519,51 @@
     } else {
       var shared = task.stages.filter(function (stage) { return SHARED_STAGE_IDS.indexOf(stage.id) >= 0; });
       var own = task.stages.filter(function (stage) { return SHARED_STAGE_IDS.indexOf(stage.id) < 0; });
-      body = '<div class="pipeline-lanes">'
-        + '<div><div class="pipeline-section-label"><span>共享底稿</span><small>两个成果只执行一次</small></div>'
-        + renderRail(task, shared, 0, true, '共享底稿阶段') + '</div>'
-        + '<div><div class="lane-head"><span class="lane-mark">' + esc(task.mark) + '</span>'
-        + '<span><strong>' + esc(task.kindLabel) + '</strong> <small>' + esc(task.currentMessage) + '</small></span>'
+      var companionKind = task.kind === 'subtitle' ? 'summary' : 'subtitle';
+      var companionLabel = companionKind === 'summary' ? '视频总结' : '双语硬字幕';
+      var companionSteps = companionKind === 'summary' ? 4 : 6;
+      var activeStage = own.find(function (stage) { return !isDone(stage.status); }) || own[own.length - 1];
+      var activeStageIndex = task.stages.findIndex(function (stage) { return stage.id === activeStage.id; }) + 1;
+
+      body = '<section class="pipeline-map" aria-label="共享底稿与成果分支">'
+        + '<section class="pipeline-shared-card" aria-label="共享底稿">'
+        + '<div class="pipeline-group-head"><span><strong>共享底稿</strong><small>两个成果只执行一次</small></span>'
+        + '<em>' + shared.filter(function (stage) { return isDone(stage.status); }).length + ' / ' + shared.length + ' 已就绪</em></div>'
+        + renderRail(task, shared, 0, true, '共享底稿阶段') + '</section>'
+        + '<div class="pipeline-handoff" aria-hidden="true"><span>形成成果</span></div>'
+        + '<div class="pipeline-outcome-stack">'
+        + '<section class="outcome-lane" data-active="true" aria-label="当前成果：' + esc(task.kindLabel) + '">'
+        + '<div class="outcome-lane-head"><span class="outcome-mark" data-kind="' + task.kind + '">' + esc(task.mark) + '</span>'
+        + '<span class="outcome-lane-copy"><strong>' + esc(task.kindLabel) + '</strong>'
+        + '<small><i></i>第 ' + String(activeStageIndex).padStart(2, '0') + ' 步 · ' + esc(task.currentMessage) + '</small></span>'
         + '<em>当前</em></div>'
-        + renderRail(task, own, SHARED_STAGE_IDS.length, true, task.kindLabel + '阶段') + '</div>'
-        + '</div>';
+        + renderRail(task, own, SHARED_STAGE_IDS.length, true, task.kindLabel + '阶段') + '</section>'
+        + '<button class="companion-lane" type="button" data-output="' + companionKind + '"'
+        + ' aria-label="追加' + companionLabel + '，复用共享底稿">'
+        + '<span class="companion-plus">' + ICONS.plus + '</span>'
+        + '<span><strong>追加' + companionLabel + '</strong><small>复用已完成的 4 步，只新增 ' + companionSteps + ' 步</small></span>'
+        + '<em>复用 4 步</em></button>'
+        + '</div></section>';
     }
 
-    var mini = '<span class="pc-msg">' + done + ' / ' + task.stages.length + ' · ' + esc(task.currentMessage) + '</span>'
+    var miniMessage = task.kind === 'document'
+      ? done + ' / ' + task.stages.length + ' · ' + task.currentMessage
+      : SHARED_STAGE_IDS.filter(function (id) {
+        var stage = task.stages.find(function (item) { return item.id === id; });
+        return stage && isDone(stage.status);
+      }).length + ' / ' + SHARED_STAGE_IDS.length + ' 共享 · 1 / 2 个成果';
+    var focusedStatus = task.kind === 'subtitle' && checkpointCount
+      ? '<span class="pc-focus">' + ICONS.pause + '人工校对待确认</span>'
+      : task.kind === 'summary' && checkpointCount
+        ? '<span class="pc-focus is-warn">' + ICONS.warning + esc(task.currentMessage) + '</span>'
+        : '';
+    var mini = '<span class="pc-msg">' + esc(miniMessage) + '</span>'
       + '<span class="mini-bar" role="progressbar" aria-label="流水线总体进度" aria-valuemin="0" aria-valuemax="100"'
       + ' aria-valuenow="' + percent + '"><i style="width:' + percent + '%"></i></span>'
-      + (checkpointCount ? '<span class="warn">' + ICONS.warning + checkpointCount + ' 处待确认</span>' : '');
+      + focusedStatus
+      + (task.kind === 'document' && checkpointCount ? '<span class="warn">' + ICONS.warning + checkpointCount + ' 处待确认</span>' : '');
 
-    return '<details class="pipeline-collapse"' + (task.kind === 'document' ? ' open' : '') + '>'
+    return '<details class="pipeline-collapse"' + (state.pipelineOpen[task.kind] ? ' open' : '') + '>'
       + '<summary><span class="pipeline-chevron">' + ICONS.chevron + '</span>'
       + '<span class="pc-title">处理流水线</span>'
       + '<span class="pc-mini">' + mini + '</span></summary>'
@@ -911,6 +942,12 @@
       return;
     }
 
+    var pipelineToggle = target.closest('.pipeline-collapse > summary');
+    if (pipelineToggle) {
+      state.pipelineOpen[state.kind] = !pipelineToggle.parentElement.open;
+      return;
+    }
+
     var taskCard = target.closest('[data-open-kind]');
     if (taskCard) {
       setKind(taskCard.dataset.openKind);
@@ -997,6 +1034,7 @@
 
     var stageNode = target.closest('[data-stage]');
     if (stageNode) {
+      state.pipelineOpen[state.kind] = true;
       state.stage = state.stage === stageNode.dataset.stage ? null : stageNode.dataset.stage;
       render();
       return;

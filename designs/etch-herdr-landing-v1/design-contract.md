@@ -69,7 +69,7 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 | document | `source inspect translate review verify` | **5** |
 
 来源：`task-schema.ts` 的 `STAGE_IDS` / `SHARED_STAGE_IDS` / `SUBTITLE_ONLY_STAGES` / `SUMMARY_ONLY_STAGES` / `DOCUMENT_STAGE_IDS`。
-原型把共享底稿 4 步与本成果分支分两条轨渲染，对应 `WorkbenchView.tsx` 的 `shared-pipeline` + `output-lanes` 结构。
+原型把共享底稿 4 步与本成果分支分两条轨渲染，对应 `WorkbenchView.tsx` 的 `shared-pipeline` + `output-lanes` 结构；共享轨降为背景脉络，当前成果轨承担主要状态提示，未创建的另一成果收成一行复用操作。
 
 ### 3.3 阶段中文名
 
@@ -128,7 +128,8 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 |---|---|
 | `任务队列` 返回、`provider-tag`、`task-source` | `WorkbenchView.tsx` `wb-header` |
 | 成果切换 tabs（字幕 ⇄ 总结） | `wb-output-tabs` + `onOpenOutput` |
-| `处理流水线` 折叠 + `共享底稿 / 两个成果只执行一次` | `pipeline-collapse` / `pipeline-section-label` |
+| `处理流水线` 折叠 + `4 / 4 共享 · 1 / 2 个成果` | `pipeline-collapse` / `pc-mini` |
+| `共享底稿 / 两个成果只执行一次` + 当前成果 + 追加成果 | `shared-pipeline` / `output-lanes` / `output-lane-empty` |
 | `流水线已暂停在人工校对` + `1 核对术语 / 2 核对译文` | `review-checkpoint-banner`，checkpointId `manual-review` |
 | `完成校对并继续` / `等待配图确认` / `处理已完成` | `primaryActionLabel` / `taskActionLabel` |
 | `打开原网页` / `导出 Markdown` | `DocumentWorkbench.tsx` `wb-actions` |
@@ -142,13 +143,14 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 
 颜色**逐字**取自 `src/renderer/styles/app.css` 的深色侧取值（`light-dark()` 的第二个参数）：
 `--bg #0b0d10 · --surface #111419 · --line #252b33 · --fg #e8eaed · --muted #88919d · --accent/--blue-strong #438cf5 · --blue #6ba6ff · --focus #94bdff · --ok #6cc79a · --run #7fb2ff · --warn #e0b872 · --danger #e49a9a` 等。
-缓动 `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`、按钮尺寸（`min-height 34px`、`border-radius 7px/6px`）、`rail-dot 28px`、`mini-bar 120×3px` 也 1:1 沿用。
+缓动 `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`、按钮尺寸（`min-height 34px`、`border-radius 7px/6px`）、`mini-bar 120×3px` 也 1:1 沿用；视频成果图为适配首屏内嵌窗口把 `rail-dot` 收到 23px，文档轨仍沿用原尺寸。
 
 V2 额外按实机锁定的壳层：
 - 1214 × 768 参考窗口比例；桌面宽度下左侧栏约 196px，对应真实 App 的 218px 源码列宽按预览窗口缩放后的比例。
 - 固定左栏是 `Etch / 任务队列 / 统一术语表 / 环境 9/9 可用 / arm64 · v0.2.18`，不再把三类任务做成 App 外的营销标签页。
 - 字幕工作台按实机还原为「任务头部 → 人工校对 checkpoint → 折叠流水线 → 左侧视频控制区 + 右侧工作台面板」。
 - 网页工作台按实机还原为「任务头部 → 展开流水线 → 发布为网页 → X 内容警告 → 双栏 Markdown 校对 → 底部校对 checkpoint」。
+- 视频流水线把原实机的长分叉线改成短“形成成果”交接：共享底稿只显示完成事实，当前人工 checkpoint 集中在蓝色成果轨，追加另一成果缩成次级按钮。
 
 页面唯一图片素材是品牌图标：`assets/favicon.svg` ← `website/favicon.svg`。工作台、任务队列与 B站内容均为 HTML/CSS 组件，不引用真实页面截图。
 
@@ -165,14 +167,15 @@ V2 额外按实机锁定的壳层：
 | 3 | 左侧 `统一术语表` | Etch 主导航 | 展示跨任务术语表 | 主 |
 | 4 | 流水线折叠/展开 | 原生 `<details>` | 收起阶段详情，保留摘要进度 | 二级 |
 | 5 | 点任意阶段节点 | 阶段轨 | 展开该阶段的 id / status / 并发池详情，再点收起 | 二级 |
-| 6 | 视频播放 / 前后 5 秒 / 倍速 / 预览模式 | 字幕与总结视频区 | 更新播放反馈，不读取真实媒体 | 二级 |
-| 7 | 工作台标签页 | `tp-tabs` | 字幕 4 页 / 总结 3 页 / 文档 3 页 | 二级 |
-| 8 | 点 cue 行与分页 | 校对页 | 当前行高亮、区间从 `1–100` 到 `101–200 / 412` | 二级 |
-| 9 | `1 核对术语` / `2 核对译文` | checkpoint 步骤 | 切到术语表 / 校对页 | 二级 |
-| 10 | 文档 `完成校对` | 双栏校对底部 | `review → verify` 完成，并解锁导出 Markdown 与 HTML 四方向预览 | 二级 |
-| 11 | HTML 风格方向 A/B/C/D + 生成 | 网页发布工作流 | 生成 `translation.html` 并显示模板与验收结果 | 二级 |
-| 12 | 字幕 `完成校对并继续` | 字幕工作台主操作 | 演示 `review → srt → burn → verify` 完成 | 二级 |
-| 13 | 返回 / 打开原网页 / 导出 / 新建任务 | 辅助操作 | 显示明确原型反馈，不执行真实外部副作用 | 辅助 |
+| 6 | `追加视频总结 / 追加双语硬字幕` | 流水线成果区 | 复用共享底稿并切换到另一成果工作台 | 二级 |
+| 7 | 视频播放 / 前后 5 秒 / 倍速 / 预览模式 | 字幕与总结视频区 | 更新播放反馈，不读取真实媒体 | 二级 |
+| 8 | 工作台标签页 | `tp-tabs` | 字幕 4 页 / 总结 3 页 / 文档 3 页 | 二级 |
+| 9 | 点 cue 行与分页 | 校对页 | 当前行高亮、区间从 `1–100` 到 `101–200 / 412` | 二级 |
+| 10 | `1 核对术语` / `2 核对译文` | checkpoint 步骤 | 切到术语表 / 校对页 | 二级 |
+| 11 | 文档 `完成校对` | 双栏校对底部 | `review → verify` 完成，并解锁导出 Markdown 与 HTML 四方向预览 | 二级 |
+| 12 | HTML 风格方向 A/B/C/D + 生成 | 网页发布工作流 | 生成 `translation.html` 并显示模板与验收结果 | 二级 |
+| 13 | 字幕 `完成校对并继续` | 字幕工作台主操作 | 演示 `review → srt → burn → verify` 完成 | 二级 |
+| 14 | 返回 / 打开原网页 / 导出 / 新建任务 | 辅助操作 | 显示明确原型反馈，不执行真实外部副作用 | 辅助 |
 
 状态与可达性：
 - **hover**：只在 `@media (hover:hover) and (pointer:fine)` 生效，避免触屏残留。
