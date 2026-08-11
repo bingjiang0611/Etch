@@ -872,7 +872,8 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
-    if (indexed.kind !== 'subtitle') throw new Error('当前任务不是字幕任务')
+    // 英文源字幕歧义属于共享底稿阶段，字幕与总结任务都会停在这里；只有文档任务没有英文字幕。
+    if (indexed.kind === 'document') throw new Error('当前任务不是视频任务')
     await pipeline.resolveAudit(indexed.location, decisions)
     if (!pipeline.isRunning(indexed.location)) void pipeline.start(indexed.location).catch((error) => console.error('pipeline failed', error))
     return detail(taskId)

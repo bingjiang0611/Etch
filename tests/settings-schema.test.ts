@@ -7,6 +7,15 @@ describe('settings schema', () => {
     expect(AppSettingsSchema.parse(legacy)).not.toHaveProperty('styleNote')
   })
 
+  it('defaults a missing legacy stage concurrency to 3 and keeps a stored 1/2/3', () => {
+    const legacy = { ...defaultSettings('/Users/test') } as Partial<ReturnType<typeof defaultSettings>>
+    delete legacy.stageConcurrency
+    expect(AppSettingsSchema.parse(legacy).stageConcurrency).toBe(3)
+    expect(AppSettingsSchema.parse({ ...defaultSettings('/Users/test'), stageConcurrency: 1 }).stageConcurrency).toBe(1)
+    expect(AppSettingsSchema.parse({ ...defaultSettings('/Users/test'), stageConcurrency: 2 }).stageConcurrency).toBe(2)
+    expect(() => AppSettingsSchema.parse({ ...defaultSettings('/Users/test'), stageConcurrency: 4 })).toThrow()
+  })
+
   it('defaults a missing legacy global glossary to an empty object', () => {
     const legacy = { ...defaultSettings('/Users/test') } as Partial<ReturnType<typeof defaultSettings>>
     delete legacy.globalGlossary

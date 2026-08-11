@@ -34,6 +34,9 @@ const PROVIDER_AUTH_PROBES: Partial<Record<ToolId, string[]>> = {
   codex: ['login', 'status'],
   qoder: ['status']
 }
+// 登录态探测会同步打远端（qodercli status 会 GET /api/v1/userinfo），它只是前置提示：
+// 超时后改由运行时调用校验，所以预算只需要能被一次慢网络往返用完，不必等到远端彻底放弃。
+const PROVIDER_AUTH_PROBE_TIMEOUT_MS = 30_000
 const ANSI_ESCAPE = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'gu')
 
 export interface ToolHealth {
@@ -191,32 +194,42 @@ export async function detectTool(
         }
       }
       const authArgs = PROVIDER_AUTH_PROBES[tool]
+      let loginSummary: string | undefined
       if (authArgs) {
-        const auth = await runProbe({ command: path, args: authArgs, cwd: process.cwd(), env, timeoutMs: 15_000 })
-        if (auth.timedOut) {
+        const auth = await runProbe({ command: path, args: authArgs, cwd: process.cwd(), env, timeoutMs: PROVIDER_AUTH_PROBE_TIMEOUT_MS })
+        // 探测超时只说明远端没在预算内给出答案，不是登录态失效：本地凭证可能完好，
+        // 把这种不确定当硬失败，一次网络抖动就能让整条流水线 failed。真没登录会在运行时调用里暴露。
+        // 被取消的探测（停任务）不在此列，仍按失败路径走。
+        if (auth.timedOut && !auth.cancelled) {
+          loginSummary = `${tool} CLI 可启动；登录态探测超时，改由运行时校验`
+        } else if (auth.timedOut) {
           failure = { tool, status: 'timeout', executable: path, summaryZh: `${tool} 登录状态探测超时`, checkedAt }
           continue
-        }
-        if (auth.exitCode !== 0) {
+        } else if (auth.exitCode !== 0) {
+          // exit 非 0 是 CLI 自己报错，属于明确的坏状态，继续硬拦。
           failure = { tool, status: 'invalid', executable: path, summaryZh: `${tool} 登录状态探测失败`, checkedAt }
           continue
-        }
-        if (auth.stdoutTruncated || auth.stderrTruncated) {
-          failure = { tool, status: 'invalid', executable: path, summaryZh: `${tool} 登录状态输出超过安全上限`, checkedAt }
-          continue
-        }
-        const authOutput = tool === 'claude' ? auth.stdout.trim() : `${auth.stdout}\n${auth.stderr}`.trim()
-        const loggedIn = providerIsLoggedIn(tool, authOutput)
-        if (loggedIn !== true) {
-          failure = {
-            tool,
-            status: 'invalid',
-            executable: path,
-            version: `${probe.stdout}\n${probe.stderr}`.trim().split('\n')[0],
-            summaryZh: loggedIn === false ? `${tool} 未登录，请先运行 ${loginCommand(tool)}` : `${tool} 登录状态无法确认`,
-            checkedAt
+        } else if (auth.stdoutTruncated || auth.stderrTruncated) {
+          // CLI 正常退出但输出超过安全上限，同样只是「没确认」。
+          loginSummary = `${tool} CLI 可启动；登录态输出超过安全上限，改由运行时校验`
+        } else {
+          const authOutput = tool === 'claude' ? auth.stdout.trim() : `${auth.stdout}\n${auth.stderr}`.trim()
+          const loggedIn = providerIsLoggedIn(tool, authOutput)
+          if (loggedIn === false) {
+            failure = {
+              tool,
+              status: 'invalid',
+              executable: path,
+              version: `${probe.stdout}\n${probe.stderr}`.trim().split('\n')[0],
+              summaryZh: `${tool} 未登录，请先运行 ${loginCommand(tool)}`,
+              checkedAt
+            }
+            continue
           }
-          continue
+          // exit 0 但输出认不出来（常见于 CLI 改了输出格式）：CLI 是好的，只是我们的解析器旧了，不能因此拦住任务。
+          loginSummary = loggedIn === true
+            ? `${tool} CLI 已登录`
+            : `${tool} CLI 可启动；登录态无法确认，改由运行时校验`
         }
       }
       return {
@@ -225,7 +238,7 @@ export async function detectTool(
         executable: path,
         identity: `${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}`,
         version: `${probe.stdout}\n${probe.stderr}`.trim().split('\n')[0],
-        summaryZh: authArgs ? `${tool} CLI 已登录` : providerProbe ? `${tool} CLI 可启动；登录态运行时校验` : `${tool} 可用`,
+        summaryZh: loginSummary ?? (providerProbe ? `${tool} CLI 可启动；登录态运行时校验` : `${tool} 可用`),
         checkedAt
       }
     } catch {

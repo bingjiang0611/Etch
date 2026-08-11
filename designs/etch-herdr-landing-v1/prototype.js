@@ -728,7 +728,7 @@
       + tabs + statebar + panel + '</div>';
   }
 
-  function renderVideoPane(task) {
+  function renderVideoPane() {
     var playing = state.videoPlaying;
     return '<section class="video-preview-panel" aria-label="视频预览">'
       + '<div class="video-well">'
@@ -754,7 +754,7 @@
   }
 
   function renderMediaWorkspace(task) {
-    return '<div class="media-workspace">' + renderVideoPane(task) + renderWorkspace(task) + '</div>';
+    return '<div class="media-workspace">' + renderVideoPane() + renderWorkspace(task) + '</div>';
   }
 
   function renderDocumentWarning() {

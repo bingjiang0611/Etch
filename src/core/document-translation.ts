@@ -361,6 +361,27 @@ function normalizedTerm(value: string): string {
   return value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US')
 }
 
+function auditText(value: string): string {
+  return value
+    .replace(/!?\[([^\]]+)\]\([^)]+\)/gu, '$1')
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;|&apos;/gu, "'")
+    .replace(/&amp;/gu, '&')
+    .replace(/[`*_~]/gu, '')
+}
+
+function normalizeEnglishMonthDates(value: string): string {
+  const months: Record<string, string> = {
+    january: '1', jan: '1', february: '2', feb: '2', march: '3', mar: '3', april: '4', apr: '4',
+    may: '5', june: '6', jun: '6', july: '7', jul: '7', august: '8', aug: '8', september: '9', sep: '9', sept: '9',
+    october: '10', oct: '10', november: '11', nov: '11', december: '12', dec: '12'
+  }
+  const name = Object.keys(months).join('|')
+  return value
+    .replace(new RegExp(`\\b(${name})\\.?\\s+(\\d{4})\\b`, 'giu'), (_, month, year) => `${months[String(month).toLocaleLowerCase('en-US')]} ${year}`)
+    .replace(new RegExp(`\\b(\\d{1,2})\\s+(${name})\\.?\\s+(\\d{4})\\b`, 'giu'), (_, day, month, year) => `${day} ${months[String(month).toLocaleLowerCase('en-US')]} ${year}`)
+}
+
 export function freezeDocumentGlossary(input: {
   global?: readonly Pick<DocumentGlossaryEntry, 'source' | 'target'>[]
   task?: readonly Pick<DocumentGlossaryEntry, 'source' | 'target'>[]
@@ -383,19 +404,26 @@ export function freezeDocumentGlossary(input: {
 }
 
 function preservedNumericTokens(value: string): string[] {
-  return [...value.replace(/`[^`\n]+`/gu, '').matchAll(
+  return [...normalizeEnglishMonthDates(value).replace(/`[^`\n]+`/gu, '').matchAll(
     /\b\d{1,4}(?:[-/.]\d{1,2}){1,2}\b|\b\d+(?:[.,]\d+)*(?:\s?(?:%|°[CF]|px|ms|s|kg|g|km|m|cm|mm|GB|MB|KB))?\b/giu
   )].map((match) => match[0]).sort()
 }
 
 function termAppears(value: string, term: string): boolean {
-  const haystack = normalizedTerm(value)
-  const needle = normalizedTerm(term)
+  const haystack = normalizedTerm(auditText(value))
+  const needle = normalizedTerm(auditText(term))
   if (!needle) return false
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  const left = /^[\p{L}\p{N}]/u.test(needle) ? '(?<![\\p{L}\\p{N}])' : ''
-  const right = /[\p{L}\p{N}]$/u.test(needle) ? '(?![\\p{L}\\p{N}])' : ''
+  const boundary = '[\\p{L}\\p{N}._-]'
+  const left = /^[A-Za-z0-9]/u.test(needle) ? `(?<!${boundary})` : ''
+  const right = /[A-Za-z0-9]$/u.test(needle) ? `(?!${boundary})` : ''
   return new RegExp(`${left}${escaped}${right}`, 'u').test(haystack)
+}
+
+function glossaryTargetAppears(value: string, target: string): boolean {
+  if (termAppears(value, target)) return true
+  const concise = target.replace(/\s*[（(][^（）()]+[）)]/gu, '').trim()
+  return concise !== target && termAppears(value, concise)
 }
 
 export function auditDocumentTranslationDeterministically(
@@ -415,7 +443,7 @@ export function auditDocumentTranslationDeterministically(
     const translatedTokens = preservedNumericTokens(translated)
     if (JSON.stringify(sourceTokens) !== JSON.stringify(translatedTokens)) issues.push({ blockId: source.id, code: 'number-date-unit', detail: '数字、日期或单位发生变化' })
     for (const entry of glossary) {
-      if (termAppears(source.markdown, entry.source) && !termAppears(translated, entry.target)) {
+      if (termAppears(source.markdown, entry.source) && !glossaryTargetAppears(translated, entry.target)) {
         issues.push({ blockId: source.id, code: 'glossary', detail: `术语 ${entry.source} 未使用冻结译法 ${entry.target}` })
       }
     }

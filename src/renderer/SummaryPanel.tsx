@@ -17,9 +17,36 @@ function Inline({ tokens }: { tokens: readonly InlineToken[] }): React.JSX.Eleme
           ? <strong key={index}>{token.text}</strong>
           : token.kind === 'code'
             ? <code key={index}>{token.text}</code>
-            : <span key={index}>{token.text}</span>,
+            : token.kind === 'link'
+              ? <a href={token.href} key={index} rel="noreferrer" target="_blank">{token.text}</a>
+              : <span key={index}>{token.text}</span>,
       )}
     </>
+  )
+}
+
+function SummaryTable({ block }: { block: Extract<SummaryBlock, { kind: 'table' }> }): React.JSX.Element {
+  const headerRows = block.rows.filter((row) => row.header)
+  const bodyRows = block.rows.filter((row) => !row.header)
+  return (
+    <div className="summary-table-scroll">
+      <table>
+        {headerRows.length > 0 && (
+          <thead>
+            {headerRows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{row.cells.map((cell, cellIndex) => <th key={cellIndex}><Inline tokens={cell} /></th>)}</tr>
+            ))}
+          </thead>
+        )}
+        {bodyRows.length > 0 && (
+          <tbody>
+            {bodyRows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{row.cells.map((cell, cellIndex) => <td key={cellIndex}><Inline tokens={cell} /></td>)}</tr>
+            ))}
+          </tbody>
+        )}
+      </table>
+    </div>
   )
 }
 
@@ -85,6 +112,7 @@ function SummaryBody({ taskId, page }: { taskId: string; page: SummaryPage }): R
           const items = block.items.map((item, itemIndex) => <li key={itemIndex}><Inline tokens={item} /></li>)
           return block.ordered ? <ol key={index}>{items}</ol> : <ul key={index}>{items}</ul>
         }
+        if (block.kind === 'table') return <SummaryTable block={block} key={index} />
         return <p key={index}><Inline tokens={block.inline} /></p>
       })}
     </article>

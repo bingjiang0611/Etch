@@ -217,10 +217,12 @@ export function BilibiliPublishDialog({ task, settings, account, open, onClose, 
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
           <footer className="new-task-actions">
-            <button className="secondary-button" type="button" disabled={submitting} onClick={close}>取消</button>
-            <button className="primary-button" type="submit" disabled={submitting || loadingPartitions || account.status !== 'connected'}>
-              {submitting ? '正在加入投稿队列…' : '确认投稿'}
-            </button>
+            <div className="new-task-action-buttons">
+              <button className="secondary-button" type="button" disabled={submitting} onClick={close}>取消</button>
+              <button className="primary-button" type="submit" disabled={submitting || loadingPartitions || account.status !== 'connected'}>
+                {submitting ? '正在加入投稿队列…' : '确认投稿'}
+              </button>
+            </div>
           </footer>
         </form>
       )}

@@ -17,8 +17,15 @@ vi.mock('../src/main/runtime/tool-detector', () => ({
   identityStillMatches: async () => true,
   toolCacheKey: (tool: string, override?: string) => `${tool}:${override ?? ''}`
 }))
+vi.mock('../src/main/providers/codex-capability', () => ({
+  attestCodexTextOnlyExecutableSnapshot: async () => ({ version: 'codex-cli 1.2.3', sha256: 'a'.repeat(64) }),
+  codexTextOnlyExecutableIsSupported: () => true,
+  createCodexTextOnlyExecutableSnapshot: async () => ({ directory: '/mock/codex-snapshot-dir', executable: '/mock/codex-snapshot' }),
+  removeCodexTextOnlyExecutableSnapshot: async () => undefined
+}))
 
 import { HistoricalGlossaryService } from '../src/main/historical-glossary'
+import { SUMMARY_STEP_MAX_ATTEMPTS } from '../src/core/summary'
 import { TaskPipeline } from '../src/main/pipeline/task-pipeline'
 import { TaskStore } from '../src/main/storage/task-store'
 import { sha256File } from '../src/main/core/fingerprint'
@@ -28,14 +35,20 @@ import { STAGE_IDS, createTaskManifest } from '../src/shared/task-schema'
 const directories: string[] = []
 
 afterEach(async () => {
+  generatedSession = 0
   runProcessMock.mockReset()
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true, maxRetries: 5 })))
 })
 
 function stdout(text: string, sessionId: string): string {
   return [
-    JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId }),
-    JSON.stringify({ type: 'result', subtype: 'success', result: text })
+    JSON.stringify({ type: 'thread.started', thread_id: sessionId }),
+    JSON.stringify({ type: 'turn.started' }),
+    JSON.stringify({ type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text } }),
+    JSON.stringify({
+      type: 'turn.completed',
+      usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }
+    })
   ].join('\n')
 }
 
@@ -262,10 +275,22 @@ function argumentAfter(args: readonly string[], flag: string): string | undefine
   return index < 0 ? undefined : args[index + 1]
 }
 
+let generatedSession = 0
+
+function codexSessionFromArgs(args: readonly string[]): string {
+  const resume = args.indexOf('resume')
+  if (resume >= 0) {
+    const session = args.slice(resume + 1).find((arg) => /^[0-9a-f-]{36}$/u.test(arg))
+    if (session) return session
+  }
+  generatedSession += 1
+  return `019f7e34-385f-7de3-9fac-${String(generatedSession).padStart(12, '0')}`
+}
+
 function respond(calls: ProcessSpec[], mergeArticle = article(), draftArticle = candidateArticle()) {
   return async (spec: ProcessSpec) => {
     calls.push(spec)
-    const sessionId = argumentAfter(spec.args, '-r') ?? argumentAfter(spec.args, '--session-id')!
+    const sessionId = argumentAfter(spec.args, '-r') ?? argumentAfter(spec.args, '--session-id') ?? codexSessionFromArgs(spec.args)
     if (spec.stdin.includes('请评分、择优并列出遗漏')) return result(SCORING, sessionId)
     if (spec.stdin.includes('终稿自检，以及为终稿里已有的每个配图占位')) return result(FINALIZE, sessionId)
     if (spec.stdin.includes('为底稿产出终稿')) return result(mergeArticle, sessionId)
@@ -296,16 +321,13 @@ describe('素材分析与三稿融合阶段', () => {
     expect(prompts.every((prompt) => prompt.includes('BEGIN_UNTRUSTED_JSON_SECTION "summary-research"'))).toBe(true)
 
     const draftCalls = calls.filter((call) => /候选稿（编号 [ABC]）/u.test(call.stdin))
-    const draftSessionIds = draftCalls.map((call) => argumentAfter(call.args, '--session-id'))
-    expect(draftCalls.every((call) => !call.args.includes('-r'))).toBe(true)
-    expect(new Set(draftSessionIds).size).toBe(3)
+    expect(draftCalls.every((call) => !call.args.includes('-r') && !call.args.includes('resume'))).toBe(true)
     const scoringCall = calls.find((call) => call.stdin.includes('请评分、择优并列出遗漏'))!
-    const synthesisSessionId = argumentAfter(scoringCall.args, '--session-id')
+    expect(scoringCall.args).not.toContain('resume')
+    // Qoder 纯文本阶段强制 fresh CLI session：一步都不 resume，每步都拿一个新的 --session-id。
     const synthesisFollowups = calls.filter((call) => call.stdin.includes('为底稿产出终稿') || call.stdin.includes('终稿自检'))
-    expect(synthesisFollowups.map((call) => argumentAfter(call.args, '-r'))).toEqual([
-      synthesisSessionId,
-      synthesisSessionId
-    ])
+    expect(synthesisFollowups.every((call) => !call.args.includes('resume') && !call.args.includes('-r'))).toBe(true)
+    expect(new Set(calls.map((call) => argumentAfter(call.args, '--session-id'))).size).toBe(calls.length)
 
     const record = manifest.summary.draftRecord!
     expect(record.contractVersion).toBe(2)
@@ -340,7 +362,7 @@ describe('素材分析与三稿融合阶段', () => {
     expect(manifest.summary.draftRecord).toBeUndefined()
   })
 
-  it('候选稿伪造 segment-999 时两次修复后仍失败，不进入评分', async () => {
+  it('候选稿伪造 segment-999 时用完三次预算仍失败，不进入评分', async () => {
     const store = new TaskStore()
     const directory = await createSummaryTask(store)
     const calls: ProcessSpec[] = []
@@ -351,7 +373,7 @@ describe('素材分析与三稿融合阶段', () => {
 
     const manifest = await store.load(directory)
     expect(manifest.pipeline.stages.summary.status).toBe('failed')
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(SUMMARY_STEP_MAX_ATTEMPTS)
     expect(calls.every((call) => call.stdin.includes('编号 A'))).toBe(true)
     expect(manifest.summary.draftRecord).toBeUndefined()
   })

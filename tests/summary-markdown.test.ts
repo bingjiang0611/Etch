@@ -35,12 +35,14 @@ describe('总结正文渲染 token 化', () => {
     expect(blocks[7]).toEqual({ kind: 'divider' })
   })
 
-  it('行内加粗与代码拆成独立 token，不留原始标记', () => {
-    expect(parseInline('这是**判断锚点**与 `code` 混排')).toEqual([
+  it('行内加粗、代码与链接拆成独立 token，不留原始标记', () => {
+    expect(parseInline('这是**判断锚点**、`code` 与 [Tripwire](https://tripwire.bharath.sh/) 混排')).toEqual([
       { kind: 'text', text: '这是' },
       { kind: 'strong', text: '判断锚点' },
-      { kind: 'text', text: '与 ' },
+      { kind: 'text', text: '、' },
       { kind: 'code', text: 'code' },
+      { kind: 'text', text: ' 与 ' },
+      { kind: 'link', text: 'Tripwire', href: 'https://tripwire.bharath.sh/' },
       { kind: 'text', text: ' 混排' }
     ])
     expect(parseInline('纯文本')).toEqual([{ kind: 'text', text: '纯文本' }])
@@ -54,5 +56,51 @@ describe('总结正文渲染 token 化', () => {
     ].join('\n'))
     expect(summaryImageFilenames(blocks)).toEqual(['02-alpha.png'])
     expect(blocks[1]).toMatchObject({ kind: 'paragraph' })
+  })
+
+  it('把网页翻译里的 HTML table 解析成表格 block', () => {
+    const blocks = parseSummaryMarkdown('<table><thead><tr><th></th><th>占比</th></tr></thead><tbody><tr><td>至少一个 lint 错误</td><td><strong>96%</strong></td></tr><tr><td>缺少 &quot;Use when…&quot; 激活行</td><td><strong>95%</strong></td></tr></tbody></table>')
+    expect(blocks).toEqual([{ kind: 'table', rows: [
+      { header: true, cells: [[{ kind: 'text', text: '' }], [{ kind: 'text', text: '占比' }]] },
+      { header: false, cells: [[{ kind: 'text', text: '至少一个 lint 错误' }], [{ kind: 'strong', text: '96%' }]] },
+      { header: false, cells: [[{ kind: 'text', text: '缺少 "Use when…" 激活行' }], [{ kind: 'strong', text: '95%' }]] }
+    ] }])
+  })
+
+  it('多行 HTML table 在闭合标签处收口，后面的正文照常解析', () => {
+    const blocks = parseSummaryMarkdown([
+      '<table>',
+      '<tr><th>项</th><th>占比</th></tr>',
+      '<tr><td>lint</td><td>96%</td></tr>',
+      '</table>',
+      '',
+      '## 后续章节',
+      '',
+      '表格后的正文。'
+    ].join('\n'))
+    expect(blocks).toEqual([
+      { kind: 'table', rows: [
+        { header: true, cells: [[{ kind: 'text', text: '项' }], [{ kind: 'text', text: '占比' }]] },
+        { header: false, cells: [[{ kind: 'text', text: 'lint' }], [{ kind: 'text', text: '96%' }]] }
+      ] },
+      { kind: 'heading', level: 2, inline: [{ kind: 'text', text: '后续章节' }] },
+      { kind: 'paragraph', inline: [{ kind: 'text', text: '表格后的正文。' }] }
+    ])
+  })
+
+  it('未闭合的 HTML table 不吞掉后面的正文', () => {
+    const blocks = parseSummaryMarkdown([
+      '<table>',
+      '<tr><td>只开了一半</td></tr>',
+      '',
+      '## 后续章节',
+      '',
+      '表格后的正文。'
+    ].join('\n'))
+    expect(blocks).toEqual([
+      { kind: 'paragraph', inline: [{ kind: 'text', text: '<table> <tr><td>只开了一半</td></tr>' }] },
+      { kind: 'heading', level: 2, inline: [{ kind: 'text', text: '后续章节' }] },
+      { kind: 'paragraph', inline: [{ kind: 'text', text: '表格后的正文。' }] }
+    ])
   })
 })

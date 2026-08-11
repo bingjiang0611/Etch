@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
-import { access, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { AppSettings, ToolId } from '../../shared/settings-schema'
@@ -48,6 +48,7 @@ import {
   type EnglishSourceAuditResult
 } from '../../core/english-source-audit'
 import { untrustedJsonSection } from '../../core/prompt-boundary'
+import { describeValidationFailure } from '../../core/schema-contract'
 import {
   SUMMARY_COVER_FILENAME,
   SUMMARY_STEP_MAX_ATTEMPTS,
@@ -136,15 +137,15 @@ import {
 import {
   ProviderStreamInspector
 } from '../providers/jsonl'
-import { buildResearchProviderInvocation, researchCapability } from '../providers/research-adapters'
-import { inspectResearchStream } from '../providers/research-stream'
+import { buildResearchProviderInvocation, researchCapability, researchProducer, researchToolId } from '../providers/research-adapters'
+import { inspectQoderResearchStream, inspectResearchStream } from '../providers/research-stream'
 import {
   PROVIDER_SESSION_CONTAMINATED_PREFIX,
   PROVIDER_SESSION_UNAVAILABLE_PREFIX,
   providerSessionIsUnavailable
 } from '../providers/session-errors'
 import { chromeCookieState } from '../media/browser-cookies'
-import { browserCookiesUnavailable, burnArgs, genericSourceDownloadArgs, normalizeDownloadedMediaArgs, sourceDownloadArgs, sourceDownloadFallbackArgs, thumbnailFrameArgs, WHISPER_MODEL, whisperArgs, youtubeAuthenticationRequired, youtubeMediaFormatsUnavailable, youtubeSubtitleArgs } from '../media/commands'
+import { browserCookiesUnavailable, burnArgs, genericSourceDownloadArgs, normalizeDownloadedMediaArgs, resolveWhisperModelSnapshot, sourceDownloadArgs, sourceDownloadFallbackArgs, thumbnailFrameArgs, whisperArgs, youtubeAuthenticationRequired, youtubeMediaFormatsUnavailable, youtubeSubtitleArgs } from '../media/commands'
 import { transcribeSegmentedWhisper } from '../media/whisper-segments'
 import {
   logChildEnvironmentKeys,
@@ -199,7 +200,6 @@ const MAX_TEXT_ARTIFACT_BYTES = 25 * 1024 * 1024
 const MAX_SOURCE_METADATA_BYTES = 5 * 1024 * 1024
 const ENGLISH_SOURCE_AUDIT_MAX_ATTEMPTS = 3
 const SOURCE_DOWNLOAD_INACTIVITY_TIMEOUT_MS = 10 * 60_000
-const WHISPER_SNAPSHOT = join(homedir(), `.cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo/snapshots/${WHISPER_MODEL.revision}`)
 const STAGE_MESSAGES: Record<StageId, string> = {
   source: '正在下载并整理源视频',
   inspect: '正在检查源视频',
@@ -472,7 +472,7 @@ export class TaskPipeline {
           const model = draft.translation.selectedModel
           if (!provider || !model) throw new Error('开始翻译前必须选择 Provider 和模型')
           const generation = activateSessionGeneration(draft, provider, model, taskDirectory, 'initial')
-          if (provider === 'codex') generation.stateRoot = join(homedir(), '.codex')
+          if (generation.provider === 'codex') generation.stateRoot = join(homedir(), '.codex')
           draft.runtime.currentMessage = needsEnglishAuditSession
             ? `已创建 ${provider} session generation，准备审计英文源字幕`
             : `已创建 ${provider} session generation`
@@ -705,7 +705,7 @@ export class TaskPipeline {
       case 'srt': return this.#srt(taskDirectory, manifest, inputFingerprint, runId)
       case 'burn': return this.#burn(taskDirectory, manifest, inputFingerprint, runId)
       case 'verify': return this.#verify(taskDirectory, manifest, inputFingerprint, runId)
-      case 'digest': return this.#digest(taskDirectory, manifest, inputFingerprint, runId, context.persistExternalSession)
+      case 'digest': return this.#digest(taskDirectory, manifest, inputFingerprint, runId, context.persistExternalSession, context.persistProgress)
       case 'research': return this.#research(taskDirectory, manifest, inputFingerprint, runId)
       case 'summary': return this.#summary(taskDirectory, manifest, inputFingerprint, runId)
       case 'illustrate': return this.#illustrate(taskDirectory, manifest, inputFingerprint, runId, context.persistProgress)
@@ -924,7 +924,7 @@ export class TaskPipeline {
             parsed = parseDocumentTranslation(batch, provider.text)
             break
           } catch (error) {
-            validationFailure = error instanceof Error ? error.message : String(error)
+            validationFailure = describeValidationFailure(error)
             if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) {
               throw new Error(`${batch.id} 连续 ${DOCUMENT_TRANSLATION_MAX_ATTEMPTS} 次未返回结构完整的 Markdown：${validationFailure}`)
             }
@@ -1063,7 +1063,7 @@ export class TaskPipeline {
           analysis = DocumentTranslationAnalysisSchema.parse(JSON.parse(this.#jsonObject(provider.text)))
           break
         } catch (error) {
-          failure = error instanceof Error ? error.message : String(error)
+          failure = describeValidationFailure(error)
           if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) throw new Error(`文档分析未通过本地校验：${failure}`)
         }
       }
@@ -1213,7 +1213,7 @@ export class TaskPipeline {
             parsed = parseDocumentTranslation(item.batch, provider.text)
             break
           } catch (error) {
-            failure = error instanceof Error ? error.message : String(error)
+            failure = describeValidationFailure(error)
             if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) {
               await persistProgress((draft) => {
                 const record = draft.document.translationBatches.find((batch) => batch.id === item.id)
@@ -1330,7 +1330,7 @@ export class TaskPipeline {
             critique = DocumentTranslationCritiqueSchema.parse(JSON.parse(this.#jsonObject(provider.text)))
             break
           } catch (error) {
-            failure = error instanceof Error ? error.message : String(error)
+            failure = describeValidationFailure(error)
             if (attempt === DOCUMENT_TRANSLATION_MAX_ATTEMPTS) throw new Error(`独立审校未通过结构校验：${failure}`)
           }
         }
@@ -1791,8 +1791,7 @@ export class TaskPipeline {
     const runDirectory = await ensureArtifactRunDirectory(taskDirectory, 'english', runId)
     const englishRelativePath = artifactCandidateRelativePath('english', runId, 'english.srt')
     const logRelativePath = artifactCandidateRelativePath('english', runId, 'whisper.log')
-    await access(join(WHISPER_SNAPSHOT, 'config.json'))
-    await access(join(WHISPER_SNAPSHOT, 'weights.safetensors'))
+    const modelSnapshot = await resolveWhisperModelSnapshot()
     const env = await this.#operationalEnvironment(manifest.taskId, 'english')
     const mlxHealth = await this.#toolHealth('mlx_whisper', env, manifest.taskId, 'english')
     const mlxWhisper = mlxHealth.executable!
@@ -1817,8 +1816,8 @@ export class TaskPipeline {
         mlxIdentity: mlxHealth.identity,
         mlxVersion: mlxHealth.version,
         mlxSha256: await sha256File(mlxWhisper),
-        modelSnapshot: WHISPER_SNAPSHOT,
-        modelRevision: WHISPER_MODEL.revision,
+        modelSnapshot: modelSnapshot.path,
+        modelRevision: modelSnapshot.revision,
         env: whisperEnvironment,
         run: (spec) => this.#runExternal(manifest.taskId, 'english', spec)
       })
@@ -1827,7 +1826,7 @@ export class TaskPipeline {
     } else {
       const run = await this.#runExternal(manifest.taskId, 'english', {
         command: mlxWhisper,
-        args: whisperArgs(source.relativePath, WHISPER_SNAPSHOT, runDirectory),
+        args: whisperArgs(source.relativePath, modelSnapshot.path, runDirectory),
         cwd: taskDirectory,
         env: whisperEnvironment,
         timeoutMs: 6 * 60 * 60_000
@@ -1963,7 +1962,7 @@ export class TaskPipeline {
           result = parseEnglishSourceAuditResult(batch, provider.text)
           break
         } catch (error) {
-          validationFailure = error instanceof Error ? error.message : String(error)
+          validationFailure = describeValidationFailure(error)
           if (attempt === ENGLISH_SOURCE_AUDIT_MAX_ATTEMPTS) {
             throw new Error(`${batch.id} 连续 ${ENGLISH_SOURCE_AUDIT_MAX_ATTEMPTS} 次未返回可校验的英文源字幕审计：${validationFailure}`)
           }
@@ -2158,7 +2157,7 @@ export class TaskPipeline {
           output = parseTranslationBatchOutput(batch, provider.text)
           break
         } catch (error) {
-          validationFailure = error instanceof Error ? error.message : String(error)
+          validationFailure = describeValidationFailure(error)
           if (attempt === TRANSLATION_BATCH_MAX_ATTEMPTS) {
             if (persistProgress) {
               await persistProgress((draft) => {
@@ -2318,7 +2317,7 @@ export class TaskPipeline {
         validated = { providerAudit, audit, chinese: candidateChinese }
         break
       } catch (error) {
-        validationFailure = error instanceof Error ? error.message : String(error)
+        validationFailure = describeValidationFailure(error)
         if (attempt === AUDIT_MAX_ATTEMPTS) {
           throw new Error(`审计连续 ${AUDIT_MAX_ATTEMPTS} 次未返回可校验的完整结果：${validationFailure}`)
         }
@@ -2624,7 +2623,9 @@ export class TaskPipeline {
         delete cuesStage.activeLease
         const translate = draft.pipeline.stages.translate
         if (translate.status === 'pending') translate.status = 'ready'
-        draft.runtime.currentMessage = '英文源字幕歧义已确认，准备翻译'
+        draft.runtime.currentMessage = draft.kind === 'subtitle'
+          ? '英文源字幕歧义已确认，准备翻译'
+          : '英文源字幕歧义已确认，准备素材分析'
       }, manifest.revision)
       committed = true
       await this.#syncCompatibilityAliases(taskDirectory, updated, new Set(['englishClean', 'englishCues', 'englishSourceAudit']))
@@ -2938,7 +2939,8 @@ export class TaskPipeline {
     manifest: TaskManifest,
     inputFingerprint: string,
     runId: string,
-    persistExternalSession?: (generationId: string, externalSessionId: string) => Promise<void>
+    persistExternalSession?: (generationId: string, externalSessionId: string) => Promise<void>,
+    persistProgress?: (change: (manifest: TaskManifest) => void) => Promise<void>
   ): Promise<StageResult> {
     const generation = manifest.translation.sessionGenerations.find((item) => item.id === manifest.translation.activeGenerationId)
     if (!generation) throw new Error('素材分析缺少 active session generation')
@@ -2946,20 +2948,83 @@ export class TaskPipeline {
     const segments = partitionTranscript(parseSrt(await this.#englishCueText(taskDirectory, manifest)), metadata.chapters)
     const runDirectory = await ensureArtifactRunDirectory(taskDirectory, 'digest', runId)
     const digestRelativePath = artifactCandidateRelativePath('digest', runId, 'digest.json')
+    // 分段计划漂移（字幕或章节变了）就重建记录，否则沾用上一次已完成的分段。
+    const desiredFindings = segments.map((segment) => ({
+      segmentId: segment.segmentId,
+      range: segment.range,
+      inputFingerprint,
+      status: 'pending' as const,
+      attempt: 0
+    }))
+    const planMatches = manifest.summary.digestFindings.length === desiredFindings.length
+      && desiredFindings.every((finding, index) => {
+        const current = manifest.summary.digestFindings[index]
+        return current?.segmentId === finding.segmentId
+          && current.range === finding.range
+          && current.inputFingerprint === finding.inputFingerprint
+      })
+    if (!planMatches) {
+      if (!persistProgress) throw new Error('素材分析无法持久化分段计划')
+      await persistProgress((draft) => {
+        draft.summary.digestFindings = desiredFindings
+        draft.pipeline.stages.digest.progress = 0
+      })
+    }
+    const priorBySegmentId = new Map(
+      (planMatches ? manifest.summary.digestFindings : desiredFindings).map((finding) => [finding.segmentId, finding])
+    )
     const session = { current: generation.externalSessionId }
     const findings: Array<SummaryDigestSegmentFindings & { segmentId: string; range: string }> = []
+    let reusedSegments = 0
     for (const [index, segment] of segments.entries()) {
-      const parsed = await this.#summaryStep(
-        taskDirectory,
-        manifest,
-        'digest',
-        generation,
-        `digest-${segment.segmentId}`,
-        digestSegmentPrompt(metadata, segment, index + 1, segments.length),
-        session,
-        persistExternalSession,
-        (text) => DigestSegmentSchema.parse(JSON.parse(this.#jsonObject(text)))
-      )
+      const prior = priorBySegmentId.get(segment.segmentId)
+      let parsed: SummaryDigestSegmentFindings | undefined
+      if (prior?.status === 'verified' && prior.artifact?.valid && prior.inputFingerprint === inputFingerprint) {
+        try {
+          const contained = await readContainedFile(taskDirectory, prior.artifact.relativePath, `${segment.segmentId} 已完成素材`, {
+            maxBytes: MAX_TEXT_ARTIFACT_BYTES,
+            expectedSize: prior.artifact.size,
+            expectedSha256: prior.artifact.sha256
+          })
+          parsed = DigestSegmentSchema.parse(JSON.parse(contained.bytes.toString('utf8')))
+          reusedSegments += 1
+        } catch {
+          // 旧产物坏了就标 stale 重跑，不拿不可信的分段去拼素材包。
+          if (!persistProgress) throw new Error(`${segment.segmentId} 已完成素材损坏且无法持久化失效状态`)
+          await persistProgress((draft) => {
+            const record = draft.summary.digestFindings.find((item) => item.segmentId === segment.segmentId)
+            if (!record) throw new Error(`${segment.segmentId} 分段计划已漂移`)
+            record.status = 'stale'
+            delete record.artifact
+          })
+          parsed = undefined
+        }
+      }
+      if (!parsed) {
+        parsed = await this.#summaryStep(
+          taskDirectory,
+          manifest,
+          'digest',
+          generation,
+          `digest-${segment.segmentId}`,
+          digestSegmentPrompt(metadata, segment, index + 1, segments.length),
+          session,
+          persistExternalSession,
+          (text) => DigestSegmentSchema.parse(JSON.parse(this.#jsonObject(text)))
+        )
+        const segmentRelativePath = artifactCandidateRelativePath('digest', runId, `${segment.segmentId}.json`)
+        await writeJsonAtomic(join(taskDirectory, segmentRelativePath), parsed)
+        const artifact = await this.#artifact(taskDirectory, segmentRelativePath, generation.provider, inputFingerprint)
+        if (!persistProgress) throw new Error('素材分析无法持久化已完成分段')
+        await persistProgress((draft) => {
+          const record = draft.summary.digestFindings.find((item) => item.segmentId === segment.segmentId)
+          if (!record || record.inputFingerprint !== inputFingerprint) throw new Error(`${segment.segmentId} 分段计划已漂移`)
+          record.status = 'verified'
+          record.attempt += 1
+          record.artifact = artifact
+          draft.pipeline.stages.digest.progress = (index + 1) / (segments.length + 1)
+        })
+      }
       findings.push({ ...parsed, segmentId: segment.segmentId, range: segment.range })
     }
     const reduced = await this.#summaryStep(
@@ -2999,6 +3064,9 @@ export class TaskPipeline {
         const active = draft.translation.sessionGenerations.find((item) => item.id === draft.translation.activeGenerationId)!
         active.externalSessionId = sessionId
         draft.summary.digestSegments = segments.length
+        if (reusedSegments) {
+          draft.runtime.currentMessage = `素材分析完成（复用上一次已完成的 ${reusedSegments}/${segments.length} 段）`
+        }
       }
     }
   }
@@ -3045,8 +3113,8 @@ export class TaskPipeline {
       if (!capability.available) return checkpoint(capability.reason)
       try {
         const env = await this.#providerEnvironment(provider, manifest.taskId, 'research')
-        const health = await this.#toolHealth('codex', env, manifest.taskId, 'research')
-        const invocation = buildResearchProviderInvocation(health.executable!, model, researchPrompt(digest, candidates))
+        const health = await this.#toolHealth(researchToolId(provider), env, manifest.taskId, 'research')
+        const invocation = buildResearchProviderInvocation(provider, health.executable!, model, researchPrompt(digest, candidates))
         const run = await this.#runExternal(manifest.taskId, 'research', {
           command: invocation.command,
           args: invocation.args,
@@ -3060,17 +3128,17 @@ export class TaskPipeline {
           `${run.stdout}${run.stderr ? `\n[stderr]\n${run.stderr}` : ''}\n`
         )
         if (run.stdoutTruncated || run.stderrTruncated) throw new Error('外部核验输出超过安全上限')
-        const inspection = inspectResearchStream(run.stdout)
+        const inspection = provider === 'qoder' ? inspectQoderResearchStream(run.stdout) : inspectResearchStream(run.stdout)
         if (inspection.unexpectedTools.length) {
           throw new Error(`外部核验调用了白名单以外的工具：${inspection.unexpectedTools.join(', ')}`)
         }
         if (inspection.webSearches < 1) throw new Error('外部核验没有实际执行 Web Search')
         queryCount = inspection.webSearches
         if (this.#processFailed(run) || inspection.errors.length) {
-          throw new Error(this.#commandFailure('Codex Web Search 调用失败', [run.stderr, ...inspection.errors].filter(Boolean).join('\n')))
+          throw new Error(this.#commandFailure(`${provider} Web Search 调用失败`, [run.stderr, ...inspection.errors].filter(Boolean).join('\n')))
         }
         ledger = parseResearchResponse(inspection.text, candidates)
-        producer = 'codex-web-search-v1'
+        producer = researchProducer(provider)
       } catch (error) {
         return checkpoint(error instanceof Error ? error.message : String(error))
       }
@@ -3396,7 +3464,7 @@ export class TaskPipeline {
       try {
         return validate(result.text)
       } catch (error) {
-        failure = error instanceof Error ? error.message : String(error)
+        failure = describeValidationFailure(error)
         if (attempt === SUMMARY_STEP_MAX_ATTEMPTS) {
           throw new Error(`${label} 连续 ${SUMMARY_STEP_MAX_ATTEMPTS} 次未通过本地校验：${failure}`)
         }
@@ -3599,6 +3667,9 @@ export class TaskPipeline {
     if (provider === 'codex' && externalSessionId && !codexSessionIdIsValid(externalSessionId)) {
       throw new Error(`${PROVIDER_SESSION_CONTAMINATED_PREFIX}Codex external session ID 不是 UUID，禁止 resume`)
     }
+    // Qoder resume 会把历史工具上下文带回纯文本阶段；这里强制 fresh CLI session，manifest 里的 session 只作逻辑连续标记。
+    const resumeSessionId = provider === 'qoder' ? undefined : externalSessionId
+    if (provider === 'qoder') onSessionObserved = undefined
     const env = await this.#providerEnvironment(provider, taskId, stage)
     const tool = provider === 'qoder' ? 'qoder' : provider
     const health = await this.#toolHealth(tool, env, taskId, stage)
@@ -3618,7 +3689,7 @@ export class TaskPipeline {
         }
         executable = snapshot.executable
       }
-      const invocation = buildProviderInvocation({ provider, model, prompt, externalSessionId }, executable)
+      const invocation = buildProviderInvocation({ provider, model, prompt, externalSessionId: resumeSessionId }, executable)
       const streamInspector = new ProviderStreamInspector(provider)
       let sawStdoutChunk = false
       let sawStderrChunk = false
@@ -3647,9 +3718,9 @@ export class TaskPipeline {
             continue
           }
           observedSessionId = event.sessionId
-          if (externalSessionId && externalSessionId !== event.sessionId) {
-            observationFailure = new Error(`Provider 没有复用指定 session: expected ${externalSessionId}, observed ${event.sessionId}`)
-          } else if (!externalSessionId && onSessionObserved) {
+          if (resumeSessionId && resumeSessionId !== event.sessionId) {
+            observationFailure = new Error(`Provider 没有复用指定 session: expected ${resumeSessionId}, observed ${event.sessionId}`)
+          } else if (!resumeSessionId && onSessionObserved) {
             if (sessionPersistenceState === 'pending-registration') pendingSessionId = event.sessionId
             else if (sessionPersistenceState === 'ready') persistObservedSession(event.sessionId)
           }
@@ -3753,8 +3824,8 @@ export class TaskPipeline {
           throw new Error(`Provider 输出报告了多个 session ID: ${inspection.sessionIds.join(', ')}`)
         }
         validatedSessionId = inspection.sessionIds[0]
-        if (externalSessionId && validatedSessionId !== externalSessionId) {
-          throw new Error(`Provider 没有复用指定 session: expected ${externalSessionId}, observed ${validatedSessionId}`)
+        if (resumeSessionId && validatedSessionId !== resumeSessionId) {
+          throw new Error(`Provider 没有复用指定 session: expected ${resumeSessionId}, observed ${validatedSessionId}`)
         }
         if (provider === 'codex' && !codexSessionIdIsValid(validatedSessionId)) {
           throw new Error(`Codex 输出了非 UUID session ID: ${validatedSessionId}`)
@@ -3768,14 +3839,14 @@ export class TaskPipeline {
         ...inspection.errors
       ].filter(Boolean).join('\n')
       const terminalResumeFailure = Boolean(
-        externalSessionId
+        resumeSessionId
         && fallbackSessionIds.length === 0
         && run.exitCode !== null
         && run.exitCode !== 0
         && run.signal === null
         && !run.timedOut
         && !run.cancelled
-        && providerSessionIsUnavailable(provider, externalSessionId, diagnostic)
+        && providerSessionIsUnavailable(provider, resumeSessionId, diagnostic)
       )
       const text = inspection.text
       const executionFailure = this.#processFailed(run) || !text
@@ -3821,13 +3892,13 @@ export class TaskPipeline {
         console.error('Provider 日志写入失败', error)
       }
       if (validationFailure) throw validationFailure
-      if (!externalSessionId && onSessionObserved && fallbackSessionIds.length === 1) {
+      if (!resumeSessionId && onSessionObserved && fallbackSessionIds.length === 1) {
         await onSessionObserved(fallbackSessionIds[0])
         onSessionObserved = undefined
       }
       if (executionFailure) throw executionFailure
-      const sessionId = validatedSessionId!
-      if (!externalSessionId && onSessionObserved) await onSessionObserved(sessionId)
+      const sessionId = externalSessionId && provider === 'qoder' ? externalSessionId : validatedSessionId!
+      if (!resumeSessionId && onSessionObserved) await onSessionObserved(sessionId)
       providerResult = { text, sessionId }
     } catch (error) {
       providerFailure = error

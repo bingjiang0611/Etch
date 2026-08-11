@@ -26,7 +26,8 @@ export type TaskCategory = z.infer<typeof TaskCategorySchema>
 export const AppSettingsSchema = z.object({
   schemaVersion: z.literal(2),
   workspaceRoot: z.string().min(1),
-  stageConcurrency: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  // 旧设置里没有这个字段时按 3 补齐，已写入的 1/2/3 原样保留。
+  stageConcurrency: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(3),
   queuePaused: z.boolean(),
   preventSleep: z.boolean(),
   notifications: z.object({ completion: z.boolean(), failure: z.boolean(), checkpoint: z.boolean() }),

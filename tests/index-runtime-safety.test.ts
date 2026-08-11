@@ -34,6 +34,17 @@ describe('main runtime safety wiring', () => {
     expect(handler.indexOf('recoveryHold = !confirmation.released')).toBeGreaterThan(handler.indexOf('await confirmProviderRecovery(runRegistry, appStateStore!)'))
   })
 
+  it('keeps the shared English source audit checkpoint resolvable for summary tasks', () => {
+    const handler = source.slice(
+      source.indexOf("ipcMain.handle('task:resolve-audit'"),
+      source.indexOf("ipcMain.handle('task:resolve-video-checkpoint'")
+    )
+
+    expect(handler).not.toContain("kind !== 'subtitle'")
+    expect(handler).toContain("if (indexed.kind === 'document') throw new Error('当前任务不是视频任务')")
+    expect(handler).toContain('await pipeline.resolveAudit(indexed.location, decisions)')
+  })
+
   it('keeps startup diagnosable when recovery data is corrupt and remembers focus requests during initialization', () => {
     expect(source).toContain('focusRequestedWhileInitializing = true')
     expect(source).toContain('if (focusRequestedWhileInitializing)')

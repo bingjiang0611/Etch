@@ -64,6 +64,16 @@ describe('外部核验候选生成', () => {
     expect(prompt).toContain('BEGIN_UNTRUSTED_JSON_SECTION "research-candidates"')
     expect(prompt).toContain('segment-001:claim:001')
   })
+
+  // 实测踩过的坑：契约没写进提示词时，模型会漏掉 claim 与来源 title，账本直接过不了 schema。
+  it('prompt 把账本字段契约逐条写清楚', () => {
+    const prompt = researchPrompt(digest(), researchCandidates(digest()))
+    expect(prompt).toContain('- claims：数组')
+    expect(prompt).toContain('verdict=只能取 verified、contradicted、unresolved')
+    expect(prompt).toContain('title=字符串')
+    expect(prompt).toContain('evidence=字符串')
+    expect(prompt).toContain('不得缺字段')
+  })
 })
 
 describe('外部核验响应解析', () => {

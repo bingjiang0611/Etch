@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { publicationTemplateReady, type BilibiliAccount } from '../shared/bilibili'
-import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, DocumentHtmlPage, DocumentPage, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, InstallableTool, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
+import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, DocumentPage, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, InstallableTool, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
 import { IDLE_PIPELINE_ACTIVITY, InstallableToolSchema } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
 import { defaultSettings, type AppSettings, type TaskCategory, type ThemePreference, type ToolId } from '../shared/settings-schema'
@@ -120,9 +120,6 @@ export function App(): React.JSX.Element {
   const [documentPage, setDocumentPage] = useState<DocumentPage>()
   const [documentPageLoading, setDocumentPageLoading] = useState(false)
   const [documentPageError, setDocumentPageError] = useState('')
-  const [documentHtmlPage, setDocumentHtmlPage] = useState<DocumentHtmlPage>()
-  const [documentHtmlPageLoading, setDocumentHtmlPageLoading] = useState(false)
-  const [documentHtmlPageError, setDocumentHtmlPageError] = useState('')
   const [reviewOffset, setReviewOffset] = useState(0)
   const [reviewLoading, setReviewLoading] = useState(false)
   const [reviewError, setReviewError] = useState('')
@@ -461,34 +458,6 @@ export function App(): React.JSX.Element {
       cancelled = true
     }
   }, [selected?.manifest.taskId, selected?.manifest.revision, selected?.manifest.artifacts.sourceDocument?.sha256, selected?.manifest.artifacts.translatedDocument?.sha256, selected?.manifest.artifacts.documentVerification?.sha256, view])
-
-  useEffect(() => {
-    if (!selected || selected.manifest.kind !== 'document' || view !== 'workbench') {
-      setDocumentHtmlPage(undefined)
-      setDocumentHtmlPageLoading(false)
-      setDocumentHtmlPageError('')
-      return
-    }
-    let cancelled = false
-    setDocumentHtmlPageLoading(true)
-    setDocumentHtmlPageError('')
-    void window.etch.documentHtmlPage(selected.manifest.taskId)
-      .then((page) => {
-        if (!cancelled && page.taskId === selected.manifest.taskId) setDocumentHtmlPage(page)
-      })
-      .catch((caught) => {
-        if (!cancelled) {
-          setDocumentHtmlPage(undefined)
-          setDocumentHtmlPageError(caught instanceof Error ? caught.message : 'HTML 发布状态读取失败')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setDocumentHtmlPageLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selected?.manifest.taskId, selected?.manifest.revision, selected?.manifest.artifacts.documentHtmlPreview?.sha256, selected?.manifest.artifacts.documentHtml?.sha256, selected?.manifest.artifacts.documentHtmlVerification?.sha256, view])
 
   useEffect(() => () => {
     if (documentDraftTimerRef.current) window.clearTimeout(documentDraftTimerRef.current)
@@ -901,7 +870,7 @@ export function App(): React.JSX.Element {
       rememberDetail(detail)
       setSelected((current) => (current?.manifest.taskId === taskId && current.manifest.revision <= detail.manifest.revision ? detail : current))
     } catch (caught) {
-      if (selectionGeneration === openTaskGenerationRef.current) setTaskActionError(caught instanceof Error ? caught.message : '审计决策提交失败')
+      if (selectionGeneration === openTaskGenerationRef.current) setTaskActionError(readableRemoteError(caught, '审计决策提交失败'))
     } finally {
       auditSubmittingRef.current = false
       setResolvingAudit(false)
@@ -1504,21 +1473,6 @@ export function App(): React.JSX.Element {
     }, CUE_AUTO_SAVE_DELAY_MS)
   }
 
-  const runDocumentHtmlAction = async (
-    action: () => Promise<TaskDetail>
-  ): Promise<void> => {
-    if (!selected || selected.manifest.kind !== 'document') return
-    const taskId = selected.manifest.taskId
-    const selectionGeneration = openTaskGenerationRef.current
-    setDocumentHtmlPageError('')
-    const detail = await action()
-    rememberDetail(detail)
-    if (selectionGeneration !== openTaskGenerationRef.current) return
-    setSelected((current) => current?.manifest.taskId === taskId && current.manifest.revision <= detail.manifest.revision ? detail : current)
-    const page = await window.etch.documentHtmlPage(taskId)
-    if (selectionGeneration === openTaskGenerationRef.current) setDocumentHtmlPage(page)
-  }
-
   const environmentSummary = detectingTools ? '环境检测中' : toolDetectError ? '环境检测失败' : toolHealth.length ? `环境 ${toolHealth.filter((item) => item.status === 'ready').length}/${tools.length} 可用` : '环境待检测'
   const environmentStatus = detectingTools ? 'checking' : toolDetectError ? 'error' : toolHealth.length === tools.length && toolHealth.every((item) => item.status === 'ready') ? 'ready' : 'warning'
   const defaultProvider = providerOrDefault(settings.defaultProvider)
@@ -1997,11 +1951,8 @@ export function App(): React.JSX.Element {
           <DocumentWorkbench
             detail={selected}
             page={documentPage}
-            htmlPage={documentHtmlPage}
             loading={documentPageLoading}
             error={documentPageError || taskActionError}
-            htmlLoading={documentHtmlPageLoading}
-            htmlError={documentHtmlPageError}
             onBack={() => changeView('queue')}
             onTranslationDraftChange={queueDocumentTranslationSave}
             onStart={startSelected}
@@ -2010,9 +1961,6 @@ export function App(): React.JSX.Element {
             onCompleteReview={() => completeReview()}
             onResolveTranslationCost={(_taskId, _revision, decision) => resolveIllustration((taskId, revision) => window.etch.resolveDocumentTranslationCost(taskId, revision, decision))}
             onExport={(taskId) => window.etch.exportDocument(taskId)}
-            onStartHtml={(taskId, revision) => runDocumentHtmlAction(() => window.etch.startDocumentHtml(taskId, revision, 'preview'))}
-            onResolveHtmlStyle={(taskId, revision, direction) => runDocumentHtmlAction(() => window.etch.resolveDocumentHtmlStyle(taskId, revision, direction))}
-            onExportHtml={(taskId) => window.etch.exportDocumentHtml(taskId)}
           />
         )}
         {view === 'workbench' && selected?.manifest.kind !== 'document' && (

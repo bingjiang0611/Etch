@@ -48,6 +48,7 @@ async function fixture(): Promise<{
     category: manifest.category,
     revision: manifest.revision,
     status: 'pending',
+    createdAt: manifest.createdAt,
     updatedAt: manifest.updatedAt
   }]])
   const indexStore = {
@@ -178,6 +179,7 @@ describe('moveTaskToTrash', () => {
       category: manifest.category,
       revision: manifest.revision,
       status: 'pending',
+      createdAt: manifest.createdAt,
       updatedAt: manifest.updatedAt
     }]])
     let trashCalled = false

@@ -159,4 +159,24 @@ describe('文档 block 翻译', () => {
       'glossary'
     ])
   })
+
+  it('确定性审计接受 Markdown 标记和英文月份的等价译法', () => {
+    const source = createMarkdownBlocks([
+      { type: 'paragraph', markdown: 'A skill\'s `description` routes activation.' },
+      { type: 'paragraph', markdown: 'Paste a `SKILL.md` into [tripwire](https://tripwire.bharath.sh/) in December 2025.' },
+      { type: 'table', markdown: '<table><tbody><tr><td>missing the &quot;Use when…&quot; activation line</td><td><strong>95%</strong></td></tr></tbody></table>' }
+    ])
+    const translated = createMarkdownBlocks([
+      { type: 'paragraph', markdown: '技能的 `description` 字段决定着激活路由。' },
+      { type: 'paragraph', markdown: '把一份 `SKILL.md`（技能入口文件，不翻译）粘贴到 [Tripwire](https://tripwire.bharath.sh/)（项目名，不翻译），时间是 2025 年 12 月。' },
+      { type: 'table', markdown: '<table><tbody><tr><td>缺少 &quot;Use when…&quot; 激活行（建议保留原文加注）</td><td><strong>95%</strong></td></tr></tbody></table>' }
+    ])
+    expect(auditDocumentTranslationDeterministically(source, translated, [
+      { source: 'description', target: 'description 字段（技能的描述/路由字段）' },
+      { source: 'skill', target: '技能（Agent Skills 规范中的可加载单元）' },
+      { source: 'SKILL.md', target: 'SKILL.md（技能入口文件，不翻译）' },
+      { source: 'tripwire', target: 'Tripwire（项目名，不翻译）' },
+      { source: 'Use when…', target: '"Use when…" 激活行（建议保留原文加注）' }
+    ])).toEqual([])
+  })
 })

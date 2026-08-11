@@ -50,6 +50,22 @@ describe('TaskStore CAS', () => {
     expect(manifest.translation.activeGenerationId).toBe(replacement.id)
   })
 
+  it('stores the selected Qoder provider and model verbatim', async () => {
+    const directory = await taskDirectory()
+    const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/video' }, '', 'qoder')
+    const generation = activateSessionGeneration(
+      manifest,
+      'qoder',
+      { source: 'user-entered', modelId: 'DeepSeek-V4-Pro' },
+      directory,
+      'initial'
+    )
+
+    expect(generation.provider).toBe('qoder')
+    expect(generation.model).toEqual({ source: 'user-entered', modelId: 'DeepSeek-V4-Pro' })
+    expect(generation.stateRoot).toContain('provider-state/qoder/')
+  })
+
   it('uses the full URL or local source path as the default task title', () => {
     const url = 'https://example.com/watch?v=etch'
     const sourcePath = '/Users/example/Videos/source.mp4'

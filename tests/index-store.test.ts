@@ -7,7 +7,9 @@ describe('IndexStore', () => {
     const store = new IndexStore()
     const older = createTaskManifest({ kind: 'url', url: 'https://example.com/older' }, 'Older title')
     const newer = createTaskManifest({ kind: 'local', sourcePath: '/videos/newer.mp4' }, 'Newer title')
-    older.updatedAt = '2026-07-28T00:00:00.000Z'
+    older.createdAt = '2026-07-28T00:00:00.000Z'
+    older.updatedAt = '2026-07-30T00:00:00.000Z'
+    newer.createdAt = '2026-07-29T00:00:00.000Z'
     newer.updatedAt = '2026-07-29T00:00:00.000Z'
 
     store.rebuild([
@@ -16,7 +18,7 @@ describe('IndexStore', () => {
     ])
 
     expect(store.all().map((task) => task.taskId)).toEqual([newer.taskId, older.taskId])
-    expect(store.get(newer.taskId)).toMatchObject({ rootTaskId: newer.taskId })
+    expect(store.get(newer.taskId)).toMatchObject({ rootTaskId: newer.taskId, createdAt: newer.createdAt })
     expect(store.list(1, 1)).toEqual([expect.objectContaining({ taskId: older.taskId })])
     expect(store.list()).toEqual([
       expect.objectContaining({ taskId: newer.taskId }),

@@ -128,7 +128,7 @@ function sourceSrt(count: number): string {
   }).join('\n')
 }
 
-async function cuesTask(kind: 'manual' | 'automatic' | 'whisper', cueCount = 3, runRegistry?: RunRegistry): Promise<{
+async function cuesTask(kind: 'manual' | 'automatic' | 'whisper', cueCount = 3, runRegistry?: RunRegistry, taskKind: 'subtitle' | 'summary' = 'subtitle'): Promise<{
   directory: string
   store: TaskStore
   pipeline: TaskPipeline
@@ -136,10 +136,13 @@ async function cuesTask(kind: 'manual' | 'automatic' | 'whisper', cueCount = 3, 
   const directory = await mkdtemp(join(tmpdir(), 'etch-english-audit-'))
   directories.push(directory)
   const store = new TaskStore()
-  const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/english-audit' }, 'Technical video', 'codex')
+  const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/english-audit' }, 'Technical video', 'codex', '', 'standard', false, taskKind)
   for (const stage of ['source', 'inspect', 'english'] as const) manifest.pipeline.stages[stage].status = 'completed'
   manifest.pipeline.stages.cues.status = 'ready'
-  for (const stage of ['translate', 'audit', 'review', 'srt', 'burn', 'verify'] as const) manifest.pipeline.stages[stage].status = 'skipped'
+  const downstream = taskKind === 'subtitle'
+    ? (['translate', 'audit', 'review', 'srt', 'burn', 'verify'] as const)
+    : (['digest', 'research', 'summary', 'illustrate'] as const)
+  for (const stage of downstream) manifest.pipeline.stages[stage].status = 'skipped'
   manifest.runtime.subtitleKind = kind
   await writeFile(join(directory, 'english.srt'), sourceSrt(cueCount), 'utf8')
   await writeFile(join(directory, 'source.info.json'), JSON.stringify({
@@ -639,6 +642,27 @@ describe('TaskPipeline English source audit', () => {
       .toBe(await readFile(join(task.directory, resolved.artifacts.englishCues.relativePath), 'utf8'))
     const resolution = JSON.parse(await readFile(join(task.directory, resolved.artifacts.englishSourceAudit.relativePath), 'utf8')) as { resolutions: unknown[] }
     expect(resolution.resolutions).toHaveLength(1)
+  })
+
+  it('resolves the shared English checkpoint for summary tasks and points them at the digest stage', async () => {
+    const task = await cuesTask('whisper', 3, undefined, 'summary')
+    runProcessMock.mockResolvedValue(providerResult({
+      patches: [{ cueId: 2, before: 'source cue 2', after: 'source queue 2', reason: '需结合音频', confidence: 'ambiguous' }]
+    }))
+
+    await task.pipeline.start(task.directory)
+
+    const checkpoint = await task.store.load(task.directory)
+    expect(checkpoint.kind).toBe('summary')
+    expect(checkpoint.pipeline.stages.cues).toMatchObject({ status: 'checkpoint', checkpointId: 'english-source-ambiguity' })
+
+    const resolved = await task.pipeline.resolveAudit(task.directory, [{ cueId: 2, translation: 'source queue 2' }])
+
+    expect(resolved.pipeline.stages.cues.status).toBe('completed')
+    expect(resolved.pipeline.stages.translate.status).toBe('skipped')
+    expect(resolved.translation.auditCheckpoint).toBeUndefined()
+    expect(resolved.runtime.currentMessage).toBe('英文源字幕歧义已确认，准备素材分析')
+    expect(await readFile(join(task.directory, resolved.artifacts.englishClean.relativePath), 'utf8')).toContain('source queue 2')
   })
 
   it('rejects duplicate English checkpoint decisions before replacing any artifact', async () => {

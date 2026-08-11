@@ -23,6 +23,12 @@ vi.mock('../src/main/runtime/tool-detector', () => ({
   identityStillMatches: async () => true,
   toolCacheKey: (tool: string, override?: string) => `${tool}:${override ?? ''}`
 }))
+vi.mock('../src/main/providers/codex-capability', () => ({
+  attestCodexTextOnlyExecutableSnapshot: async () => ({ version: 'codex-cli 1.2.3', sha256: 'a'.repeat(64) }),
+  codexTextOnlyExecutableIsSupported: () => true,
+  createCodexTextOnlyExecutableSnapshot: async () => ({ directory: '/mock/codex-snapshot-dir', executable: '/mock/codex-snapshot' }),
+  removeCodexTextOnlyExecutableSnapshot: async () => undefined
+}))
 
 import { createMarkdownBlocks, type MarkdownDocument } from '../src/core/document'
 import { sha256File } from '../src/main/core/fingerprint'
@@ -36,6 +42,7 @@ import { createTaskManifest, type TaskManifest } from '../src/shared/task-schema
 const directories: string[] = []
 
 afterEach(async () => {
+  generatedSession = 0
   runProcessMock.mockReset()
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
@@ -52,14 +59,19 @@ async function artifact(directory: string, relativePath: string): Promise<TaskMa
   }
 }
 
-function qoderResult(text: string, sessionId: string) {
+function providerResult(text: string, sessionId: string) {
   return {
     pid: 1,
     exitCode: 0,
     signal: null,
     stdout: [
-      JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId }),
-      JSON.stringify({ type: 'result', subtype: 'success', result: text })
+      JSON.stringify({ type: 'thread.started', thread_id: sessionId }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text } }),
+      JSON.stringify({
+        type: 'turn.completed',
+        usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }
+      })
     ].join('\n'),
     stderr: '',
     stdoutTruncated: false,
@@ -73,6 +85,18 @@ function sectionData(prompt: string, section: string): Array<{ id: string; markd
   const envelope = prompt.split(/\r?\n/u).find((line) => line.startsWith(`{"section":"${section}"`))
   if (!envelope) throw new Error(`missing ${section} prompt section`)
   return (JSON.parse(envelope) as { data: Array<{ id: string; markdown: string }> }).data
+}
+
+let generatedSession = 0
+
+function providerSessionFromArgs(args: readonly string[]): string {
+  const resume = args.indexOf('resume')
+  if (resume >= 0) {
+    const session = args.slice(resume + 1).find((arg) => /^[0-9a-f-]{36}$/u.test(arg))
+    if (session) return session
+  }
+  generatedSession += 1
+  return `019f7e34-385f-7de3-9fac-${String(generatedSession).padStart(12, '0')}`
 }
 
 describe('document translation recovery', () => {
@@ -119,11 +143,9 @@ describe('document translation recovery', () => {
     await store.create(directory, manifest)
 
     runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
-      const resumeIndex = spec.args.indexOf('-r')
-      const newIndex = spec.args.indexOf('--session-id')
-      const sessionId = spec.args[resumeIndex >= 0 ? resumeIndex + 1 : newIndex + 1]
+      const sessionId = providerSessionFromArgs(spec.args)
       if (spec.stdin.includes('document-analysis-blocks')) {
-        return qoderResult(JSON.stringify({
+        return providerResult(JSON.stringify({
           contentType: 'article',
           tone: 'technical',
           audience: 'developers',
@@ -132,7 +154,7 @@ describe('document translation recovery', () => {
         }), sessionId)
       }
       const blocks = sectionData(spec.stdin, 'document-blocks')
-      return qoderResult(JSON.stringify({
+      return providerResult(JSON.stringify({
         blocks: blocks.map((block) => ({ id: block.id, markdown: '中文段落。' }))
       }), sessionId)
     })

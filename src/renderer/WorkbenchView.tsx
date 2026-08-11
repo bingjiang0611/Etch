@@ -630,11 +630,10 @@ export function WorkbenchView({
           <div className="permission-banner" role="status">
             <Icon name="warning" />
             <div>
-              <strong>{POOL_LABELS[waitingPool]}并发已满（{waitingOccupancy.active}/{activity.limit} 运行中）</strong>
+              <strong>{POOL_LABELS[waitingPool]}正在排队</strong>
               <span>
-                本任务的「{stageLabels[selectedWaitingStage]}」阶段已排队，其他任务释放槽位后会自动继续。
+                本任务的「{stageLabels[selectedWaitingStage]}」阶段已排队，当前同池运行中 {waitingOccupancy.active} 个。
                 {waitingOccupancy.waiting > 1 ? `同一个池里还有 ${waitingOccupancy.waiting - 1} 个任务在等。` : ''}
-                想提前抢到槽位，可以先停止其他占用该阶段的任务。
               </span>
             </div>
           </div>
@@ -687,29 +686,6 @@ export function WorkbenchView({
           </div>
         )}
       </header>
-
-      {reviewCheckpoint && (
-        <section className="review-checkpoint-banner" role="region" aria-labelledby="review-checkpoint-title">
-          <div className="review-checkpoint-copy">
-            <span className="review-checkpoint-icon" aria-hidden="true"><Icon name="pause" /></span>
-            <div>
-              <strong id="review-checkpoint-title">流水线已暂停在人工校对</strong>
-              <span>先核对术语并把修改一次性同步到全部引用 cue，再检查具体译文。确认完成前不会生成 SRT 或压制成片。</span>
-            </div>
-          </div>
-          <div className="review-checkpoint-steps" role="group" aria-label="人工校对步骤">
-            <button className={workspaceTab === 'glossary' ? 'is-active' : ''} type="button" aria-pressed={workspaceTab === 'glossary'} aria-current={workspaceTab === 'glossary' ? 'step' : undefined} onClick={() => setWorkspaceTab('glossary')}>
-              <span>1</span> 核对术语
-            </button>
-            <button className={workspaceTab === 'review' ? 'is-active' : ''} type="button" aria-pressed={workspaceTab === 'review'} aria-current={workspaceTab === 'review' ? 'step' : undefined} onClick={() => setWorkspaceTab('review')}>
-              <span>2</span> 核对译文
-            </button>
-            <span className="review-checkpoint-status" role="status">
-              {autoSaveBlocked ? '译文保存冲突或失败，需处理后继续' : glossaryBusy ? '术语草稿待预览并应用' : savingCues ? '正在保存译文…' : dirtyCount ? `${dirtyCount} 条译文等待自动保存` : '当前修改均已保存'}
-            </span>
-          </div>
-        </section>
-      )}
 
       <div className="workbench">
         <details
@@ -1178,47 +1154,56 @@ export function WorkbenchView({
             </div>
             <button className="new-task-close" type="button" aria-label="关闭追加成果" disabled={creatingCompanion} onClick={() => setCompanionOpen(false)}>×</button>
           </header>
-          <p className="new-task-copy">同一条视频不需要重新抓取和清理。Etch 会复用已经审计过的英文底稿，只运行新成果需要的阶段。</p>
-          <div className="companion-reuse-card">
-            <strong><Icon name="check" />直接复用 4 个已完成阶段</strong>
-            <div>{SHARED_STAGE_IDS.map((stage) => <span key={stage}>{stageLabels[stage]}</span>)}</div>
-            <small>本次只新增 {companionKind === 'summary' ? '素材分析、外部核验、长文整理、配图' : '翻译、术语审计、人工校对、SRT、压制、验证'}</small>
-          </div>
-          <label className="new-task-field" htmlFor="companion-provider">
-            <span>{companionKind === 'summary' ? '总结 Provider' : '翻译 Provider'} <small>{providerAvailability(companionProvider, toolHealth).summary}</small></span>
-            <select className="field-select" id="companion-provider" value={companionProvider} disabled={creatingCompanion} onChange={(event) => setCompanionProvider(event.target.value as ProviderId)}>
-              {PROVIDER_IDS.map((providerId) => {
-                const availability = providerAvailability(providerId, toolHealth)
-                return <option value={providerId} disabled={!availability.available} key={providerId}>{providerNames[providerId]}{!availability.available ? `（${availability.summary}）` : ''}</option>
-              })}
-            </select>
-          </label>
-          <ModelField
-            idPrefix="companion"
-            label="模型"
-            state={companionModelField}
-            catalog={companionModelCatalog.catalog}
-            loading={companionModelCatalog.loading}
-            disabled={creatingCompanion}
-            onChange={setCompanionModelField}
-          />
-          <label className="new-task-field" htmlFor="companion-style-note">
-            <span>{companionKind === 'summary' ? '总结要求' : '翻译风格'} <small>选填</small></span>
-            <textarea
-              className="field-area"
-              id="companion-style-note"
-              maxLength={1000}
-              placeholder={companionKind === 'summary' ? '例如：重点写商业模式与数字，多保留对话锋芒' : '例如：简洁自然，术语沿用统一术语表'}
-              value={companionStyleNote}
+          <div className="new-task-body">
+            <p className="new-task-copy">同一条视频不需要重新抓取和清理。Etch 会复用已经审计过的英文底稿，只运行新成果需要的阶段。</p>
+            <div className="companion-reuse-card">
+              <div className="companion-reuse-title">
+                <span><Icon name="check" /></span>
+                <div>
+                  <strong>直接复用 {SHARED_STAGE_IDS.length} 个已完成阶段</strong>
+                  <small>本次只新增 {companionKind === 'summary' ? '素材分析、外部核验、长文整理、配图' : '翻译、术语审计、人工校对、SRT、压制、验证'}</small>
+                </div>
+              </div>
+              <div className="companion-reuse-chips">{SHARED_STAGE_IDS.map((stage) => <span key={stage}>{stageLabels[stage]}</span>)}</div>
+            </div>
+            <label className="new-task-field" htmlFor="companion-provider">
+              <span>{companionKind === 'summary' ? '总结 Provider' : '翻译 Provider'} <small>{providerAvailability(companionProvider, toolHealth).summary}</small></span>
+              <select className="field-select" id="companion-provider" value={companionProvider} disabled={creatingCompanion} onChange={(event) => setCompanionProvider(event.target.value as ProviderId)}>
+                {PROVIDER_IDS.map((providerId) => {
+                  const availability = providerAvailability(providerId, toolHealth)
+                  return <option value={providerId} disabled={!availability.available} key={providerId}>{providerNames[providerId]}{!availability.available ? `（${availability.summary}）` : ''}</option>
+                })}
+              </select>
+            </label>
+            <ModelField
+              idPrefix="companion"
+              label="模型"
+              state={companionModelField}
+              catalog={companionModelCatalog.catalog}
+              loading={companionModelCatalog.loading}
               disabled={creatingCompanion}
-              onChange={(event) => setCompanionStyleNote(event.target.value)}
+              onChange={setCompanionModelField}
             />
-          </label>
+            <label className="new-task-field" htmlFor="companion-style-note">
+              <span>{companionKind === 'summary' ? '总结要求' : '翻译风格'} <small>选填</small></span>
+              <textarea
+                className="field-area"
+                id="companion-style-note"
+                maxLength={1000}
+                placeholder={companionKind === 'summary' ? '例如：重点写商业模式与数字，多保留对话锋芒' : '例如：简洁自然，术语沿用统一术语表'}
+                value={companionStyleNote}
+                disabled={creatingCompanion}
+                onChange={(event) => setCompanionStyleNote(event.target.value)}
+              />
+            </label>
+          </div>
           <footer className="new-task-actions">
-            <button className="secondary-button" type="button" disabled={creatingCompanion} onClick={() => setCompanionOpen(false)}>取消</button>
-            <button className="primary-button" type="submit" disabled={creatingCompanion || !providerAvailability(companionProvider, toolHealth).available || !modelFieldSelection(companionModelField)}>
-              {creatingCompanion ? '正在复用底稿…' : settings.queuePaused ? `加入暂停队列 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步` : `开始处理 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步`}
-            </button>
+            <div className="new-task-action-buttons">
+              <button className="secondary-button" type="button" disabled={creatingCompanion} onClick={() => setCompanionOpen(false)}>取消</button>
+              <button className="primary-button" type="submit" disabled={creatingCompanion || !providerAvailability(companionProvider, toolHealth).available || !modelFieldSelection(companionModelField)}>
+                {creatingCompanion ? '正在复用底稿…' : settings.queuePaused ? `加入暂停队列 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步` : `开始处理 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步`}
+              </button>
+            </div>
           </footer>
         </form>
       </dialog>

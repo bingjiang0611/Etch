@@ -1168,7 +1168,7 @@ test('holds manual-review glossary drafts until previewed and applies them to ev
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
     await window.locator('.task-row').click()
 
-    await expect(window.getByRole('region', { name: '流水线已暂停在人工校对' })).toContainText('确认完成前不会生成 SRT 或压制成片')
+    await expect(window.getByText('流水线已暂停在人工校对')).toHaveCount(0)
     await expect(window.getByRole('button', { name: '完成校对并继续' })).toBeVisible()
     await expect(window.getByRole('tab', { name: /审计术语/ })).toHaveAttribute('aria-selected', 'true')
     await expect(window.getByLabel('术语 1 统一写法')).toHaveValue('世界杯')

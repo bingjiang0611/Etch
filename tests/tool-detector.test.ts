@@ -163,6 +163,59 @@ describe('tool health cache configuration', () => {
     expect(health.summaryZh).toBe('codex 登录状态探测失败')
   })
 
+  it('keeps a provider usable when the login probe times out, and leaves login to the runtime call', async () => {
+    const executable = await executableFixture('qodercli')
+    const calls: ProcessSpec[] = []
+    const health = await detectTool('qoder', { PATH: '' }, executable, async (spec) => {
+      calls.push(spec)
+      return spec.args[0] === '--version'
+        ? result('qoder-version')
+        : { ...result(''), exitCode: null, signal: 'SIGTERM', timedOut: true }
+    })
+
+    expect(calls.at(-1)?.timeoutMs).toBe(30_000)
+    expect(health).toMatchObject({
+      status: 'ready',
+      executable: await realpath(executable),
+      version: 'qoder-version',
+      summaryZh: 'qoder CLI 可启动；登录态探测超时，改由运行时校验'
+    })
+    expect(health.probeCancelled).toBeUndefined()
+  })
+
+  it('still reports a timeout when the login probe was killed by stopping the task', async () => {
+    const executable = await executableFixture('qodercli')
+    const health = await detectTool('qoder', { PATH: '' }, executable, async (spec) => (
+      spec.args[0] === '--version'
+        ? result('qoder-version')
+        : { ...result(''), exitCode: null, signal: 'SIGTERM', timedOut: true, cancelled: true }
+    ))
+
+    expect(health).toMatchObject({ status: 'timeout', summaryZh: 'qoder 登录状态探测超时', probeCancelled: true })
+  })
+
+  // 门禁分三级：认不出输出与输出超限只是「没确认」，不能和「明确未登录」共用同一个动作。
+  it('treats an unparsable or oversized login probe as unconfirmed instead of blocking', async () => {
+    const executable = await executableFixture('qodercli')
+    const unparsable = await detectTool('qoder', { PATH: '' }, executable, async (spec) => (
+      spec.args[0] === '--version' ? result('qoder-version') : result('Signed in with a brand new output format')
+    ))
+    expect(unparsable).toMatchObject({
+      status: 'ready',
+      summaryZh: 'qoder CLI 可启动；登录态无法确认，改由运行时校验'
+    })
+
+    const oversized = await detectTool('qoder', { PATH: '' }, executable, async (spec) => (
+      spec.args[0] === '--version'
+        ? result('qoder-version')
+        : { ...result('Username: tester'), stdoutTruncated: true }
+    ))
+    expect(oversized).toMatchObject({
+      status: 'ready',
+      summaryZh: 'qoder CLI 可启动；登录态输出超过安全上限，改由运行时校验'
+    })
+  })
+
   it('requires the subtitles filter from the exact resolved ffmpeg executable', async () => {
     const executable = await executableFixture('ffmpeg')
     const calls: ProcessSpec[] = []

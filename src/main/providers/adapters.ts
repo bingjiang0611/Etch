@@ -87,7 +87,7 @@ function qoderTextOnlyArgs(): string[] {
     '--disable-builtin-skills',
     '--setting-sources', '',
     '--settings', JSON.stringify(QODER_TEXT_ONLY_SETTINGS),
-    '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '',
+    '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '', '--allowed-tools', '',
     '--permission-mode', 'dont_ask'
   ]
 }
@@ -119,9 +119,9 @@ export function buildProviderInvocation(request: ProviderRunRequest, executable:
         ? ['exec', ...isolation, 'resume', '--json', '--skip-git-repo-check', ...modelArgs(request, '--model'), session, '-']
         : ['exec', '--json', '--skip-git-repo-check', ...isolation, ...modelArgs(request, '--model'), '-'] }
     }
-    case 'qoder': return { ...common, args: session
-      ? ['-p', '-o', 'stream-json', ...qoderTextOnlyArgs(), '-r', session, ...modelArgs(request, '--model')]
-      : ['-p', '-o', 'stream-json', ...qoderTextOnlyArgs(), '--session-id', crypto.randomUUID(), ...modelArgs(request, '--model')] }
+    case 'qoder': return { ...common, args: [
+      '-p', '-o', 'stream-json', ...qoderTextOnlyArgs(), '--session-id', crypto.randomUUID(), ...modelArgs(request, '--model')
+    ] }
     case 'opencode': {
       return {
         ...common,

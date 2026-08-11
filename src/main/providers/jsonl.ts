@@ -8,6 +8,7 @@ const FROZEN_CAPABILITY_ALIASES = ['fanout'].map(normalizeCapabilityMarker)
 const CODEX_RETRY_MESSAGE = /^Reconnecting\.\.\. [1-5]\/5 \([\s\S]{1,4096}\)$/u
 const CODEX_FALLBACK_MESSAGE = /^Falling back from WebSockets to HTTPS transport\. [\s\S]{1,4096}$/u
 const CODEX_CODE_MODE_FAIL_CLOSED_MESSAGE = /^Code Mode is unavailable because code-mode host is disabled\. Code mode will fail closed; enable `features\.code_mode_host` and install `codex-code-mode-host`\.$/u
+const CODEX_MODEL_METADATA_FALLBACK_MESSAGE = /^Model metadata for `[A-Za-z0-9][A-Za-z0-9._/-]{0,63}` not found\. Defaulting to fallback metadata\.$/u
 const CODEX_ALLOWED_STDERR = [
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z (?:ERROR|WARN) codex_api::endpoint::responses_websocket: [^\r\n]{1,4096}, url: wss:\/\/chatgpt\.com\/backend-api\/codex\/responses$/u,
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z (?:ERROR|WARN) codex_models_manager::manager: failed to refresh available models: [^\r\n]{1,4096}$/u
@@ -18,13 +19,17 @@ const DEFAULT_LINE_LIMIT_BYTES = 1024 * 1024
 const DEFAULT_RESULT_LIMIT_BYTES = 5 * 1024 * 1024
 const MAX_RECORDED_VIOLATIONS = 64
 
-type CodexLifecycleState = 'expect-thread' | 'expect-turn' | 'turn-preamble' | 'agent-messages' | 'completed'
+type CodexLifecycleState = 'expect-thread' | 'expect-turn' | 'turn-preamble' | 'agent-messages' | 'completed' | 'failed'
+type CodexStreamMessage = { line: number; message: string }
 type CodexLifecycle = {
   state: CodexLifecycleState
   thread: number
   turnStarted: number
   turnCompleted: number
+  turnFailed: number
   agentMessage: number
+  deferredErrors: CodexStreamMessage[]
+  turnFailures: CodexStreamMessage[]
 }
 
 export class JsonlEventParser {
@@ -76,7 +81,10 @@ export class ProviderStreamInspector {
     thread: 0,
     turnStarted: 0,
     turnCompleted: 0,
-    agentMessage: 0
+    turnFailed: 0,
+    agentMessage: 0,
+    deferredErrors: [],
+    turnFailures: []
   }
   readonly #sessionIds = new Set<string>()
   readonly #errors: string[] = []
@@ -141,10 +149,20 @@ export class ProviderStreamInspector {
       this.#record(this.#securityViolations, error instanceof Error ? error.message : String(error))
     }
     if (this.#provider === 'codex') {
+      for (const violation of unconfirmedCodexTopLevelErrors(this.#lifecycle)) this.#record(this.#protocolViolations, violation)
       if (this.#lifecycle.thread !== 1) this.#record(this.#protocolViolations, `lifecycle: expected 1 thread.started, observed ${this.#lifecycle.thread}`)
       if (this.#lifecycle.turnStarted !== 1) this.#record(this.#protocolViolations, `lifecycle: expected 1 turn.started, observed ${this.#lifecycle.turnStarted}`)
-      if (this.#lifecycle.turnCompleted !== 1) this.#record(this.#protocolViolations, `lifecycle: expected 1 turn.completed, observed ${this.#lifecycle.turnCompleted}`)
-      if (this.#lifecycle.agentMessage < 1) this.#record(this.#protocolViolations, 'lifecycle: expected at least 1 agent_message')
+      if (this.#lifecycle.turnFailed > 0) {
+        // turn.failed 是合法终态：真实调用失败（例如模型不可用）不该按缺 turn.completed / agent_message 记成协议违规，
+        // 失败详情已经进了 errors，让上层报可读失败。但终态必须唯一、与 turn.completed 互斥，
+        // 且不能把这条流上已经记下的违规洗掉。
+        if (this.#lifecycle.turnFailed !== 1) this.#record(this.#protocolViolations, `lifecycle: expected 1 turn.failed, observed ${this.#lifecycle.turnFailed}`)
+        if (this.#lifecycle.turnCompleted !== 0) this.#record(this.#protocolViolations, `lifecycle: turn.failed and turn.completed are mutually exclusive, observed ${this.#lifecycle.turnCompleted} turn.completed`)
+        if (this.#lifecycle.state !== 'failed') this.#record(this.#protocolViolations, `lifecycle: expected terminal state failed, observed ${this.#lifecycle.state}`)
+      } else {
+        if (this.#lifecycle.turnCompleted !== 1) this.#record(this.#protocolViolations, `lifecycle: expected 1 turn.completed, observed ${this.#lifecycle.turnCompleted}`)
+        if (this.#lifecycle.agentMessage < 1) this.#record(this.#protocolViolations, 'lifecycle: expected at least 1 agent_message')
+      }
     }
     return events
   }
@@ -178,7 +196,7 @@ export class ProviderStreamInspector {
     const event = parseProviderLine(line)
     for (const tool of observedProviderToolEvents([event])) this.#recordTool(tool)
     if (this.#provider === 'codex') {
-      const violation = validateCodexTextOnlyEnvelope(value, this.#lifecycle)
+      const violation = validateCodexTextOnlyEnvelope(value, this.#lifecycle, this.#stdoutLine)
       if (violation) this.#record(this.#protocolViolations, `line ${this.#stdoutLine}: ${violation}`)
     }
   }
@@ -263,6 +281,10 @@ export function parseProviderLine(line: string): ProviderEvent {
   try { value = JSON.parse(line) } catch { return { type: 'raw', value: line } }
   if (!value || typeof value !== 'object') return { type: 'raw', value }
   const item = value as Record<string, unknown>
+  if (item.type === 'turn.failed') {
+    const failure = isRecord(item.error) ? item.error.message : item.error
+    return { type: 'error', message: String(failure ?? 'Provider turn failed') }
+  }
   if (item.type === 'error' || item.error) return { type: 'error', message: String(item.message ?? item.error) }
   if (item.type === 'thread.started' && typeof item.thread_id === 'string') return { type: 'session', sessionId: item.thread_id }
   if ((item.type === 'init' || (item.type === 'system' && item.subtype === 'init')) && typeof item.session_id === 'string') {
@@ -319,7 +341,8 @@ function observedProviderToolDiagnostics(stderr: string): string[] {
 
 function validateCodexTextOnlyEnvelope(
   value: unknown,
-  lifecycle: CodexLifecycle
+  lifecycle: CodexLifecycle,
+  line: number
 ): string | undefined {
   if (!isRecord(value)) return 'envelope must be an object'
   const type = value.type
@@ -365,6 +388,11 @@ function validateCodexTextOnlyEnvelope(
           ? undefined
           : `code mode fail-closed diagnostic is not allowed in state ${lifecycle.state}`
       }
+      if (isCodexModelMetadataFallbackItem(value.item)) {
+        return lifecycle.state === 'expect-turn'
+          ? undefined
+          : `model metadata fallback diagnostic is not allowed in state ${lifecycle.state}`
+      }
       if (value.item.type === 'agent_message') {
         lifecycle.agentMessage += 1
         if (lifecycle.state !== 'turn-preamble' && lifecycle.state !== 'agent-messages') {
@@ -376,10 +404,28 @@ function validateCodexTextOnlyEnvelope(
       if (lifecycle.state !== 'turn-preamble') return `${String(value.item.type)} is not allowed in state ${lifecycle.state}`
       return undefined
     }
+    case 'turn.failed': {
+      const keysError = exactKeys(value, ['type', 'error'])
+        ?? validateCodexTurnFailure(value.error)
+      if (keysError) return keysError
+      lifecycle.turnFailed += 1
+      if (lifecycle.state !== 'turn-preamble' && lifecycle.state !== 'agent-messages') {
+        return `turn.failed is not allowed in state ${lifecycle.state}`
+      }
+      lifecycle.state = 'failed'
+      recordCodexTurnFailure(lifecycle, line, value.error)
+      return undefined
+    }
     case 'error': {
-      const error = exactKeys(value, ['type', 'message'])
-        ?? (allowedCodexTransportMessage(value.message, 'retry') ? undefined : 'unapproved error message')
-      if (error) return error
+      const keysError = exactKeys(value, ['type', 'message'])
+      if (keysError) return keysError
+      if (!allowedCodexTransportMessage(value.message, 'retry')) {
+        // Codex 会在 turn.failed 之前把同一条失败详情先发一遍顶层 error。判违规要等终态：
+        // 只有随后唯一一条合法 turn.failed 逐字复述同一条 message 才算这条预告，否则仍是协议违规。
+        return lifecycle.state === 'turn-preamble' && nonEmptyString(value.message)
+          ? deferCodexTopLevelError(lifecycle, line, value.message)
+          : 'unapproved error message'
+      }
       return lifecycle.state === 'turn-preamble'
         ? undefined
         : `error is not allowed in state ${lifecycle.state}`
@@ -387,6 +433,36 @@ function validateCodexTextOnlyEnvelope(
     default:
       return `unknown event type ${type}`
   }
+}
+
+function validateCodexTurnFailure(value: unknown): string | undefined {
+  if (!isRecord(value)) return 'turn.failed error must be an object'
+  const keysError = exactKeys(value, ['message'])
+  if (keysError) return keysError
+  return nonEmptyString(value.message) ? undefined : 'turn.failed error message must be a non-empty string'
+}
+
+function deferCodexTopLevelError(lifecycle: CodexLifecycle, line: number, message: string): string | undefined {
+  if (lifecycle.deferredErrors.length >= MAX_RECORDED_VIOLATIONS) return 'unapproved error message'
+  lifecycle.deferredErrors.push({ line, message })
+  return undefined
+}
+
+function recordCodexTurnFailure(lifecycle: CodexLifecycle, line: number, error: unknown): void {
+  if (lifecycle.turnFailures.length >= MAX_RECORDED_VIOLATIONS) return
+  const message = isRecord(error) && typeof error.message === 'string' ? error.message : ''
+  lifecycle.turnFailures.push({ line, message })
+}
+
+function unconfirmedCodexTopLevelErrors(lifecycle: CodexLifecycle): string[] {
+  const [deferred] = lifecycle.deferredErrors
+  const [failure] = lifecycle.turnFailures
+  const confirmed = lifecycle.deferredErrors.length === 1
+    && lifecycle.turnFailed === 1
+    && lifecycle.turnFailures.length === 1
+    && failure.line > deferred.line
+    && failure.message === deferred.message
+  return confirmed ? [] : lifecycle.deferredErrors.map(({ line }) => `line ${line}: unapproved error message`)
 }
 
 function validateCodexTextItem(value: unknown): string | undefined {
@@ -403,11 +479,22 @@ function validateCodexTextItem(value: unknown): string | undefined {
     const keysError = exactKeys(value, ['id', 'type', 'message'])
     if (keysError) return keysError
     if (!nonEmptyString(value.id)) return 'error item id must be a non-empty string'
-    return isCodexCodeModeFailClosedItem(value) || allowedCodexTransportMessage(value.message, 'fallback')
+    return isCodexCodeModeFailClosedItem(value)
+      || isCodexModelMetadataFallbackItem(value)
+      || allowedCodexTransportMessage(value.message, 'fallback')
       ? undefined
       : 'unapproved error item message'
   }
   return `unknown item type ${type}`
+}
+
+function isCodexModelMetadataFallbackItem(value: unknown): boolean {
+  return isRecord(value)
+    && value.type === 'error'
+    && nonEmptyString(value.id)
+    && typeof value.message === 'string'
+    && !containsCapabilityMarker(value.message)
+    && CODEX_MODEL_METADATA_FALLBACK_MESSAGE.test(value.message)
 }
 
 function isCodexCodeModeFailClosedItem(value: unknown): boolean {

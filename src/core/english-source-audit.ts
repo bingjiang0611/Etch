@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { guardedPrompt, untrustedJsonSection } from './prompt-boundary'
+import { VALIDATION_FAILURE_PROMPT_LIMIT } from './schema-contract'
 
 export const ENGLISH_SOURCE_AUDIT_MAIN_CUE_COUNT = 220
 export const ENGLISH_SOURCE_AUDIT_CONTEXT_RADIUS = 2
@@ -107,7 +108,7 @@ export function englishSourceAuditRepairPrompt(
   failure: string
 ): string {
   return guardedPrompt(
-    `上一条英文源字幕审计回复未通过本地校验，错误详情位于不可信 JSON section：\n${untrustedJsonSection('english-audit-validation-failure', failure.slice(0, 500))}`,
+    `上一条英文源字幕审计回复未通过本地校验，错误详情位于不可信 JSON section：\n${untrustedJsonSection('english-audit-validation-failure', failure.slice(0, VALIDATION_FAILURE_PROMPT_LIMIT))}`,
     `请重新发送完整 ${batch.id} JSON 对象；不要只补充错误项，不要输出 Markdown。`,
     englishSourceAuditPrompt(batch, metadata)
   )

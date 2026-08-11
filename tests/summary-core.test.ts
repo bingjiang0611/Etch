@@ -14,14 +14,19 @@ import {
   draftRecordIssues,
   draftScoreTotal,
   draftsRecordMarkdown,
+  digestReducePrompt,
+  digestSegmentPrompt,
   finalizePrompt,
   parseImagePlan,
   partitionTranscript,
   scoringPrompt,
+  DigestReduceSchema,
+  DigestSegmentSchema,
   SummaryScoringSchema,
   type SummaryDigest,
   type SummaryScoring
 } from '../src/core/summary'
+import { describeValidationFailure, jsonContract } from '../src/core/schema-contract'
 import { SummaryDraftRecordSchema, type SummaryDraftRecord, type SummaryImagePlanEntry } from '../src/shared/task-schema'
 
 function article(options: { images?: string[]; final?: boolean; overview?: boolean } = {}): string {
@@ -220,6 +225,17 @@ describe('三稿硬门禁', () => {
     expect(value.scoreTotals).toEqual({ A: 49, B: 45, C: 47 })
   })
 
+  // 底稿覆盖了全部段的事实（evidence 全 covered），但仍有评论角度值得吸收——这是合法输出，不得拦。
+  it('omissions 全是评论角度、evidence 全 covered 时仍能通过', () => {
+    const commentary = record()
+    commentary.omissions = ['（来自 C）从效率到所有权的论证跳跃除比喻外无支撑', '（来自 C）手艺迁移的代价未被讨论']
+    commentary.omissionEvidence = commentary.omissionEvidence.map((item) => ({ ...item, status: 'covered' as const }))
+    commentary.omissionNote = '事实与数字已被底稿吸收，omissions 集中在评论角度与章节视角。'
+    expect(commentary.omissionEvidence.every((item) => item.status === 'covered')).toBe(true)
+    expect(draftRecordIssues(commentary)).toEqual([])
+    expect(() => assertDraftRecordComplete(commentary)).not.toThrow()
+  })
+
   it('缺记录、缺增量、遗漏清单为空且无说明时都拒绝', () => {
     expect(draftRecordIssues(undefined)).toEqual(['缺少三稿执行记录'])
     const thin = record()
@@ -337,5 +353,75 @@ describe('写作提示词边界', () => {
     expect(SummaryScoringSchema.parse(tied).baseDraft).toBe('A')
     tied.baseDraft = 'C'
     expect(() => SummaryScoringSchema.parse(tied)).toThrow('应为 A')
+  })
+})
+
+describe('素材分析包契约容错', () => {
+  it('逐段素材拒绝对象化条目，让修复轮拿到可读的契约差异', () => {
+    const objectified = DigestSegmentSchema.safeParse({
+      claims: [{ id: 'c1', type: 'guest_opinion', text: '团队整体没有变快。', evidence: 'the team as a whole is not' }],
+      numbers: [{ value: '10x', context: '演讲标题的量级修辞' }],
+      entities: ['Matt Dailey'],
+      quotes: [{ text: 'output without impact', speaker: 'Matt', note: '全场判断锚点' }],
+      stories: [],
+      tensions: [],
+      unverified: [],
+      asrSuspects: [{ cue: 'seeding control', guess: 'ceding control' }]
+    })
+    expect(objectified.success).toBe(false)
+    const failure = describeValidationFailure(objectified.error)
+    expect(failure).toContain('claims[0]：类型必须是 string')
+    expect(failure).toContain('numbers[0]：类型必须是 string')
+    expect(failure).toContain('asrSuspects[0]：类型必须是 string')
+
+    const parsed = DigestSegmentSchema.parse({
+      claims: ['团队整体没有变快（嘉宾观点，依据 the team as a whole is not）。'],
+      numbers: ['10x 是演讲标题的量级修辞，不是实测数据。'],
+      entities: ['Matt Dailey'],
+      quotes: [{ text: 'output without impact', speaker: 'Matt', note: '全场判断锚点' }],
+      stories: [],
+      tensions: [],
+      unverified: [],
+      asrSuspects: ['seeding control 应为 ceding control']
+    })
+    expect(parsed.claims[0]).toBe('团队整体没有变快（嘉宾观点，依据 the team as a whole is not）。')
+    expect(parsed.asrSuspects[0]).toBe('seeding control 应为 ceding control')
+  })
+
+  it('收口结果拒绝对象主线，但把自造 kind 归成 other', () => {
+    expect(DigestReduceSchema.safeParse({
+      throughlines: [{ id: 't1', title: '提速不是成果', judgment: '产出与影响脱钩。' }],
+      entityGlossary: []
+    }).success).toBe(false)
+
+    const parsed = DigestReduceSchema.parse({
+      throughlines: ['提速不是成果：产出与影响脱钩，output without impact 是全场锚点。'],
+      entityGlossary: [
+        { surface: 'Matt', corrected: 'Matt Dailey', kind: 'person' },
+        { surface: 'spectrum and development', corrected: 'spec-driven development', kind: 'method_term' },
+        { surface: 'seeding control', corrected: 'ceding control' }
+      ]
+    })
+    expect(parsed.throughlines[0]).toBe('提速不是成果：产出与影响脱钩，output without impact 是全场锚点。')
+    expect(parsed.entityGlossary.map((item) => item.kind)).toEqual(['person', 'other', 'other'])
+  })
+
+  it('收口提示词把 schema 契约原样拼进去，包括字数上限与 kind 枚举', () => {
+    const prompt = digestReducePrompt(
+      { title: '标题', sourceUrl: 'https://youtu.be/abc', chapters: [] },
+      []
+    )
+    expect(prompt).toContain(jsonContract(DigestReduceSchema))
+    expect(prompt).toContain('- throughlines：数组（1-3 项），每项是字符串')
+    expect(prompt).toContain('kind=只能取 person、company、product、metric、other')
+    expect(prompt).toContain('尽量控在 800 字以内')
+    const segment = digestSegmentPrompt(
+      { title: '标题', sourceUrl: 'https://youtu.be/abc', chapters: [] },
+      { segmentId: 'segment-001', range: '00:00 → 10:00', text: '原文' },
+      1,
+      1
+    )
+    expect(segment).toContain(jsonContract(DigestSegmentSchema))
+    expect(segment).toContain('不能写成 {id, text, evidence} 这类对象')
   })
 })

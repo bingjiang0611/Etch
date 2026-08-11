@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { ProviderId } from '../shared/task-schema'
 import { guardedPrompt, untrustedJsonSection } from './prompt-boundary'
+import { VALIDATION_FAILURE_PROMPT_LIMIT } from './schema-contract'
 import { parseCueTsv } from './srt'
 
 export interface TranslationCue { index: number; text: string }
@@ -296,7 +297,7 @@ export function consistencyAuditRepairPrompt(
   failure: string
 ): string {
   return guardedPrompt(
-    `上一条审计回复未通过本地校验，错误详情位于不可信 JSON section：\n${untrustedJsonSection('audit-validation-failure', failure.slice(0, 500))}`,
+    `上一条审计回复未通过本地校验，错误详情位于不可信 JSON section：\n${untrustedJsonSection('audit-validation-failure', failure.slice(0, VALIDATION_FAILURE_PROMPT_LIMIT))}`,
     '请重新发送完整审计 JSON 对象，必须包含 glossary、patches、historicalClassifications 三个完整数组；不要只补充或解释出错部分，不要输出 Markdown。',
     consistencyAuditPrompt(cues, provider, glossary)
   )
@@ -307,7 +308,7 @@ export function consistencyAuditHistoricalRepairPrompt(
   failure: string
 ): string {
   return guardedPrompt(
-    `上一条完整审计只剩历史强制术语终检未通过，错误详情位于不可信 JSON section：\n${untrustedJsonSection('historical-repair-validation-failure', failure.slice(0, 500))}`,
+    `上一条完整审计只剩历史强制术语终检未通过，错误详情位于不可信 JSON section：\n${untrustedJsonSection('historical-repair-validation-failure', failure.slice(0, VALIDATION_FAILURE_PROMPT_LIMIT))}`,
     '不要重新发送 glossary 或 historicalClassifications。只为下方每个 cue 返回一个完整中文译文 patch，不得缺少、重复或增加 cue。',
     'patch.before 必须逐字复制给出的 before；patch.after 必须是自然完整译文并满足该 cue 的全部 allowedTargets；confidence 必须是字符串 "high"。',
     '只返回这个 JSON 对象：{"patches":[{"cueId":1,"before":"当前完整译文","after":"修复后的完整译文","reason":"修复理由","confidence":"high"}]}。不要 Markdown 或解释。',

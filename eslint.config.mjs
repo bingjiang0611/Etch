@@ -11,5 +11,12 @@ export default tseslint.config(
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-explicit-any': 'error'
     }
+  },
+  {
+    // 落地页原型是浏览器脚本，不是 Node 脚本。
+    files: ['website/**/*.js', 'designs/**/*.js'],
+    languageOptions: {
+      globals: { document: 'readonly', window: 'readonly', Element: 'readonly' }
+    }
   }
 )

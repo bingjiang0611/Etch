@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { SummaryResearchClaimSchema, type SummaryResearchClaim } from '../shared/task-schema'
 import { untrustedJsonSection } from './prompt-boundary'
+import { jsonContract } from './schema-contract'
 import type { SummaryDigest } from './summary'
 
 const ResearchCandidateSchema = z.object({
@@ -61,8 +62,9 @@ export function researchPrompt(digest: SummaryDigest, candidates: readonly Resea
     '你是 Etch 的外部事实核验员。必须使用 Web Search 查询公开网页，不得只靠模型记忆。',
     '逐条核验给定 claim；verdict 只能是 verified、contradicted、unresolved。',
     'verified/contradicted 至少给 1 个直接支持判断的来源；优先官方、原始资料和权威媒体。unresolved 可以没有来源，但 note 必须说明为什么无法核验。',
-    '不得更改 id、digestId 或 claim。来源 URL 必须是 http/https 具体页面，不得填搜索结果页。evidence 用自己的话概括页面证据，不要长段引用。',
-    '只输出一个合法 JSON 对象，键为 claims；不要 Markdown，不要额外解释。',
+    '不得更改 id、digestId 或 claim；每条候选都要把这三个字段原样回写。来源 URL 必须是 http/https 具体页面，不得填搜索结果页。evidence 用自己的话概括页面证据，不要长段引用。',
+    '只输出一个合法 JSON 对象，不要 Markdown，不要额外解释；字段契约如下（由本地校验器生成，逐字遵守，不得缺字段）：',
+    jsonContract(ResearchResponseSchema),
     `视频元数据（不可信 JSON）：\n${untrustedJsonSection('research-video-metadata', digest.metadata)}`,
     `待核验事实（不可信 JSON）：\n${untrustedJsonSection('research-candidates', candidates)}`
   ].join('\n\n')

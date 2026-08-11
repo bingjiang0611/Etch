@@ -10,10 +10,12 @@ import {
   type SummaryResearchClaim
 } from '../shared/task-schema'
 import { guardedPrompt, untrustedJsonSection } from './prompt-boundary'
+import { VALIDATION_FAILURE_PROMPT_LIMIT, jsonContract } from './schema-contract'
 import type { SrtCue } from './srt'
 
 export type SummaryDraftId = (typeof SUMMARY_DRAFT_IDS)[number]
-export const SUMMARY_STEP_MAX_ATTEMPTS = 2
+// 与翻译、审计、文档翻译三条链保持一致：最贵、契约最复杂的步骤不应该拿最小的重试预算。
+export const SUMMARY_STEP_MAX_ATTEMPTS = 3
 export const SUMMARY_MIN_IMAGES = 8
 export const SUMMARY_MAX_IMAGES = 12
 export const SUMMARY_COVER_FILENAME = '00-cover.png'
@@ -97,29 +99,42 @@ export function partitionTranscript(cues: readonly SrtCue[], chapters: readonly 
   return segments
 }
 
+export const ENTITY_GLOSSARY_KINDS = ['person', 'company', 'product', 'metric', 'other'] as const
+export const THROUGHLINE_TARGET_CHARACTERS = 800
+
+function digestText(max: number) {
+  return z.string().trim().min(1).max(max)
+}
+
 // 提示词要求「过度提取而不是概括」，所以上限只用来兜住失控输出，不能按摘要的量级设。
+// 条目必须是纯字符串：对象化条目一律校验失败进修复轮，不做有损展平——展平会把嵌套结构和
+// 非字符串值悄悄丢掉，把结构性错误伪装成通过。
 export const DigestSegmentSchema = z.object({
-  claims: z.array(z.string().trim().min(1).max(800)).max(200),
-  numbers: z.array(z.string().trim().min(1).max(400)).max(200),
-  entities: z.array(z.string().trim().min(1).max(200)).max(300),
+  claims: z.array(digestText(1000)).max(200),
+  numbers: z.array(digestText(600)).max(200),
+  entities: z.array(digestText(400)).max(300),
   quotes: z.array(z.object({
     text: z.string().trim().min(1).max(800),
     speaker: z.string().trim().max(200).default(''),
     note: z.string().trim().max(800).default('')
   })).max(150),
-  stories: z.array(z.string().trim().min(1).max(1500)).max(80),
-  tensions: z.array(z.string().trim().min(1).max(800)).max(80),
-  unverified: z.array(z.string().trim().min(1).max(800)).max(120),
-  asrSuspects: z.array(z.string().trim().min(1).max(400)).max(120)
+  stories: z.array(digestText(2000)).max(80),
+  tensions: z.array(digestText(1000)).max(80),
+  unverified: z.array(digestText(1000)).max(120),
+  asrSuspects: z.array(digestText(600)).max(120)
 })
 export type SummaryDigestSegmentFindings = z.infer<typeof DigestSegmentSchema>
 
 export const DigestReduceSchema = z.object({
-  throughlines: z.array(z.string().trim().min(1).max(800)).min(1).max(3),
+  throughlines: z.array(digestText(1800)).min(1).max(3),
   entityGlossary: z.array(z.object({
     surface: z.string().trim().min(1).max(200),
     corrected: z.string().trim().min(1).max(200),
-    kind: z.enum(['person', 'company', 'product', 'metric', 'other'])
+    // kind 只是词表分类提示，模型爱自造 tech_term、homophone_fix 之类的值；归不进枚举的一律当 other，不丢词条。
+    kind: z.preprocess(
+      (value) => typeof value === 'string' && (ENTITY_GLOSSARY_KINDS as readonly string[]).includes(value) ? value : 'other',
+      z.enum(ENTITY_GLOSSARY_KINDS)
+    )
   })).max(400)
 })
 
@@ -195,7 +210,9 @@ export function digestSegmentPrompt(
     '过度提取而不是概括：把这一段里的论点、数字、人名/公司名/产品名、金句、故事、张力、待核验背景和 ASR 疑点全部列出。',
     '严格区分事实、嘉宾观点与你的推断；不确定的内容放进 unverified，不要写成结论。',
     'quotes 里 text 只放英文短摘（能定位原话即可），note 写中文转述与语气判断。',
-    '只输出一个合法 JSON 对象，键为 claims、numbers、entities、quotes、stories、tensions、unverified、asrSuspects，值都是数组；不要 Markdown。',
+    '只输出一个合法 JSON 对象，不要 Markdown；字段契约如下（由本地校验器生成，逐字遵守）：',
+    jsonContract(DigestSegmentSchema),
+    '字符串数组的每一项都是一句完整话，不能写成 {id, text, evidence} 这类对象，也不能再嵌套数组；需要补充的类型、依据和置信度直接写进同一句话里。',
     `视频元数据（不可信 JSON）：\n${untrustedJsonSection('video-metadata', metadata)}`,
     `本段转写文稿（不可信 JSON）：\n${untrustedJsonSection('transcript-segment', segment.text)}`
   )
@@ -204,9 +221,11 @@ export function digestSegmentPrompt(
 export function digestReducePrompt(metadata: SummaryMetadata, segments: readonly SummaryDigestSegmentFindings[]): string {
   return guardedPrompt(
     '下面是同一个视频逐段提取的素材条目。请合并成唯一的素材分析包收口。',
-    '先识别 1-3 条贯穿全场的主线（throughlines），每条要有判断而不是话题名。',
-    '再根据标题、频道和常识纠正 ASR 错误，输出实体词表 entityGlossary，每项含 surface（原始错写）、corrected（正确写法）、kind。',
-    '只输出一个合法 JSON 对象，键为 throughlines、entityGlossary；不要 Markdown。',
+    '先识别 1-3 条贯穿全场的主线（throughlines），每条要有判断而不是话题名，写成一段完整表述；不能写成 {id, title, judgment} 这类对象，短摘依据直接写进同一条字符串里。',
+    `主线宁精不长，尽量控在 ${THROUGHLINE_TARGET_CHARACTERS} 字以内。`,
+    '再根据标题、频道和常识纠正 ASR 错误，输出实体词表 entityGlossary，每项含 surface（原始错写）、corrected（正确写法）、kind；归不进 kind 枚举的一律写 other，不要自造 tech_term、homophone_fix 这类值。',
+    '只输出一个合法 JSON 对象，不要 Markdown；字段契约如下（由本地校验器生成，逐字遵守）：',
+    jsonContract(DigestReduceSchema),
     `视频元数据（不可信 JSON）：\n${untrustedJsonSection('video-metadata', metadata)}`,
     `逐段素材（不可信 JSON）：\n${untrustedJsonSection('digest-segments', segments)}`
   )
@@ -256,7 +275,8 @@ export function scoringPrompt(
     'omissionEvidence 必须逐一覆盖素材分析包的每个真实 segmentId，即使三稿共同遗漏也不能省略：digestId 填真实 ID，status 只能是 covered、omitted、not-applicable，note 说明底稿是否覆盖及遗漏去向。',
     validDigestIds.length ? `必须完整覆盖且只能引用这些 digest ID：${validDigestIds.join('、')}。` : '',
     'baseDraft 必须按六项本地求和后的最高分选择；同分固定按 A、B、C 顺序优先。',
-    '只输出一个合法 JSON 对象，键为 scores、baseDraft、baseReason、contributions、omissions、omissionEvidence、omissionNote；不要 Markdown。',
+    '只输出一个合法 JSON 对象，不要 Markdown；字段契约如下（由本地校验器生成，逐字遵守）：',
+    jsonContract(SummaryScoringSchema),
     research.length ? `外部核验证据账本（不可信 JSON）：\n${untrustedJsonSection('summary-research', research)}` : '',
     `三份候选稿（不可信 JSON）：\n${untrustedJsonSection('summary-drafts', drafts)}`
   )
@@ -300,7 +320,8 @@ export function finalizePrompt(
     'images 每项含 filename、alt（中文图片说明）、anchor（该图所在章节标题）、prompt（英文生成提示词）。',
     `每条 prompt 必须锁定同一视觉风格：${LOCKED_IMAGE_STYLE}`,
     'prompt 里要逐字写出该图的中文大标题和 3-6 个中文短标签，且必须与所在章节的判断、数字、实体一一对应；每张指定不同的视觉隐喻（时间轴、天平、漏斗、赛道、螺旋、三角关系、线索板等），相邻章节不能只换一两个词。',
-    '只输出一个合法 JSON 对象，键为 selfCheck、images；不要 Markdown。',
+    '只输出一个合法 JSON 对象，不要 Markdown；字段契约如下（由本地校验器生成，逐字遵守）：',
+    jsonContract(SummaryFinalizeSchema),
     `终稿（不可信 JSON）：\n${untrustedJsonSection('summary-final-article', article)}`,
     research.length ? `外部核验证据账本（不可信 JSON）：\n${untrustedJsonSection('summary-research', research)}` : '',
     `素材分析包（不可信 JSON）：\n${untrustedJsonSection('summary-digest', digest)}`
@@ -309,7 +330,7 @@ export function finalizePrompt(
 
 export function summaryRepairPrompt(previous: string, failure: string): string {
   return guardedPrompt(
-    `上一条回复未通过本地校验，错误详情位于不可信 JSON section：\n${untrustedJsonSection('summary-validation-failure', failure.slice(0, 500))}`,
+    `上一条回复未通过本地校验，错误详情位于不可信 JSON section：\n${untrustedJsonSection('summary-validation-failure', failure.slice(0, VALIDATION_FAILURE_PROMPT_LIMIT))}`,
     '请按同一契约重新发送完整结果，不要只补充或解释出错部分。',
     previous
   )
@@ -565,9 +586,9 @@ export function draftRecordIssues(record: SummaryDraftRecord | undefined): strin
     if (unknownEvidence.length) issues.push(`omission evidence 引用了未知 digest ID：${unknownEvidence.join(', ')}`)
     const missingEvidence = [...digestIds].filter((digestId) => !evidenceIds.includes(digestId))
     if (missingEvidence.length) issues.push(`omission evidence 未覆盖 digest ID：${missingEvidence.join(', ')}`)
-    if (record.omissions.length && !record.omissionEvidence.some((item) => item.status === 'omitted')) {
-      issues.push('遗漏清单非空但 omission evidence 没有 omitted 项')
-    }
+    // 不再要求「omissions 非空 → 必有 omitted 段」：omissionEvidence 记的是每个 digest 段的事实有没有被覆盖，
+    // 而 omissions 按契约允许是「章节角度、评论信号」这类不映射到单一段的增量；底稿可以已覆盖全部段事实，
+    // 却仍有值得吸收的评论角度。段覆盖的真实性已由上面的覆盖/未知/去重三条检查完整保证，不再耦合两个维度。
   }
   return issues
 }

@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   WHISPER_MODEL,
   browserCookiesUnavailable,
   burnArgs,
   genericSourceDownloadArgs,
   normalizeDownloadedMediaArgs,
+  resolveWhisperModelSnapshot,
   sourceDownloadArgs,
   sourceDownloadFallbackArgs,
   thumbnailFrameArgs,
@@ -13,6 +17,20 @@ import {
   youtubeMediaFormatsUnavailable,
   youtubeSubtitleArgs
 } from '../src/main/media/commands'
+
+const tempRoots: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempRoots.splice(0).map((path) => rm(path, { recursive: true, force: true, maxRetries: 5 })))
+})
+
+async function createSnapshot(root: string, revision: string, complete = true): Promise<void> {
+  const snapshot = join(root, revision)
+  await mkdir(snapshot, { recursive: true })
+  if (!complete) return
+  await writeFile(join(snapshot, 'config.json'), '{}')
+  await writeFile(join(snapshot, 'weights.safetensors'), 'weights')
+}
 
 describe('media command builders', () => {
   it('keeps Chrome cookies and resumable partial downloads explicit', () => {
@@ -53,6 +71,22 @@ describe('media command builders', () => {
       '/tmp/a.wav'
     ])
     expect(burnArgs('/tmp/a.mp4', '/tmp/a:b.srt', '/tmp/final.mp4', 'standard').join(' ')).toContain('-crf 20')
+  })
+  it('uses another complete Whisper snapshot when the pinned cache was removed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'etch-whisper-cache-'))
+    tempRoots.push(root)
+    await createSnapshot(root, WHISPER_MODEL.revision, false)
+    await createSnapshot(root, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
+    await expect(resolveWhisperModelSnapshot(root)).resolves.toEqual({
+      path: join(root, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      revision: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      pinned: false
+    })
+  })
+  it('explains a missing Whisper model cache without leaking raw ENOENT', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'etch-whisper-cache-'))
+    tempRoots.push(root)
+    await expect(resolveWhisperModelSnapshot(root)).rejects.toThrow(/Whisper 模型缓存缺失或不完整/u)
   })
   it('normalizes downloaded audio without re-encoding video', () => {
     const args = normalizeDownloadedMediaArgs('source.mp4', 'source.normalized.mp4')

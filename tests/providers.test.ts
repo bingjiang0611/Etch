@@ -44,6 +44,65 @@ function observedProviderToolDiagnostics(stderr: string): string[] {
 }
 
 describe('provider adapters', () => {
+  it('reports a Codex turn.failed as a readable provider failure instead of contamination', () => {
+    const inspection = inspect('codex', [
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'turn.failed', error: { message: '{"detail":"The \'X\' model is not supported when using Codex with a ChatGPT account."}' } }
+    ].map((item) => JSON.stringify(item)).join('\n'))
+    expect(inspection.protocolViolations).toEqual([])
+    expect(inspection.securityViolations).toEqual([])
+    expect(inspection.tools).toEqual([])
+    expect(inspection.errors.some((error) => error.includes('is not supported when using Codex'))).toBe(true)
+  })
+
+  it('keeps violations recorded before a Codex turn.failed instead of clearing them', () => {
+    const violations = codexTextOnlyProtocolViolations([
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'ls' } },
+      { type: 'turn.failed', error: { message: 'model unavailable' } }
+    ].map((item) => JSON.stringify(item)).join('\n'))
+    expect(violations).toEqual(['line 3: unknown item type command_execution'])
+  })
+
+  it('requires the Codex terminal outcome to be unique, exclusive and readable', () => {
+    const duplicate = codexTextOnlyProtocolViolations([
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'turn.failed', error: { message: 'model unavailable' } },
+      { type: 'turn.failed', error: { message: 'model unavailable' } }
+    ].map((item) => JSON.stringify(item)).join('\n'))
+    expect(duplicate).toEqual([
+      'line 4: turn.failed is not allowed in state failed',
+      'lifecycle: expected 1 turn.failed, observed 2'
+    ])
+
+    const both = codexTextOnlyProtocolViolations([
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: '结果' } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
+      { type: 'turn.failed', error: { message: 'model unavailable' } }
+    ].map((item) => JSON.stringify(item)).join('\n'))
+    expect(both).toEqual([
+      'line 5: turn.failed is not allowed in state completed',
+      'lifecycle: turn.failed and turn.completed are mutually exclusive, observed 1 turn.completed',
+      'lifecycle: expected terminal state failed, observed completed'
+    ])
+
+    const unreadable = codexTextOnlyProtocolViolations([
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'turn.failed', error: { message: '' } }
+    ].map((item) => JSON.stringify(item)).join('\n'))
+    expect(unreadable).toEqual([
+      'line 3: turn.failed error message must be a non-empty string',
+      'lifecycle: expected 1 turn.completed, observed 0',
+      'lifecycle: expected at least 1 agent_message'
+    ])
+  })
+
   it('uses pure CLI resume syntax for Codex', () => {
     const args = buildProviderInvocation({ ...request, externalSessionId: CODEX_SESSION_ID }, '/bin/codex').args
     expect(args).toContain('--ignore-user-config')
@@ -82,7 +141,7 @@ describe('provider adapters', () => {
     ])
   })
 
-  it('uses the exact Qoder text-only boundary for fresh and resumed sessions', () => {
+  it('uses the exact Qoder text-only boundary and never resumes contaminated-prone text sessions', () => {
     const fresh = buildProviderInvocation({ ...request, provider: 'qoder' }, '/bin/qodercli')
     expect(fresh).toEqual({
       command: '/bin/qodercli',
@@ -91,10 +150,11 @@ describe('provider adapters', () => {
       args: [
         '-p', '-o', 'stream-json', '--bare', '--disable-builtin-skills',
         '--setting-sources', '', '--settings', JSON.stringify(QODER_TEXT_ONLY_SETTINGS),
-        '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '',
+        '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '', '--allowed-tools', '',
         '--permission-mode', 'dont_ask', '--session-id', expect.stringMatching(/^[0-9a-f-]{36}$/u)
       ]
     })
+    const freshSessionId = fresh.args[fresh.args.indexOf('--session-id') + 1]
 
     const resumed = buildProviderInvocation({
       ...request,
@@ -104,9 +164,11 @@ describe('provider adapters', () => {
     expect(resumed.args).toEqual([
       '-p', '-o', 'stream-json', '--bare', '--disable-builtin-skills',
       '--setting-sources', '', '--settings', JSON.stringify(QODER_TEXT_ONLY_SETTINGS),
-      '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '',
-      '--permission-mode', 'dont_ask', '-r', 'qoder-session'
+      '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '', '--allowed-tools', '',
+      '--permission-mode', 'dont_ask', '--session-id', expect.stringMatching(/^[0-9a-f-]{36}$/u)
     ])
+    expect(resumed.args).not.toContain('-r')
+    expect(resumed.args[resumed.args.indexOf('--session-id') + 1]).not.toBe(freshSessionId)
   })
 
   it('uses the exact OpenCode text-only config for fresh and resumed sessions', () => {
@@ -401,6 +463,94 @@ describe('provider adapters', () => {
     expect(codexTextOnlyProtocolViolations(lifecycle(diagnostic, true)))
       .toContain('line 3: code mode fail-closed diagnostic is not allowed in state turn-preamble')
   })
+  it('accepts the real Codex model-metadata fallback plus a turn.failed mirrored by a top-level error', () => {
+    const fallback = 'Model metadata for `gpt-5.1-codex-max` not found. Defaulting to fallback metadata.'
+    const failure = '{"detail":"The \'gpt-5.1-codex-max\' model is not supported when using Codex with a ChatGPT account."}'
+    const inspection = inspect('codex', [
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'item.completed', item: { id: 'item_0', type: 'error', message: fallback } },
+      { type: 'turn.started' },
+      { type: 'error', message: failure },
+      { type: 'turn.failed', error: { message: failure } }
+    ].map((item) => JSON.stringify(item)).join('\n'))
+    expect(inspection.protocolViolations).toEqual([])
+    expect(inspection.securityViolations).toEqual([])
+    expect(inspection.tools).toEqual([])
+    expect(inspection.errors).toEqual([fallback, failure, failure])
+  })
+  it('keeps a Codex top-level error a violation unless one later turn.failed repeats it verbatim', () => {
+    const failure = '{"detail":"model unavailable"}'
+    const withTerminal = (topLevel: string, terminal: Record<string, unknown>[]) => [
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'error', message: topLevel },
+      ...terminal
+    ].map((item) => JSON.stringify(item)).join('\n')
+
+    expect(codexTextOnlyProtocolViolations(withTerminal(failure, [
+      { type: 'turn.failed', error: { message: `${failure} (retried)` } }
+    ]))).toEqual(['line 3: unapproved error message'])
+
+    expect(codexTextOnlyProtocolViolations(withTerminal(failure, [
+      { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'OK' } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } }
+    ]))).toEqual(['line 3: unapproved error message'])
+
+    expect(codexTextOnlyProtocolViolations(withTerminal(failure, [
+      { type: 'turn.failed', error: { message: failure } },
+      { type: 'turn.failed', error: { message: failure } }
+    ]))).toEqual([
+      'line 5: turn.failed is not allowed in state failed',
+      'line 3: unapproved error message',
+      'lifecycle: expected 1 turn.failed, observed 2'
+    ])
+
+    expect(codexTextOnlyProtocolViolations([
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'turn.failed', error: { message: failure } },
+      { type: 'error', message: failure }
+    ].map((item) => JSON.stringify(item)).join('\n'))).toEqual(['line 4: unapproved error message'])
+  })
+  it('accepts only the exact pre-turn Codex model-metadata fallback item shape', () => {
+    const withMessage = (message: string, afterTurn = false) => [
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      ...(afterTurn
+        ? [
+            { type: 'turn.started' },
+            { type: 'item.completed', item: { id: 'item_0', type: 'error', message } }
+          ]
+        : [
+            { type: 'item.completed', item: { id: 'item_0', type: 'error', message } },
+            { type: 'turn.started' }
+          ]),
+      { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'OK' } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } }
+    ].map((item) => JSON.stringify(item)).join('\n')
+
+    const fallback = 'Model metadata for `gpt-5.1-codex-max` not found. Defaulting to fallback metadata.'
+    expect(codexTextOnlyProtocolViolations(withMessage(fallback))).toEqual([])
+    expect(codexTextOnlyProtocolViolations(withMessage(fallback, true)))
+      .toContain('line 3: model metadata fallback diagnostic is not allowed in state turn-preamble')
+    for (const deviation of [
+      `${fallback} Retrying with fallback.`,
+      'Model metadata for `` not found. Defaulting to fallback metadata.',
+      'Model metadata for gpt-5.1-codex-max not found. Defaulting to fallback metadata.',
+      `Model metadata for \`${'x'.repeat(65)}\` not found. Defaulting to fallback metadata.`,
+      'Model metadata for `gpt-5.1-codex-max` not found. Defaulting to fallback tool metadata.',
+      'Model metadata not found. Defaulting to fallback metadata.'
+    ]) {
+      expect(codexTextOnlyProtocolViolations(withMessage(deviation)))
+        .toContain('line 2: unapproved error item message')
+    }
+    expect(codexTextOnlyProtocolViolations([
+      { type: 'thread.started', thread_id: CODEX_SESSION_ID },
+      { type: 'turn.started' },
+      { type: 'error', message: fallback },
+      { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'OK' } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } }
+    ].map((item) => JSON.stringify(item)).join('\n'))).toEqual(['line 3: unapproved error message'])
+  })
   it('accepts a bounded multiline Cloudflare 403 retry from Codex', () => {
     const jsonl = [
       { type: 'thread.started', thread_id: CODEX_SESSION_ID },
@@ -688,6 +838,18 @@ describe('provider adapters', () => {
     expect(result.protocolViolations.some((item) => item.includes('unknown item type browser_action'))).toBe(true)
     expect(result.text).toBe('OK')
     expect(result.sessionIds).toEqual([CODEX_SESSION_ID])
+  })
+
+  it('records Qoder tool_use/tool_result as text-only contamination', () => {
+    const stream = [
+      { type: 'system', subtype: 'init', session_id: 'qoder-session' },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'WebSearch', input: { query: 'x' } }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', content: 'result' }] } },
+      { type: 'result', result: 'OK' }
+    ].map((item) => `${JSON.stringify(item)}\n`).join('')
+    const inspection = inspect('qoder', stream)
+    expect(inspection.tools).toEqual(expect.arrayContaining(['tool_use', 'tool_result']))
+    expect(inspection.text).toBe('OK')
   })
 
   it('fails closed when a JSONL line or accumulated result exceeds its bound', () => {

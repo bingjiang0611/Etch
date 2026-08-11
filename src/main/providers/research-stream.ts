@@ -1,4 +1,5 @@
 import { parseProviderLine } from './jsonl'
+import { QODER_RESEARCH_TOOL } from './research-adapters'
 import { codexSessionIdIsValid } from './session-id'
 
 export interface ResearchStreamInspection {
@@ -7,6 +8,53 @@ export interface ResearchStreamInspection {
   errors: string[]
   unexpectedTools: string[]
   webSearches: number
+}
+
+// Qoder 的 stream-json 形状（2026-08 实测）：system/init 带 session_id，assistant 的
+// message.content 里出现 tool_use，user 里回 tool_result，最后 result/success 带 result 文本。
+// spawn 层已把内建工具收窄到只剩 WebSearch、权限层会拒掉插件 MCP，这里是第三层：
+// 只要出现过非 WebSearch 的 tool_use，即使被拒绝执行也算会话污染，直接让阶段失败。
+export function inspectQoderResearchStream(stdout: string): ResearchStreamInspection {
+  const sessions = new Set<string>()
+  const errors: string[] = []
+  const texts: string[] = []
+  const unexpectedTools = new Set<string>()
+  let webSearches = 0
+  for (const line of stdout.split(/\r?\n/u).filter(Boolean)) {
+    let envelope: unknown
+    try { envelope = JSON.parse(line) } catch {
+      unexpectedTools.add('non-json-output')
+      continue
+    }
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
+      unexpectedTools.add('non-object-output')
+      continue
+    }
+    const record = envelope as Record<string, unknown>
+    if (typeof record.session_id === 'string') sessions.add(record.session_id)
+    const message = record.message && typeof record.message === 'object' && !Array.isArray(record.message)
+      ? record.message as Record<string, unknown>
+      : undefined
+    for (const block of Array.isArray(message?.content) ? message.content : []) {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) continue
+      const nested = block as Record<string, unknown>
+      if (nested.type !== 'tool_use') continue
+      const name = typeof nested.name === 'string' ? nested.name : 'unnamed-tool'
+      if (name === QODER_RESEARCH_TOOL) webSearches += 1
+      else unexpectedTools.add(name)
+    }
+    if (record.type === 'result') {
+      if (record.is_error === true) errors.push(String(record.result ?? 'Qoder Web Search 失败').slice(0, 500))
+      else if (typeof record.result === 'string') texts.push(record.result)
+      continue
+    }
+    const event = parseProviderLine(line)
+    if (event.type === 'error') errors.push(event.message.slice(0, 500))
+  }
+  if (sessions.size !== 1) throw new Error(`外部核验必须且只能产生一个 Qoder session，实际 ${sessions.size}`)
+  const sessionId = [...sessions][0]
+  if (!codexSessionIdIsValid(sessionId)) throw new Error('外部核验 Qoder session ID 无效')
+  return { sessionId, text: texts.join('\n').trim(), errors, unexpectedTools: [...unexpectedTools], webSearches }
 }
 
 export function inspectResearchStream(stdout: string): ResearchStreamInspection {

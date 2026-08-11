@@ -284,8 +284,21 @@ const SummaryResearchSchema = z.object({
   completedAt: z.string().datetime({ offset: true }).optional()
 })
 
+// 分段素材每条都是一次真实的 provider 调用，跟翻译批次一样按 fingerprint 落盘，
+// 以后任何后续步骤失败都不必重跑已完成的分段。
+const SummaryDigestFindingSchema = z.object({
+  segmentId: z.string().regex(/^segment-\d{3}$/u),
+  range: z.string().trim().min(1).max(100),
+  inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  status: z.enum(['pending', 'verified', 'stale']),
+  attempt: z.number().int().nonnegative().default(0),
+  artifact: ArtifactSchema.optional()
+})
+export type SummaryDigestFinding = z.infer<typeof SummaryDigestFindingSchema>
+
 const SummaryStateSchema = z.object({
   digestSegments: z.number().int().nonnegative().default(0),
+  digestFindings: z.array(SummaryDigestFindingSchema).max(400).default([]),
   draftRecord: SummaryDraftRecordSchema.optional(),
   research: SummaryResearchSchema.default({ status: 'idle', claims: [], queryCount: 0, limitations: [] }),
   illustration: IllustrationSchema.default({ phase: 'agent-pending', planned: [], generated: [], pending: [] })
@@ -294,6 +307,7 @@ export type SummaryState = z.infer<typeof SummaryStateSchema>
 
 const DEFAULT_SUMMARY_STATE = {
   digestSegments: 0,
+  digestFindings: [],
   research: { status: 'idle' as const, claims: [], queryCount: 0, limitations: [] as string[] },
   illustration: { phase: 'agent-pending' as const, planned: [], generated: [], pending: [] }
 }

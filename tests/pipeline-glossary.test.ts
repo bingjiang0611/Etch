@@ -614,6 +614,7 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
       category: history.category,
       revision: history.revision,
       status: 'completed',
+      createdAt: history.createdAt,
       updatedAt: history.updatedAt
     }])
     const pipeline = new TaskPipeline(store, settings, historical, () => undefined)

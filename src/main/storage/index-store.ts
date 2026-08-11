@@ -10,6 +10,7 @@ export interface IndexedTask {
   category: string
   revision: number
   status: string
+  createdAt: string
   updatedAt: string
 }
 
@@ -33,6 +34,7 @@ export function indexedTask(location: string, manifest: TaskManifest): IndexedTa
     category: manifest.category,
     revision: manifest.revision,
     status: taskStatus(manifest),
+    createdAt: manifest.createdAt,
     updatedAt: manifest.updatedAt
   }
 }
@@ -51,7 +53,7 @@ export class IndexStore {
   }
 
   all(): IndexedTask[] {
-    return [...this.#tasks.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    return [...this.#tasks.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   }
 
   count(): number {

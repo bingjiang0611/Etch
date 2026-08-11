@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { DocumentHtmlPage, DocumentPage, TaskDetail } from '../shared/ipc'
-import type { DocumentHtmlDirection, StageId } from '../shared/task-schema'
+import type { DocumentPage, TaskDetail } from '../shared/ipc'
+import type { StageId } from '../shared/task-schema'
 import { parseSummaryMarkdown, type InlineToken, type SummaryBlock } from './summary-markdown'
 import { Icon, providerNames } from './ui'
 
@@ -15,22 +15,7 @@ const DOCUMENT_STAGES = [
 
 type DocumentTab = 'compare' | 'preview' | 'info'
 type PendingAction = 'open-source' | 'complete-review' | 'export' | 'start' | 'stop' | 'resolve-cost'
-type HtmlPendingAction = 'preview' | 'generate' | 'export'
 type StageState = TaskDetail['manifest']['pipeline']['stages'][string]
-
-const HTML_DIRECTIONS: readonly {
-  id: DocumentHtmlDirection
-  name: string
-  templateId: string
-  description: string
-  dials: readonly [number, number, number]
-}[] = [
-  { id: 'A', name: '杂志长文', templateId: 'article-magazine', description: '编辑部式层级与醒目引文', dials: [72, 55, 42] },
-  { id: 'B', name: '极简阅读', templateId: 'minimal', description: '单列宽留白，适合沉浸阅读', dials: [38, 28, 18] },
-  { id: 'C', name: '大胆编辑', templateId: 'editorial', description: '强标题与不对称构图', dials: [84, 63, 78] },
-  { id: 'D', name: '冷静工业', templateId: 'dark-industrial', description: '暗底冷蓝，信息密度更高', dials: [12, 74, 92] },
-]
-const HTML_DIAL_LABELS = ['衬线', '密度', '对比'] as const
 
 const STAGE_STATUS_LABELS: Record<StageState['status'], string> = {
   pending: '等待中',
@@ -97,7 +82,9 @@ function Inline({ tokens }: { tokens: readonly InlineToken[] }): React.JSX.Eleme
           ? <strong key={index}>{token.text}</strong>
           : token.kind === 'code'
             ? <code key={index}>{token.text}</code>
-            : <span key={index}>{token.text}</span>,
+            : token.kind === 'link'
+              ? <a href={token.href} key={index} rel="noreferrer" target="_blank">{token.text}</a>
+              : <span key={index}>{token.text}</span>,
       )}
     </>
   )
@@ -112,6 +99,31 @@ function MarkdownImage({ block }: { block: Extract<SummaryBlock, { kind: 'image'
         <small>{block.filename}</small>
       </div>
     </figure>
+  )
+}
+
+function MarkdownTable({ block }: { block: Extract<SummaryBlock, { kind: 'table' }> }): React.JSX.Element {
+  const headerRows = block.rows.filter((row) => row.header)
+  const bodyRows = block.rows.filter((row) => !row.header)
+  return (
+    <div className="summary-table-scroll">
+      <table>
+        {headerRows.length > 0 && (
+          <thead>
+            {headerRows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{row.cells.map((cell, cellIndex) => <th key={cellIndex}><Inline tokens={cell} /></th>)}</tr>
+            ))}
+          </thead>
+        )}
+        {bodyRows.length > 0 && (
+          <tbody>
+            {bodyRows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{row.cells.map((cell, cellIndex) => <td key={cellIndex}><Inline tokens={cell} /></td>)}</tr>
+            ))}
+          </tbody>
+        )}
+      </table>
+    </div>
   )
 }
 
@@ -133,6 +145,7 @@ function MarkdownArticle({ markdown }: { markdown: string }): React.JSX.Element 
           const items = block.items.map((item, itemIndex) => <li key={itemIndex}><Inline tokens={item} /></li>)
           return block.ordered ? <ol key={index}>{items}</ol> : <ul key={index}>{items}</ul>
         }
+        if (block.kind === 'table') return <MarkdownTable block={block} key={index} />
         return <p key={index}><Inline tokens={block.inline} /></p>
       })}
     </article>
@@ -195,184 +208,11 @@ function DocumentPipeline({ detail }: { detail: TaskDetail }): React.JSX.Element
   )
 }
 
-interface DocumentHtmlPublicationProps {
-  detail: TaskDetail
-  page?: DocumentHtmlPage
-  loading: boolean
-  error: string
-  ready: boolean
-  onStart?: (taskId: string, expectedRevision: number) => unknown | Promise<unknown>
-  onResolveStyle?: (taskId: string, expectedRevision: number, direction: DocumentHtmlDirection) => unknown | Promise<unknown>
-  onExport?: (taskId: string) => unknown | Promise<unknown>
-}
-
-function DocumentHtmlPublication({
-  detail,
-  page,
-  loading,
-  error,
-  ready,
-  onStart,
-  onResolveStyle,
-  onExport,
-}: DocumentHtmlPublicationProps): React.JSX.Element {
-  const taskId = detail.manifest.taskId
-  const matchingPage = page?.taskId === taskId ? page : undefined
-  const publication = detail.manifest.document.htmlPublication
-  const status = matchingPage?.status ?? publication.status
-  const phase = matchingPage?.phase ?? publication.phase
-  const [direction, setDirection] = useState<DocumentHtmlDirection>(matchingPage?.selectedDirection ?? 'A')
-  const [pending, setPending] = useState<HtmlPendingAction>()
-  const [actionError, setActionError] = useState('')
-  const identityError = page && page.taskId !== taskId ? 'HTML 发布页与当前任务不匹配。' : ''
-  const publicationError = actionError || identityError || error.trim() || matchingPage?.errorCode || publication.errorCode || ''
-  const selected = HTML_DIRECTIONS.find((item) => item.id === direction) ?? HTML_DIRECTIONS[0]
-
-  useEffect(() => {
-    setDirection(matchingPage?.selectedDirection ?? 'A')
-    setActionError('')
-  }, [taskId, matchingPage?.selectedDirection])
-
-  const run = async (kind: HtmlPendingAction, action: () => unknown | Promise<unknown>): Promise<void> => {
-    setPending(kind)
-    setActionError('')
-    try {
-      await action()
-    } catch (reason) {
-      setActionError(reason instanceof Error ? reason.message : String(reason))
-    } finally {
-      setPending(undefined)
-    }
-  }
-
-  const statusLabel = loading
-    ? '正在读取'
-    : status === 'idle'
-      ? '尚未开始'
-      : status === 'running'
-        ? phase === 'generate' ? '正在生成' : '正在准备'
-        : status === 'checkpoint'
-          ? '等待选择风格'
-          : status === 'failed'
-            ? '发布失败'
-            : '已通过验收'
-  const canStart = ready && Boolean(onStart) && !pending && status !== 'running'
-
-  return (
-    <section className="document-html-publication" data-status={status} aria-labelledby={`html-publication-${taskId}`} aria-busy={loading || Boolean(pending)}>
-      <header className="document-html-heading">
-        <div>
-          <span className="provider-tag">独立工作流 · Single-file HTML</span>
-          <h2 id={`html-publication-${taskId}`}>发布为网页</h2>
-          <p>基于已验证 Markdown 生成，不改变翻译流水线与 Markdown 成品。</p>
-        </div>
-        <span className="document-html-status" data-status={status}>{statusLabel}</span>
-      </header>
-
-      {publicationError && <p className="document-html-error" role="alert"><Icon name="warning" />{publicationError}</p>}
-      {loading && <div className="document-html-empty">正在读取 HTML 发布状态…</div>}
-
-      {!loading && (status === 'idle' || status === 'failed') && (
-        <div className="document-html-start">
-          <div>
-            <strong>{status === 'failed' ? 'Markdown 成品仍然安全，可以单独重试发布。' : '先生成四个真实风格方向，再选择最终方案。'}</strong>
-            <span>{ready ? '预览包含字体、内容密度和视觉对比三个维度。' : '文档通过完整性验证后即可开始。'}</span>
-          </div>
-          <button className="primary-button" type="button" disabled={!canStart} onClick={() => {
-            if (onStart) void run('preview', () => onStart(taskId, detail.manifest.revision))
-          }}>
-            {status === 'failed' && <Icon name="refresh" />}
-            {pending === 'preview' ? '正在生成预览…' : status === 'failed' ? '重新生成预览' : '生成四方向预览'}
-          </button>
-        </div>
-      )}
-
-      {!loading && status === 'running' && (
-        <div className="document-html-empty" role="status">{pending === 'generate' ? '正在生成并执行桌面、移动端验收…' : 'HTML 发布任务正在处理…'}</div>
-      )}
-
-      {!loading && status === 'checkpoint' && (
-        <div className="document-html-checkpoint">
-          {matchingPage?.previewHtml
-            ? <iframe className="document-html-preview" title="HTML 四方向风格预览" sandbox="" srcDoc={matchingPage.previewHtml} />
-            : <div className="document-html-empty document-html-preview-missing">
-                <span>风格预览尚未载入。</span>
-                <button className="secondary-button" type="button" disabled={!canStart} onClick={() => {
-                  if (onStart) void run('preview', () => onStart(taskId, detail.manifest.revision))
-                }}>{pending === 'preview' ? '正在重新生成…' : '重新生成预览'}</button>
-              </div>}
-          <div className="document-html-selection">
-            <div className="document-html-selection-head">
-              <div><strong>选择一个方向</strong><span>三个维度随方向一起锁定，生成后会执行浏览器验收。</span></div>
-              <code>{selected.templateId}</code>
-            </div>
-            <div className="document-html-directions" role="radiogroup" aria-label="HTML 风格方向">
-              {HTML_DIRECTIONS.map((item) => (
-                <button
-                  className="document-html-direction"
-                  data-direction={item.id}
-                  data-selected={direction === item.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={direction === item.id}
-                  onClick={() => setDirection(item.id)}
-                  key={item.id}
-                >
-                  <span className="document-html-direction-letter">{item.id}</span>
-                  <span><strong>{item.name}</strong><small>{item.description}</small></span>
-                  <span className="document-html-dials">
-                    {item.dials.map((value, index) => (
-                      <span key={HTML_DIAL_LABELS[index]}>
-                        <small>{HTML_DIAL_LABELS[index]}</small>
-                        <i><b style={{ width: `${value}%` }} /></i>
-                        <code>{value}</code>
-                      </span>
-                    ))}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <button className="primary-button document-html-generate" type="button" disabled={!onResolveStyle || Boolean(pending)} onClick={() => {
-              if (onResolveStyle) void run('generate', () => onResolveStyle(taskId, detail.manifest.revision, direction))
-            }}>{pending === 'generate' ? '正在生成与验收…' : `选择 ${direction} · 生成 HTML`}</button>
-          </div>
-        </div>
-      )}
-
-      {!loading && status === 'completed' && (
-        <div className="document-html-complete">
-          <div className="document-html-verification">
-            <span className="review-checkpoint-icon"><Icon name="check" /></span>
-            <div>
-              <strong>{matchingPage?.selectedDirection ?? publication.selectedDirection ?? DASH} · {matchingPage?.templateId ?? publication.templateId ?? DASH}</strong>
-              <span>{matchingPage?.verification?.staticValid ? '静态预检通过' : '静态预检未知'} · {matchingPage?.verification?.browserValid ? '桌面与移动端验收通过' : '浏览器验收未知'}</span>
-            </div>
-          </div>
-          {matchingPage?.verification?.issues.length ? (
-            <ul className="document-html-issues">{matchingPage.verification.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
-          ) : null}
-          <div className="document-html-actions">
-            <button className="secondary-button" type="button" disabled={!canStart} onClick={() => {
-              if (onStart) void run('preview', () => onStart(taskId, detail.manifest.revision))
-            }}><Icon name="refresh" />重新选择风格</button>
-            <button className="primary-button" type="button" disabled={!onExport || Boolean(pending)} onClick={() => {
-              if (onExport) void run('export', () => onExport(taskId))
-            }}><Icon name="folder" />{pending === 'export' ? '正在导出…' : '导出 HTML'}</button>
-          </div>
-        </div>
-      )}
-    </section>
-  )
-}
-
 export interface DocumentWorkbenchProps {
   detail: TaskDetail
   page?: DocumentPage
-  htmlPage?: DocumentHtmlPage
   loading?: boolean
   error?: string
-  htmlLoading?: boolean
-  htmlError?: string
   onBack: () => void
   onTranslationDraftChange?: (markdown: string) => void
   onStart?: () => unknown | Promise<unknown>
@@ -381,19 +221,13 @@ export interface DocumentWorkbenchProps {
   onCompleteReview?: (taskId: string, expectedRevision: number) => unknown | Promise<unknown>
   onResolveTranslationCost?: (taskId: string, expectedRevision: number, decision: 'proceed' | 'cancel') => unknown | Promise<unknown>
   onExport?: (taskId: string) => unknown | Promise<unknown>
-  onStartHtml?: (taskId: string, expectedRevision: number) => unknown | Promise<unknown>
-  onResolveHtmlStyle?: (taskId: string, expectedRevision: number, direction: DocumentHtmlDirection) => unknown | Promise<unknown>
-  onExportHtml?: (taskId: string) => unknown | Promise<unknown>
 }
 
 export function DocumentWorkbench({
   detail,
   page,
-  htmlPage,
   loading = false,
   error = '',
-  htmlLoading = false,
-  htmlError = '',
   onBack,
   onTranslationDraftChange,
   onStart,
@@ -402,9 +236,6 @@ export function DocumentWorkbench({
   onCompleteReview,
   onResolveTranslationCost,
   onExport,
-  onStartHtml,
-  onResolveHtmlStyle,
-  onExportHtml,
 }: DocumentWorkbenchProps): React.JSX.Element {
   const taskId = detail.manifest.taskId
   const documentState = detail.manifest.document
@@ -437,7 +268,6 @@ export function DocumentWorkbench({
   const isX = resolvedSource === 'x-post' || resolvedSource === 'x-article'
   const originalUrl = sourceUrl(detail, matchingPage)
   const title = metadata?.sourceTitle.trim() || detail.manifest.title.trim() || DASH
-  const warnings = [...new Set([...documentState.warnings, ...(verification?.warnings ?? [])])]
   const failedStage = DOCUMENT_STAGES.find((stage) => stageState(detail, stage.id).status === 'failed')
   const runningStage = DOCUMENT_STAGES.find((stage) => stageState(detail, stage.id).status === 'running')
   const pausedStage = DOCUMENT_STAGES.find((stage) => stageState(detail, stage.id).status === 'paused')
@@ -568,17 +398,6 @@ export function DocumentWorkbench({
       <div className="workbench">
         <DocumentPipeline detail={detail} />
 
-        <DocumentHtmlPublication
-          detail={detail}
-          page={htmlPage}
-          loading={htmlLoading}
-          error={htmlError}
-          ready={verifyStage.status === 'completed'}
-          onStart={onStartHtml}
-          onResolveStyle={onResolveHtmlStyle}
-          onExport={onExportHtml}
-        />
-
         {costCheckpoint && (
           <section className="audit-checkpoint" role="region" aria-labelledby={`${tabPrefix}-cost-title`}>
             <div className="head"><Icon name="warning" /><span id={`${tabPrefix}-cost-title`}>长文翻译需要确认成本</span></div>
@@ -592,16 +411,6 @@ export function DocumentWorkbench({
               }}>{pendingAction === 'resolve-cost' ? '正在提交…' : '确认成本并开始'}</button>
             </div>
           </section>
-        )}
-
-        {!failureMessage && warnings.length > 0 && (
-          <aside className="permission-banner document-warning" role="status">
-            <Icon name="warning" />
-            <div>
-              <strong>{isX ? 'X 内容警告' : '完整性警告'}</strong>
-              <span>{warnings.length ? warnings.join('；') : DASH}</span>
-            </div>
-          </aside>
         )}
 
         {failureMessage ? (
