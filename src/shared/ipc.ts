@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationDraftSchema, BilibiliQrStateSchema, type BilibiliAccount, type BilibiliPartition, type BilibiliPublicationDraft, type BilibiliQrState } from './bilibili'
 import { DocumentProcessingModeSchema, DocumentTranslationModeSchema, ModelSelectionSchema, ProviderIdSchema, StageIdSchema, StageStatusSchema, SubtitlePresetSchema, SummaryDraftRecordSchema, SummaryImagePlanEntrySchema, TaskKindSchema, TaskManifestSchema } from './task-schema'
 import { AppSettingsSchema, ToolIdSchema, type AppSettings } from './settings-schema'
+import { SelectedModelSchema, type ProviderModelCatalog } from './model-catalog'
 import { POOL_KINDS } from './pipeline'
 
 export const ChromeCookieAccessSchema = z.enum(['granted', 'denied', 'missing'])
@@ -75,7 +76,8 @@ export const CreateUrlsSchema = z.object({
   documentMode: DocumentProcessingModeSchema.default('auto'),
   documentTranslationMode: DocumentTranslationModeSchema.exclude(['legacy-direct']).default('normal'),
   documentAudience: z.string().trim().min(1).max(200).default('general'),
-  documentWritingStyle: z.string().trim().min(1).max(200).default('storytelling')
+  documentWritingStyle: z.string().trim().min(1).max(200).default('storytelling'),
+  model: SelectedModelSchema.default({ source: 'cli-default' })
 }).superRefine((value, context) => {
   value.urls.forEach((url, index) => {
     const protocol = new URL(url).protocol
@@ -89,7 +91,8 @@ export const CreateCompanionSchema = z.object({
   taskId: z.string().uuid(),
   provider: ProviderIdSchema,
   styleNote: z.string().trim().max(1000).default(''),
-  autoPublish: z.boolean().default(false)
+  autoPublish: z.boolean().default(false),
+  model: SelectedModelSchema.default({ source: 'cli-default' })
 })
 
 export const TaskDetailSchema = z.object({ taskDirectory: z.string().min(1), manifest: TaskManifestSchema, mediaUrl: z.string().url().optional() })
@@ -483,8 +486,9 @@ export type ExportDocumentHtmlResult = z.infer<typeof ExportDocumentHtmlResultSc
 export interface EtchApi {
   bootstrap(): Promise<Bootstrap>
   queuePage(offset?: number, limit?: number): Promise<QueuePage>
-  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string, autoPublish?: boolean, kind?: z.infer<typeof TaskKindSchema>, category?: string, documentMode?: z.infer<typeof DocumentProcessingModeSchema>, documentTranslationMode?: 'normal' | 'refined', documentAudience?: string, documentWritingStyle?: string): Promise<QueuePage>
-  createCompanion(taskId: string, provider: z.infer<typeof ProviderIdSchema>, styleNote?: string, autoPublish?: boolean): Promise<TaskDetail>
+  createUrls(urls: string[], provider: z.infer<typeof CreateUrlsSchema>['provider'], styleNote?: string, autoPublish?: boolean, kind?: z.infer<typeof TaskKindSchema>, category?: string, documentMode?: z.infer<typeof DocumentProcessingModeSchema>, documentTranslationMode?: 'normal' | 'refined', documentAudience?: string, documentWritingStyle?: string, model?: z.infer<typeof SelectedModelSchema>): Promise<QueuePage>
+  createCompanion(taskId: string, provider: z.infer<typeof ProviderIdSchema>, styleNote?: string, autoPublish?: boolean, model?: z.infer<typeof SelectedModelSchema>): Promise<TaskDetail>
+  modelCatalog(provider: z.infer<typeof ProviderIdSchema>): Promise<ProviderModelCatalog>
   taskDetail(taskId: string): Promise<TaskDetail>
   taskThumbnail(taskId: string, expectedSha256: string): Promise<string | undefined>
   startTask(taskId: string): Promise<TaskDetail>

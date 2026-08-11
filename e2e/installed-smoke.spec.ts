@@ -67,8 +67,10 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
       bilibiliAccount: typeof window.etch?.bilibiliAccount,
       publishToBilibili: typeof window.etch?.publishToBilibili,
       requestChromeCookieAccess: typeof window.etch?.requestChromeCookieAccess,
+      modelCatalog: typeof window.etch?.modelCatalog,
       bootstrap: await window.etch.bootstrap(),
-      account: await window.etch.bilibiliAccount()
+      account: await window.etch.bilibiliAccount(),
+      claudeModels: await window.etch.modelCatalog('claude')
     }))
     expect(packagedApi).toMatchObject({
       createUrls: 'function',
@@ -77,14 +79,34 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
       bilibiliAccount: 'function',
       publishToBilibili: 'function',
       requestChromeCookieAccess: 'function',
-      account: { status: 'disconnected' }
+      modelCatalog: 'function',
+      account: { status: 'disconnected' },
+      claudeModels: { provider: 'claude', status: 'unsupported', entries: [] }
     })
     expect(await application.evaluate(({ Menu }) => {
       const settings = Menu.getApplicationMenu()?.getMenuItemById('settings')
       return settings ? { label: settings.label, accelerator: settings.accelerator } : undefined
     })).toEqual({ label: '设置…', accelerator: 'CommandOrControl+,' })
 
-    await window.evaluate(() => window.etch.createUrls(['https://vimeo.com/100000005'], 'codex'))
+    await window.getByRole('button', { name: '新建任务', exact: true }).click()
+    const newTaskDialog = window.getByRole('dialog', { name: '新建任务' })
+    await expect(newTaskDialog.getByLabel('模型')).toBeVisible()
+    await expect(newTaskDialog.getByLabel('模型')).toHaveValue('')
+    await newTaskDialog.getByRole('button', { name: '取消', exact: true }).click()
+
+    await window.evaluate(() => window.etch.createUrls(
+      ['https://vimeo.com/100000005'],
+      'codex',
+      '',
+      false,
+      'subtitle',
+      '',
+      'auto',
+      'normal',
+      'general',
+      'storytelling',
+      { source: 'user-entered', modelId: 'gpt-installed-smoke' }
+    ))
     await expect.poll(() => window.evaluate(() => window.etch.queuePage().then((page) => page.total))).toBe(1)
     await quitInstalled(application)
     application = undefined
@@ -97,11 +119,15 @@ test('launches the installed app with packaged preload, menu, durable IPC and cl
       const detail = await window.etch.taskDetail(queue.items[0].taskId)
       return {
         input: detail.manifest.input,
-        source: detail.manifest.pipeline.stages.source.status
+        source: detail.manifest.pipeline.stages.source.status,
+        provider: detail.manifest.translation.selectedProvider,
+        model: detail.manifest.translation.selectedModel
       }
     })).toEqual({
       input: { kind: 'url', url: 'https://vimeo.com/100000005' },
-      source: 'ready'
+      source: 'ready',
+      provider: 'codex',
+      model: { source: 'user-entered', modelId: 'gpt-installed-smoke' }
     })
   } finally {
     if (application) await quitInstalled(application)

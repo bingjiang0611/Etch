@@ -4,12 +4,15 @@ import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, DocumentHtmlPage, D
 import { IDLE_PIPELINE_ACTIVITY, InstallableToolSchema } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
 import { defaultSettings, type AppSettings, type TaskCategory, type ThemePreference, type ToolId } from '../shared/settings-schema'
-import { lastStageForKind, taskThumbnailArtifact, type DocumentProcessingMode, type ProviderId, type StageId, type TaskKind } from '../shared/task-schema'
+import { lastStageForKind, taskThumbnailArtifact, type DocumentProcessingMode, type ModelSelection, type ProviderId, type StageId, type TaskKind } from '../shared/task-schema'
 import type { GlossaryEdit } from './AuditGlossary'
 import { glossaryImpactCounts } from './glossary-impact'
 import { GlossaryCatalog } from './GlossaryCatalog'
 import { DEFAULT_PROVIDER, PROVIDER_IDS, providerAvailability, providerOrDefault } from './provider-availability'
 import { loadLastNewTaskProvider, resolveNewTaskProvider, saveLastNewTaskProvider } from './new-task-provider'
+import { loadLastNewTaskModels, modelFieldSelection, modelFieldStateFor, resolveNewTaskModel, saveLastNewTaskModel, type ModelFieldState } from './model-selection'
+import { ModelField, useModelCatalog } from './ModelField'
+import { CLI_DEFAULT_MODEL, defaultModelForProvider } from '../shared/model-catalog'
 import { detectInitialToolsWithRetry } from './tool-detection'
 import { mergeToolHealth } from './tool-health'
 import { parseTaskUrls } from './task-input'
@@ -70,6 +73,7 @@ export function App(): React.JSX.Element {
   const [styleNote, setStyleNote] = useState('')
   const [autoPublish, setAutoPublish] = useState(false)
   const [provider, setProvider] = useState<ProviderId>(DEFAULT_PROVIDER)
+  const [modelField, setModelField] = useState<ModelFieldState>(() => modelFieldStateFor(CLI_DEFAULT_MODEL))
   const [creatingTask, setCreatingTask] = useState(false)
   const [creatingCompanion, setCreatingCompanion] = useState(false)
   const [stoppingTask, setStoppingTask] = useState(false)
@@ -570,6 +574,32 @@ export function App(): React.JSX.Element {
     }))
   }, [selected?.manifest.publication.lastError])
 
+  const newTaskModelCatalog = useModelCatalog(
+    taskKind !== 'document' || documentMode !== 'convert' ? provider : undefined,
+    newTaskOpen
+  )
+  const settingsModelCatalog = useModelCatalog(providerOrDefault(settings.defaultProvider), view === 'settings')
+  const [settingsModelField, setSettingsModelField] = useState<ModelFieldState>(() => modelFieldStateFor(CLI_DEFAULT_MODEL))
+  const settingsModelSeedRef = useRef('')
+
+  useEffect(() => {
+    const seedProvider = providerOrDefault(settings.defaultProvider)
+    const seed = `${settingsLoaded ? 'loaded' : 'pending'}:${seedProvider}`
+    if (settingsModelSeedRef.current === seed) return
+    settingsModelSeedRef.current = seed
+    setSettingsModelField(modelFieldStateFor(defaultModelForProvider(settings.defaultModelByProvider, seedProvider)))
+  }, [settings.defaultProvider, settings.defaultModelByProvider, settingsLoaded])
+
+  // Model ids are provider-specific, so switching provider reloads the remembered or configured
+  // choice for that provider instead of carrying an id that the next CLI would reject.
+  const seedModelField = (nextProvider: ProviderId): void => {
+    setModelField(modelFieldStateFor(resolveNewTaskModel(
+      loadLastNewTaskModels(() => window.localStorage),
+      settings.defaultModelByProvider,
+      nextProvider
+    )))
+  }
+
   const addUrl = async (): Promise<void> => {
     if (createTaskInFlightRef.current || !url.trim()) return
     let submittedUrls: string[]
@@ -589,6 +619,13 @@ export function App(): React.JSX.Element {
     const submittedDocumentWritingStyle = documentWritingStyle
     const submittedCategory = findCategory(settings.taskCategories, newTaskCategory) ? newTaskCategory : ''
     const submittedProvider = providerOrDefault(provider)
+    const needsAgent = !(submittedKind === 'document' && submittedDocumentMode === 'convert')
+    const chosenModel = modelFieldSelection(modelField)
+    if (needsAgent && !chosenModel) {
+      setError('模型 ID 无效，请修正后再创建任务。')
+      return
+    }
+    const submittedModel = needsAgent ? chosenModel! : CLI_DEFAULT_MODEL
     createTaskInFlightRef.current = true
     setCreatingTask(true)
     try {
@@ -604,11 +641,13 @@ export function App(): React.JSX.Element {
         submittedDocumentMode,
         submittedDocumentTranslationMode,
         submittedDocumentAudience,
-        submittedDocumentWritingStyle
+        submittedDocumentWritingStyle,
+        submittedModel
       )
       commitQueuePage(next)
-      if (!(submittedKind === 'document' && submittedDocumentMode === 'convert')) {
+      if (needsAgent) {
         saveLastNewTaskProvider(() => window.localStorage, submittedProvider)
+        saveLastNewTaskModel(() => window.localStorage, submittedProvider, submittedModel)
       }
       setUrl((current) => (current === submittedUrlText ? '' : current))
       setStyleNote((current) => (current === submittedStyleNote ? '' : current))
@@ -652,18 +691,21 @@ export function App(): React.JSX.Element {
     }
   }
 
-  const createCompanion = async (provider: ProviderId, styleNote: string): Promise<void> => {
-    if (!selected || creatingCompanion) return
+  const createCompanion = async (provider: ProviderId, styleNote: string, model: ModelSelection): Promise<boolean> => {
+    if (!selected || creatingCompanion) return false
     setCreatingCompanion(true)
     setTaskActionError('')
     try {
       await ensureRecoveryReleased()
-      const detail = await window.etch.createCompanion(selected.manifest.taskId, provider, styleNote)
+      const detail = await window.etch.createCompanion(selected.manifest.taskId, provider, styleNote, false, model)
       rememberDetail(detail)
       refreshQueue()
       await openTask(detail.manifest.taskId)
+      saveLastNewTaskModel(() => window.localStorage, provider, model)
+      return true
     } catch (caught) {
       setTaskActionError(caught instanceof Error ? caught.message : '追加成果失败')
+      return false
     } finally {
       setCreatingCompanion(false)
     }
@@ -1132,7 +1174,9 @@ export function App(): React.JSX.Element {
   const openNewTask = (): void => {
     setError('')
     providerEditVersionRef.current += 1
-    setProvider(resolveNewTaskProvider(loadLastNewTaskProvider(() => window.localStorage), settings.defaultProvider, toolHealth))
+    const nextProvider = resolveNewTaskProvider(loadLastNewTaskProvider(() => window.localStorage), settings.defaultProvider, toolHealth)
+    setProvider(nextProvider)
+    seedModelField(nextProvider)
     // 停在某个分类 tab 上新建时，默认就建到这个分类。
     setNewTaskCategory(findCategory(settings.taskCategories, categoryTab) ? categoryTab : '')
     setInlineCategoryOpen(false)
@@ -2090,6 +2134,31 @@ export function App(): React.JSX.Element {
               </div>
               <div className="setting-row">
                 <span className="label">
+                  <strong>默认模型</strong>
+                  <small>{providerNames[defaultProvider]} 新任务的默认模型；切换默认 Provider 可分别配置</small>
+                </span>
+                <div className="setting-model-field">
+                  <ModelField
+                    idPrefix="settings-default"
+                    label="模型"
+                    state={settingsModelField}
+                    catalog={settingsModelCatalog.catalog}
+                    loading={settingsModelCatalog.loading}
+                    disabled={!settingsLoaded}
+                    onChange={(next) => {
+                      setSettingsModelField(next)
+                      const resolved = modelFieldSelection(next)
+                      if (!resolved) return
+                      setSettings({
+                        ...settings,
+                        defaultModelByProvider: { ...settings.defaultModelByProvider, [defaultProvider]: resolved }
+                      })
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="setting-row">
+                <span className="label">
                   <strong>允许队列领取新阶段</strong>
                   <small>关闭后，当前原子步骤完成即停在下一阶段前</small>
                 </span>
@@ -2424,7 +2493,9 @@ export function App(): React.JSX.Element {
                   disabled={creatingTask || !taskNeedsAgent}
                   onChange={(event) => {
                     providerEditVersionRef.current += 1
-                    setProvider(event.target.value as ProviderId)
+                    const nextProvider = event.target.value as ProviderId
+                    setProvider(nextProvider)
+                    seedModelField(nextProvider)
                   }}
                 >
                   {!taskNeedsAgent
@@ -2436,6 +2507,16 @@ export function App(): React.JSX.Element {
                 </select>
               </label>
             </div>
+            <ModelField
+              idPrefix="new-task"
+              label="模型"
+              state={modelField}
+              catalog={newTaskModelCatalog.catalog}
+              loading={newTaskModelCatalog.loading}
+              disabled={creatingTask}
+              inactive={!taskNeedsAgent}
+              onChange={setModelField}
+            />
             <div className="new-task-field">
               <label htmlFor="task-category">分类 <small>选填 · 后续可修改</small></label>
               <div className="category-select-row">
@@ -2552,7 +2633,7 @@ export function App(): React.JSX.Element {
             {error && <p className="form-error new-task-error" role="alert">{error}</p>}
             <div className="new-task-action-buttons">
               <button className="secondary-button" type="button" disabled={creatingTask} onClick={closeNewTask}>取消</button>
-              <button className="primary-button" type="submit" disabled={!url.trim() || creatingTask || (taskNeedsAgent && !selectedProviderAvailability.available)}>
+              <button className="primary-button" type="submit" disabled={!url.trim() || creatingTask || (taskNeedsAgent && (!selectedProviderAvailability.available || !modelFieldSelection(modelField)))}>
                 {creatingTask
                   ? `正在创建${enteredUrlCount > 1 ? ` ${enteredUrlCount} 个任务` : '任务'}…`
                   : settings.queuePaused

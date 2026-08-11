@@ -3,11 +3,14 @@ import type { BilibiliAccount } from '../shared/bilibili'
 import type { GlossaryApplyResult, GlossaryImpactPreview, ChromeCookieAccess, PipelineActivity, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
 import { POOL_BY_STAGE, POOL_LABELS, STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
-import { SHARED_STAGE_IDS, lastStageForKind, taskInputName, type ProviderId, type StageId } from '../shared/task-schema'
+import { SHARED_STAGE_IDS, lastStageForKind, taskInputName, type ModelSelection, type ProviderId, type StageId } from '../shared/task-schema'
 import { AuditGlossary, type GlossaryEdit } from './AuditGlossary'
 import { IllustrationCheckpointEditor, SummaryDraftsPanel, SummaryPanel, useSummaryPage } from './SummaryPanel'
 import { recoveredToolForStageFailure } from './tool-health'
 import { DEFAULT_PROVIDER, PROVIDER_IDS, providerAvailability } from './provider-availability'
+import { CLI_DEFAULT_MODEL } from '../shared/model-catalog'
+import { loadLastNewTaskModels, modelFieldSelection, modelFieldStateFor, resolveNewTaskModel, type ModelFieldState } from './model-selection'
+import { ModelField, useModelCatalog } from './ModelField'
 import {
   Icon,
   PresetDemo,
@@ -77,7 +80,7 @@ interface WorkbenchViewProps {
   videoRef: RefObject<HTMLVideoElement | null>
   onBack: () => void
   onOpenOutput: (taskId: string) => Promise<void>
-  onCreateCompanion: (provider: ProviderId, styleNote: string) => Promise<void>
+  onCreateCompanion: (provider: ProviderId, styleNote: string, model: ModelSelection) => Promise<boolean>
   onStart: () => Promise<void>
   onStop: () => Promise<void>
   onOpenPermissionGuide: () => void
@@ -361,6 +364,8 @@ export function WorkbenchView({
   const [activeCueId, setActiveCueId] = useState<number>()
   const [companionOpen, setCompanionOpen] = useState(false)
   const [companionProvider, setCompanionProvider] = useState<ProviderId>(DEFAULT_PROVIDER)
+  const [companionModelField, setCompanionModelField] = useState<ModelFieldState>(() => modelFieldStateFor(CLI_DEFAULT_MODEL))
+  const companionModelCatalog = useModelCatalog(companionProvider, companionOpen)
   const [companionStyleNote, setCompanionStyleNote] = useState('')
   const companionDialogRef = useRef<HTMLDialogElement>(null)
   const guidedReviewCheckpointRef = useRef<string | undefined>(undefined)
@@ -495,6 +500,15 @@ export function WorkbenchView({
     if (companionOpen && !dialog.open) dialog.showModal()
     else if (!companionOpen && dialog.open) dialog.close()
   }, [companionOpen])
+
+  useEffect(() => {
+    if (!companionOpen) return
+    setCompanionModelField(modelFieldStateFor(resolveNewTaskModel(
+      loadLastNewTaskModels(() => window.localStorage),
+      settings.defaultModelByProvider,
+      companionProvider
+    )))
+  }, [companionOpen, companionProvider, settings.defaultModelByProvider])
 
   useEffect(() => {
     if (!reviewCheckpointKey || reviewPage?.availability !== 'ready' || guidedReviewCheckpointRef.current === reviewCheckpointKey) return
@@ -1150,7 +1164,11 @@ export function WorkbenchView({
           onSubmit={(event) => {
             event.preventDefault()
             if (creatingCompanion || !providerAvailability(companionProvider, toolHealth).available) return
-            void onCreateCompanion(companionProvider, companionStyleNote).then(() => setCompanionOpen(false))
+            const model = modelFieldSelection(companionModelField)
+            if (!model) return
+            void onCreateCompanion(companionProvider, companionStyleNote, model).then((created) => {
+              if (created) setCompanionOpen(false)
+            })
           }}
         >
           <header className="new-task-heading">
@@ -1175,6 +1193,15 @@ export function WorkbenchView({
               })}
             </select>
           </label>
+          <ModelField
+            idPrefix="companion"
+            label="模型"
+            state={companionModelField}
+            catalog={companionModelCatalog.catalog}
+            loading={companionModelCatalog.loading}
+            disabled={creatingCompanion}
+            onChange={setCompanionModelField}
+          />
           <label className="new-task-field" htmlFor="companion-style-note">
             <span>{companionKind === 'summary' ? '总结要求' : '翻译风格'} <small>选填</small></span>
             <textarea
@@ -1189,7 +1216,7 @@ export function WorkbenchView({
           </label>
           <footer className="new-task-actions">
             <button className="secondary-button" type="button" disabled={creatingCompanion} onClick={() => setCompanionOpen(false)}>取消</button>
-            <button className="primary-button" type="submit" disabled={creatingCompanion || !providerAvailability(companionProvider, toolHealth).available}>
+            <button className="primary-button" type="submit" disabled={creatingCompanion || !providerAvailability(companionProvider, toolHealth).available || !modelFieldSelection(companionModelField)}>
               {creatingCompanion ? '正在复用底稿…' : settings.queuePaused ? `加入暂停队列 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步` : `开始处理 · 只跑 ${companionKind === 'summary' ? 4 : 6} 步`}
             </button>
           </footer>

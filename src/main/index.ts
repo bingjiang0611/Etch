@@ -23,7 +23,9 @@ import {
   operationalEnvironment,
   providerEnvironment
 } from './runtime/shell-env'
-import { detectTool } from './runtime/tool-detector'
+import { detectTool, resolveToolExecutable } from './runtime/tool-detector'
+import { ModelCatalogCache, probeModelCatalog, providerSupportsModelListing } from './runtime/model-catalog'
+import { ModelCatalogPayloadSchema, ProviderModelCatalogSchema } from '../shared/model-catalog'
 import { toolInstallScript } from './runtime/tool-install'
 import { moveTaskToTrash, removeTaskRecord, revealTaskInFinder, type DeleteCleanupWarning } from './task-deletion'
 import { TaskReviewService } from './task-review'
@@ -57,6 +59,7 @@ const TOOL_PROVIDER: Partial<Record<ToolId, ProviderId>> = {
   qoder: 'qoder',
   opencode: 'opencode'
 }
+const modelCatalogCache = new ModelCatalogCache()
 let recoveryHold = false
 let publisherActive = false
 let interruptedTasks = 0
@@ -999,6 +1002,19 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     }))
     return results.map((health) => ToolHealthSnapshotSchema.parse(health))
   })
+  ipcMain.handle('models:catalog', async (_event, raw) => {
+    const { provider } = ModelCatalogPayloadSchema.parse(raw)
+    const override = settings.toolOverrides[provider]
+    const catalog = await modelCatalogCache.read(provider, `${override ?? ''}`, async () => {
+      if (!providerSupportsModelListing(provider)) return probeModelCatalog(provider, undefined, {})
+      const full = await loginShellEnvironment(process.env, runAppScopedExternal)
+      const env = providerEnvironment(provider, full)
+      logChildEnvironmentKeys(`model-catalog:${provider}`, env)
+      const executable = await resolveToolExecutable(provider, env, override)
+      return probeModelCatalog(provider, executable, env, runAppScopedExternal)
+    })
+    return ProviderModelCatalogSchema.parse(catalog)
+  })
   ipcMain.handle('tools:install', async (_event, raw) => {
     const { tool } = ToolInstallPayloadSchema.parse(raw)
     const brew = await resolveHomebrew()
@@ -1116,7 +1132,8 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
         payload.documentMode,
         payload.documentTranslationMode,
         payload.documentAudience,
-        payload.documentWritingStyle
+        payload.documentWritingStyle,
+        documentProvider ? payload.model : { source: 'cli-default' }
       )
       const safeTitle = 'pending'
       const taskDirectory = join(settings.workspaceRoot, `${safeTitle}--${manifest.taskId.slice(0, 8)}`)

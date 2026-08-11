@@ -586,7 +586,8 @@ export function createTaskManifest(
   documentMode: DocumentProcessingMode = 'auto',
   documentTranslationMode: Exclude<DocumentTranslationMode, 'legacy-direct'> = 'normal',
   documentAudience = 'general',
-  documentWritingStyle = 'storytelling'
+  documentWritingStyle = 'storytelling',
+  model: ModelSelection = { source: 'cli-default' }
 ): TaskManifest {
   const now = new Date().toISOString()
   const parsedInput = TaskInputSchema.parse(input)
@@ -608,7 +609,7 @@ export function createTaskManifest(
     updatedAt: now,
     pipeline: { stages },
     artifacts: {},
-    translation: { styleNote, selectedProvider: provider, selectedModel: { source: 'cli-default' }, sessionGenerations: [], batches: [] },
+    translation: { styleNote, selectedProvider: provider, selectedModel: provider ? model : { source: 'cli-default' }, sessionGenerations: [], batches: [] },
     runtime: { currentMessage: '等待开始', userPaused: false },
     publication: { autoPublish: kind === 'subtitle' ? autoPublish : false, status: 'idle', attempt: 0 },
     video: DEFAULT_VIDEO_WORKFLOW_STATE,

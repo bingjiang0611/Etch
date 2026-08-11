@@ -4,10 +4,11 @@ import type { EtchApi } from '../shared/ipc'
 const api: EtchApi = {
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   queuePage: (offset = 0, limit = 100) => ipcRenderer.invoke('queue:page', { offset, limit }),
-  createUrls: (urls, provider, styleNote = '', autoPublish = false, kind = 'subtitle', category = '', documentMode = 'auto', documentTranslationMode = 'normal', documentAudience = 'general', documentWritingStyle = 'storytelling') => ipcRenderer.invoke('task:create-urls', {
-    urls, provider, styleNote, autoPublish, kind, category, documentMode, documentTranslationMode, documentAudience, documentWritingStyle
+  createUrls: (urls, provider, styleNote = '', autoPublish = false, kind = 'subtitle', category = '', documentMode = 'auto', documentTranslationMode = 'normal', documentAudience = 'general', documentWritingStyle = 'storytelling', model = { source: 'cli-default' }) => ipcRenderer.invoke('task:create-urls', {
+    urls, provider, styleNote, autoPublish, kind, category, documentMode, documentTranslationMode, documentAudience, documentWritingStyle, model
   }),
-  createCompanion: (taskId, provider, styleNote = '', autoPublish = false) => ipcRenderer.invoke('task:create-companion', { taskId, provider, styleNote, autoPublish }),
+  createCompanion: (taskId, provider, styleNote = '', autoPublish = false, model = { source: 'cli-default' }) => ipcRenderer.invoke('task:create-companion', { taskId, provider, styleNote, autoPublish, model }),
+  modelCatalog: (provider) => ipcRenderer.invoke('models:catalog', { provider }),
   taskDetail: (taskId) => ipcRenderer.invoke('task:detail', { taskId }),
   taskThumbnail: (taskId, expectedSha256) => ipcRenderer.invoke('task:thumbnail', { taskId, expectedSha256 }),
   startTask: (taskId) => ipcRenderer.invoke('task:start', { taskId }),

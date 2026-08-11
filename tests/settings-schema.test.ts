@@ -19,6 +19,22 @@ describe('settings schema', () => {
     expect(AppSettingsSchema.parse(legacy).theme).toBe('system')
   })
 
+  it('defaults a missing per-provider default model map to an empty object', () => {
+    const legacy = { ...defaultSettings('/Users/test') } as Partial<ReturnType<typeof defaultSettings>>
+    delete legacy.defaultModelByProvider
+    expect(AppSettingsSchema.parse(legacy).defaultModelByProvider).toEqual({})
+  })
+
+  it('keeps a per-provider default model and rejects an unknown provider key', () => {
+    const base = defaultSettings('/Users/test')
+    const parsed = AppSettingsSchema.parse({
+      ...base,
+      defaultModelByProvider: { qoder: { source: 'discovered', modelId: 'Auto' } }
+    })
+    expect(parsed.defaultModelByProvider.qoder).toEqual({ source: 'discovered', modelId: 'Auto' })
+    expect(() => AppSettingsSchema.parse({ ...base, defaultModelByProvider: { gemini: { source: 'cli-default' } } })).toThrow()
+  })
+
   it('keeps an explicit theme preference and rejects unknown values', () => {
     const base = defaultSettings('/Users/test')
     expect(AppSettingsSchema.parse({ ...base, theme: 'light' }).theme).toBe('light')

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import {
   SHARED_STAGE_IDS,
   createTaskManifest,
+  type ModelSelection,
   type ProviderId,
   type TaskKind,
   type TaskManifest
@@ -23,6 +24,7 @@ export interface CompanionTaskOptions {
   provider: ProviderId
   styleNote?: string
   autoPublish?: boolean
+  model?: ModelSelection
   targetTaskId?: string
 }
 
@@ -73,7 +75,12 @@ export async function createCompanionManifest(
     source.render.subtitlePreset,
     options.autoPublish ?? false,
     targetKind,
-    source.category
+    source.category,
+    'auto',
+    'normal',
+    'general',
+    'storytelling',
+    options.model ?? { source: 'cli-default' }
   )
   if (options.targetTaskId) target.taskId = options.targetTaskId
   target.lineage = {

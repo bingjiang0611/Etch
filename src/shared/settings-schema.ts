@@ -31,7 +31,7 @@ export const AppSettingsSchema = z.object({
   preventSleep: z.boolean(),
   notifications: z.object({ completion: z.boolean(), failure: z.boolean(), checkpoint: z.boolean() }),
   defaultProvider: ProviderIdSchema.optional(),
-  defaultModelByProvider: z.partialRecord(ProviderIdSchema, ModelSelectionSchema),
+  defaultModelByProvider: z.partialRecord(ProviderIdSchema, ModelSelectionSchema).default({}),
   toolOverrides: z.partialRecord(ToolIdSchema, z.string().min(1)),
   subtitlePreset: SubtitlePresetSchema,
   theme: ThemePreferenceSchema.default('system'),

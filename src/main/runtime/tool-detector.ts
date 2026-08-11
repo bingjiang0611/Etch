@@ -90,6 +90,43 @@ async function executablesFromPath(name: string, env: NodeJS.ProcessEnv): Promis
   return found
 }
 
+async function discoveredCandidates(tool: ToolId, env: NodeJS.ProcessEnv): Promise<string[]> {
+  const candidates: string[] = []
+  const fullBuilds = tool === 'ffmpeg' || tool === 'ffprobe'
+    ? [env.HOMEBREW_PREFIX, '/opt/homebrew', '/usr/local']
+      .filter((prefix): prefix is string => typeof prefix === 'string' && isAbsolute(prefix))
+      .map((prefix) => join(prefix, 'opt/ffmpeg-full/bin', tool))
+    : []
+  for (const fallback of new Set(fullBuilds)) {
+    try { await access(fallback, constants.X_OK); candidates.push(fallback) } catch { /* keep searching */ }
+  }
+  for (const name of COMMANDS[tool].names) {
+    candidates.push(...await executablesFromPath(name, env))
+  }
+  for (const fallback of FALLBACKS[tool] ?? []) {
+    try { await access(fallback, constants.X_OK); candidates.push(fallback) } catch { /* keep searching */ }
+  }
+  return candidates
+}
+
+// Path-only resolution for probes that must not pay detectTool's version + login spawns.
+export async function resolveToolExecutable(
+  tool: ToolId,
+  env: NodeJS.ProcessEnv,
+  override?: string
+): Promise<string | undefined> {
+  const candidates = override
+    ? (isAbsolute(override) ? [override] : [])
+    : await discoveredCandidates(tool, env)
+  for (const candidate of new Set(candidates)) {
+    try {
+      await access(candidate, constants.X_OK)
+      return await realpath(candidate)
+    } catch { /* keep searching */ }
+  }
+  return undefined
+}
+
 export async function detectTool(
   tool: ToolId,
   env: NodeJS.ProcessEnv,
@@ -108,20 +145,7 @@ export async function detectTool(
     if (!isAbsolute(override)) return { tool, status: 'invalid', summaryZh: '手动路径必须是绝对路径', checkedAt }
     candidates.push(override)
   } else {
-    const fullBuilds = tool === 'ffmpeg' || tool === 'ffprobe'
-      ? [env.HOMEBREW_PREFIX, '/opt/homebrew', '/usr/local']
-        .filter((prefix): prefix is string => typeof prefix === 'string' && isAbsolute(prefix))
-        .map((prefix) => join(prefix, 'opt/ffmpeg-full/bin', tool))
-      : []
-    for (const fallback of new Set(fullBuilds)) {
-      try { await access(fallback, constants.X_OK); candidates.push(fallback) } catch { /* keep searching */ }
-    }
-    for (const name of COMMANDS[tool].names) {
-      candidates.push(...await executablesFromPath(name, env))
-    }
-    for (const fallback of FALLBACKS[tool] ?? []) {
-      try { await access(fallback, constants.X_OK); candidates.push(fallback) } catch { /* keep searching */ }
-    }
+    candidates.push(...await discoveredCandidates(tool, env))
   }
   if (!candidates.length) return { tool, status: 'missing', summaryZh: `未找到 ${tool}`, checkedAt }
   let failure: ToolHealth | undefined

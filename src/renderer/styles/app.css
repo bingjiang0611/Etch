@@ -895,6 +895,7 @@ nav { display: grid; gap: 3px; -webkit-app-region: no-drag; }
 .settings-card > h2 { margin: 0; }
 .setting-row { display: grid; grid-template-columns: 200px minmax(0, 1fr); align-items: center; gap: 16px; }
 .setting-row > .label { display: grid; gap: 2px; }
+.setting-model-field { display: grid; gap: 9px; }
 .setting-row .label strong { color: var(--fg-soft); font-size: 12px; font-weight: 550; }
 .setting-row .label small { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .settings-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }

@@ -85,6 +85,29 @@ describe('追加成果共享底稿', () => {
     expect(source.manifest.lineage).toEqual({ rootTaskId: source.manifest.taskId })
   })
 
+  it('追加成果使用本次选定的模型，而不是沿用 CLI 默认', async () => {
+    const source = await completedSharedTask('subtitle')
+    const targetDirectory = await mkdtemp(join(tmpdir(), 'etch-companion-model-'))
+    directories.push(targetDirectory)
+
+    const target = await createCompanionManifest(source.directory, targetDirectory, source.manifest, {
+      provider: 'qoder',
+      model: { source: 'discovered', modelId: 'Auto' }
+    })
+
+    expect(target.translation.selectedModel).toEqual({ source: 'discovered', modelId: 'Auto' })
+  })
+
+  it('未选模型时追加成果回落到 CLI 默认', async () => {
+    const source = await completedSharedTask('subtitle')
+    const targetDirectory = await mkdtemp(join(tmpdir(), 'etch-companion-model-default-'))
+    directories.push(targetDirectory)
+
+    const target = await createCompanionManifest(source.directory, targetDirectory, source.manifest, { provider: 'qoder' })
+
+    expect(target.translation.selectedModel).toEqual({ source: 'cli-default' })
+  })
+
   it('共享阶段未完成时拒绝追加，不制造半成品目录', async () => {
     const source = await completedSharedTask('subtitle')
     source.manifest.pipeline.stages.cues.status = 'checkpoint'
