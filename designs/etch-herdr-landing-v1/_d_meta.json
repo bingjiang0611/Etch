@@ -3,13 +3,13 @@
   "designSystems": [],
   "primaryDesignSystem": null,
   "assets": {
-    "Etch 官网 V1 · 可操作原型": {
+    "Etch 官网 V2 · 高还原可操作原型": {
       "versions": [
         {
           "path": "index.html",
           "createdAt": "2026-08-11T07:31:36.449Z",
           "status": "needs-review",
-          "subtitle": "首屏定位 + 三类真实任务可切换工作台 + 完成动作与官网真实信息 CTA",
+          "subtitle": "首屏内嵌当前 Etch 高还原壳层 + 真实任务队列路径 + 三类可操作工作台；无页面截图",
           "viewport": {
             "width": 1440,
             "height": 900
@@ -19,5 +19,5 @@
     }
   },
   "createdAt": "2026-08-11T07:31:36.450Z",
-  "updatedAt": "2026-08-11T07:46:24.897Z"
+  "updatedAt": "2026-08-11T08:44:38.564Z"
 }

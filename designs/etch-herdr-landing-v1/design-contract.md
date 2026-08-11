@@ -1,8 +1,10 @@
-# Etch 官网 V1 原型 · 设计合同
+# Etch 官网 V2 原型 · 设计合同
 
 状态：高保真可点原型，未进入正式实现，未部署。
 交付位置：`designs/etch-herdr-landing-v1/`
-预览：`python3 -m http.server 4312 --directory designs` → <http://localhost:4312/etch-herdr-landing-v1/index.html>
+预览：`python3 -m http.server 4313 --directory designs` → <http://localhost:4313/etch-herdr-landing-v1/index.html>
+
+V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐屏核对了新建任务弹窗、任务队列、网页翻译工作台和双语字幕工作台；原型不再引用任何 App 页面截图。
 
 本文件记录三件事：**哪些是假设**、**每个字段映射到哪段真实源码**、**从 herdr.dev 借了什么又没借什么**。
 
@@ -30,7 +32,7 @@
 | A3 | 原型里的任务标题、URL、cue 正文、长文段落、术语表是**示例数据** | 页面上以「这是原型，不是真实 App」+「正文是标注过的示例数据」显式标注；`示例任务 ·` 前缀、`EXAMPLE-ID`、`example.com` 都是可辨识占位符。 |
 | A4 | 示例 cue 主题选「注意力头」 | 不是凭空编的：`src/renderer/ui.tsx` 的 `PresetDemo` 组件内置的演示 cue 就是 `attention head / 注意力头`。示例句子不署名任何讲者。 |
 | A5 | 落地页叙述文本用 SF Pro 栈，App 区域用 Menlo 栈 | 真实 App 现在整体等宽（`app.css --font-nib: Menlo, "PingFang SC", monospace`），官网正文用 `-apple-system / SF Pro Text / PingFang SC`。两者都是真实来源，原型按「App 区 = App 字体，叙述区 = 官网字体」分工。**未使用 Inter。** |
-| A6 | 三类任务各停在一个不同的真实状态 | 为了让一次切换就看出流水线差异：字幕停在 `review` checkpoint、总结停在 `illustrate` checkpoint、文档全部完成并进入「发布为网页」checkpoint。三者都是 schema 允许的合法状态组合。 |
+| A6 | 三类任务各停在一个不同的真实状态 | 字幕停在 `review` checkpoint、总结停在 `illustrate` checkpoint、文档停在 `review` checkpoint；文档完成校对后才进入完整性验证与 HTML 四方向预览。三者都是 schema 允许的合法状态组合。 |
 
 ### 明确没有做的事（禁编造清单）
 
@@ -142,42 +144,44 @@
 `--bg #0b0d10 · --surface #111419 · --line #252b33 · --fg #e8eaed · --muted #88919d · --accent/--blue-strong #438cf5 · --blue #6ba6ff · --focus #94bdff · --ok #6cc79a · --run #7fb2ff · --warn #e0b872 · --danger #e49a9a` 等。
 缓动 `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`、按钮尺寸（`min-height 34px`、`border-radius 7px/6px`）、`rail-dot 28px`、`mini-bar 120×3px` 也 1:1 沿用。
 
-真实素材（已复制进 `assets/`，页面只引用本目录，产物自包含）：
-- `assets/workbench.png` ← `website/assets/workbench.png`
-- `assets/bilibili-publish.png` ← `website/assets/bilibili-publish.png`
-- `assets/favicon.svg` ← `website/favicon.svg`
+V2 额外按实机锁定的壳层：
+- 1214 × 768 参考窗口比例；桌面宽度下左侧栏约 196px，对应真实 App 的 218px 源码列宽按预览窗口缩放后的比例。
+- 固定左栏是 `Etch / 任务队列 / 统一术语表 / 环境 9/9 可用 / arm64 · v0.2.18`，不再把三类任务做成 App 外的营销标签页。
+- 字幕工作台按实机还原为「任务头部 → 人工校对 checkpoint → 折叠流水线 → 左侧视频控制区 + 右侧工作台面板」。
+- 网页工作台按实机还原为「任务头部 → 展开流水线 → 发布为网页 → X 内容警告 → 双栏 Markdown 校对 → 底部校对 checkpoint」。
+
+页面唯一图片素材是品牌图标：`assets/favicon.svg` ← `website/favicon.svg`。工作台、任务队列与 B站内容均为 HTML/CSS 组件，不引用真实页面截图。
 
 ---
 
 ## 4. 交互清单
 
-主交互：**任务类型切换**。每次切换同步改变 5 处——
-① 任务身份（Provider tag / 标题 / 来源 URL）；② 阶段流水线（阶段数、名称、状态、并发池）；
-③ 主工作区（面板集合与内容）；④ 状态（`currentMessage`、状态栏、进度条、checkpoint 提示）；⑤ 主/次操作按钮与禁用态。
+主交互改为真实 Etch 路径：**左侧任务队列 → 选择任务卡 → 进入对应工作台**。每次选择同步改变任务身份、流水线、工作区、checkpoint 与操作按钮；不再使用 App 外的任务类型标签页。
 
 | # | 交互 | 位置 | 结果 | 层级 |
 |---|---|---|---|---|
-| 1 | 任务类型 tab ×3 | `role="tablist"` | 整个工作台重渲染 | 主 |
-| 2 | 成果切换 字幕 ⇄ 总结 | `wb-output-tabs` | 切类型并滚动回原型（真实 `onOpenOutput`） | 二级 |
-| 3 | 流水线折叠/展开 | 原生 `<details>` | 收起阶段详情，保留摘要进度 | 二级 |
-| 4 | 点任意阶段节点 | 阶段轨 | 展开该阶段的 id / status / 并发池详情，再点收起 | 二级 |
-| 5 | 工作台标签页 | `tp-tabs` | 字幕 4 页 / 总结 3 页 / 文档 3 页 | 二级 |
-| 6 | 点 cue 行 | 校对页 | 当前行高亮迁移（`is-current`） | 二级 |
-| 7 | 上一页 / 下一页 | 分页 | 换一批 cue，区间从 `1–100` 到 `101–200 / 412`，首页时上一页禁用 | 二级 |
-| 8 | `1 核对术语` / `2 核对译文` | checkpoint 步骤 | 切到术语表 / 校对页（真实 `setWorkspaceTab`） | 二级 |
-| 9 | HTML 风格方向 A/B/C/D | `role="radiogroup"` | 选中态 + `templateId` + 生成按钮文案同步 | 二级 |
-| 10 | `完成校对并继续` | 字幕工作台主操作 | 演示 `review → srt → burn → verify` 完成，并显示 `bilingual.srt` / 成片验证结果 | 二级 |
-| 11 | `生成 HTML` | 网页发布工作流 | 演示生成 `translation.html`，显示所选模板与桌面/移动端验收结果 | 二级 |
-| 12 | 返回 / 打开原网页 / 导出 Markdown | 工作台次操作 | 显示明确的原型反馈，不执行导航、下载或其他外部副作用 | 辅助 |
+| 1 | 左侧 `任务队列` | Etch 主导航 | 从任意工作台回到三张示例任务卡 | 主 |
+| 2 | 字幕 / 总结 / 网页任务卡 | 真实队列卡片结构 | 进入对应工作台 | 主 |
+| 3 | 左侧 `统一术语表` | Etch 主导航 | 展示跨任务术语表 | 主 |
+| 4 | 流水线折叠/展开 | 原生 `<details>` | 收起阶段详情，保留摘要进度 | 二级 |
+| 5 | 点任意阶段节点 | 阶段轨 | 展开该阶段的 id / status / 并发池详情，再点收起 | 二级 |
+| 6 | 视频播放 / 前后 5 秒 / 倍速 / 预览模式 | 字幕与总结视频区 | 更新播放反馈，不读取真实媒体 | 二级 |
+| 7 | 工作台标签页 | `tp-tabs` | 字幕 4 页 / 总结 3 页 / 文档 3 页 | 二级 |
+| 8 | 点 cue 行与分页 | 校对页 | 当前行高亮、区间从 `1–100` 到 `101–200 / 412` | 二级 |
+| 9 | `1 核对术语` / `2 核对译文` | checkpoint 步骤 | 切到术语表 / 校对页 | 二级 |
+| 10 | 文档 `完成校对` | 双栏校对底部 | `review → verify` 完成，并解锁导出 Markdown 与 HTML 四方向预览 | 二级 |
+| 11 | HTML 风格方向 A/B/C/D + 生成 | 网页发布工作流 | 生成 `translation.html` 并显示模板与验收结果 | 二级 |
+| 12 | 字幕 `完成校对并继续` | 字幕工作台主操作 | 演示 `review → srt → burn → verify` 完成 | 二级 |
+| 13 | 返回 / 打开原网页 / 导出 / 新建任务 | 辅助操作 | 显示明确原型反馈，不执行真实外部副作用 | 辅助 |
 
 状态与可达性：
 - **hover**：只在 `@media (hover:hover) and (pointer:fine)` 生效，避免触屏残留。
 - **focus**：全局 `:focus-visible` 2px `--focus` 描边，offset 3px。
 - **pressed**：`:active` 用 `scale(.975)`（与 `app.css` 按钮一致）/ `.99` 卡片。
 - **禁用**：`opacity .42`（`app.css` 取值），且真的加 `disabled`。
-- **键盘**：任务类型、工作台标签页、风格方向都是 roving tabindex + 方向键 / Home / End；`<details>` 与所有按钮原生可聚焦；文档双栏 `tabindex="0"` 可键盘滚动；首个元素是跳到正文的 skip link。
+- **键盘**：工作台标签页、风格方向都是 roving tabindex + 方向键 / Home / End；任务队列、左侧导航、`<details>` 与所有按钮原生可聚焦；文档双栏 `tabindex="0"` 可键盘滚动；首个元素是跳到正文的 skip link。
 - **reduced motion**：`prefers-reduced-motion: reduce` 下关闭平滑滚动并把动画/过渡压到 0.01ms。
-- **390px**：任务类型改单列、cue 双栏改单列、阶段轨在容器内横向滚动、流水线摘要换行、信息网格改单列；实测横向溢出 0px。
+- **390px**：左侧栏收窄为图标轨、任务卡改单列、视频与工作台上下排列、cue 双栏改单列、阶段轨在容器内横向滚动、信息网格改单列。
 
 安全说明：原型用 `innerHTML` 渲染，所有插值都过 `esc()`；数据全是本文件内的作者常量，无用户输入、无网络请求、无 storage 读取。CSP 为 `script-src 'self'`。
 
@@ -189,9 +193,9 @@
 
 ### 借了（结构性）
 
-1. **可操作 demo 直接嵌在首屏之下**，作为页面主体，而不是放截图或视频。
+1. **可操作 demo 直接嵌在首屏内**，页面初次打开即可看到真实 Etch 窗口，而不是放截图或视频。
 2. **demo 自带小标题**，与其他 section 同级。
-3. **左侧/顶部选择器切换场景，主面板整体重渲染**——herdr 是 spaces → agents → tabs 两级导航；本原型是 任务类型 → 成果 → 工作台标签页。
+3. **左侧导航切换场景，主面板整体重渲染**——herdr 是 spaces → agents → tabs；本原型是任务队列 → 工作台 → 面板标签。
 4. **demo 之后接编号能力段落**（herdr 五段 → 本页三类任务 + 四条原则）。
 5. **底部重复同一个主 CTA**。
 

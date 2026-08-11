@@ -42,75 +42,58 @@
 <span id="top"></span>
 <main id="main">
 
-  <!-- ============ 首屏 ============ -->
-  <section class="hero">
+  <!-- ============ 首屏 + 高保真 Etch 原型 ============ -->
+  <section class="hero hero-product" id="prototype" data-screen-label="Etch 官网 V2 · 高还原可操作原型">
     <div class="wrap">
-      <span class="eyebrow">公开版 v0.2.18 · 本地视频与网页内容工作站</span>
-      <h1><span>把视频和网页，</span><span>刻成能交付的中文成果。</span></h1>
-      <p class="lede">Etch 是一个跑在你自己 Mac 上的桌面工作站。<b>双语硬字幕、视频总结、网页翻译</b>三类任务共用一条按阶段保存进度的流水线，中断之后从已确认的地方继续。</p>
-      <div class="hero-cta">
-        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.18/Etch-0.2.18-arm64.dmg">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
-          下载 v0.2.18
-        </a>
-        <a class="ghost" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener">查看 GitHub 源码</a>
+      <div class="hero-copy">
+        <div class="hero-statement">
+          <span class="eyebrow">公开版 v0.2.18 · 本地视频与网页内容工作站</span>
+          <h1><span>把视频和网页，</span><span>刻成能交付的中文成果。</span></h1>
+        </div>
+        <div class="hero-support">
+          <p class="lede">Etch 是一个跑在你自己 Mac 上的桌面工作站。<b>双语硬字幕、视频总结、网页翻译</b>三类任务共用一条按阶段保存进度的流水线，中断之后从已确认的地方继续。</p>
+          <div class="hero-cta">
+            <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.18/Etch-0.2.18-arm64.dmg">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
+              下载 v0.2.18
+            </a>
+            <a class="ghost" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener">查看 GitHub 源码</a>
+          </div>
+          <p class="release-note">公开版 0.2.18 · Apple Silicon · macOS 13.5+ · 仅支持 HTTP(S) URL · 暂不支持本地文件导入 · Apple Development 签名，未经公证</p>
+        </div>
       </div>
-      <p class="release-note">公开版 0.2.18 · Apple Silicon · macOS 13.5+ · 仅支持 HTTP(S) URL · 暂不支持本地文件导入 · Apple Development 签名，未经公证</p>
-    </div>
-  </section>
 
-  <!-- ============ 交互原型 ============ -->
-  <section class="band alt" id="prototype" data-screen-label="Etch 官网 V1 · 可操作原型">
-    <div class="wrap">
-      <div class="proto-head">
+      <div class="prototype-intro">
         <div>
-          <span class="eyebrow">可操作原型</span>
-          <h2>三类任务，走的是三条不同的流水线。</h2>
+          <span class="eyebrow">可操作产品原型</span>
+          <h2>不是截图。直接点进 Etch 的工作台。</h2>
         </div>
-        <p class="proto-note"><strong>这是原型，不是真实 App。</strong>阶段名、状态、并发池、评分维度与风格方向都取自 Etch 源码；正文是标注过的示例数据。</p>
+        <p><strong>默认还原当前网页翻译工作台。</strong>点击左侧“任务队列”可进入三类示例任务；阶段名、状态与交互均来自 Etch 源码。</p>
       </div>
 
-      <div class="kind-switch" role="tablist" aria-label="切换任务类型">
-        <button class="kind-tab" type="button" role="tab" data-kind="subtitle" aria-selected="true" aria-controls="proto-app">
-          <span class="kt-top"><span class="kt-mark">译</span><strong>双语硬字幕</strong></span>
-          <small>视频 · 10 阶段 · bilingual.srt / final.mp4</small>
-        </button>
-        <button class="kind-tab" type="button" role="tab" data-kind="summary" aria-selected="false" aria-controls="proto-app" tabindex="-1">
-          <span class="kt-top"><span class="kt-mark">总</span><strong>视频总结</strong></span>
-          <small>视频 · 8 阶段 · summary.md / images/</small>
-        </button>
-        <button class="kind-tab" type="button" role="tab" data-kind="document" aria-selected="false" aria-controls="proto-app" tabindex="-1">
-          <span class="kt-top"><span class="kt-mark">网</span><strong>网页翻译</strong></span>
-          <small>网页 · 5 阶段 · translation.md / translation.html</small>
-        </button>
-      </div>
-
-      <div class="app-shell">
-        <div class="titlebar">
+      <div class="etch-window" aria-label="Etch 高保真可操作原型">
+        <div class="etch-titlebar">
           <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span>Etch — <span id="proto-title">双语硬字幕</span></span>
+          <span id="proto-title">Etch</span>
         </div>
-        <div class="app-body" id="proto-app"></div>
+        <div class="etch-app-grid">
+          <aside class="etch-sidebar" aria-label="Etch 主导航">
+            <strong class="etch-brand">Etch</strong>
+            <nav class="etch-nav">
+              <button class="etch-nav-item is-active" type="button" data-shell-view="queue" aria-pressed="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="9" y1="7" x2="20" y2="7"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17" x2="20" y2="17"/><circle cx="4" cy="7" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="17" r="1"/></svg><b>任务队列</b><em>3</em>
+              </button>
+              <button class="etch-nav-item" type="button" data-shell-view="glossary" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg><b>统一术语表</b>
+              </button>
+            </nav>
+            <div class="etch-runtime"><i></i><span><b>环境 9/9 可用</b><small>arm64 · v0.2.18</small></span></div>
+          </aside>
+          <section class="etch-main" id="proto-app" aria-live="polite"></section>
+        </div>
       </div>
 
-      <p class="proto-note" style="max-width:none;margin-top:16px">可点：任务类型、成果切换、完成校对、流水线折叠、任意阶段节点、工作台标签页、cue 行与翻页、HTML 风格方向与生成结果。键盘可用方向键在标签页与风格方向间移动。</p>
-    </div>
-  </section>
-
-  <!-- ============ 真实界面 ============ -->
-  <section class="band">
-    <div class="wrap">
-      <div class="sec-head">
-        <span class="eyebrow">真实界面</span>
-        <h2>上面是原型，这是真的 App。</h2>
-        <p>同一套流水线在真实 Electron 工作台里的样子：十阶段状态、视频预览与逐句双语校对。</p>
-      </div>
-      <figure class="shot">
-        <div class="shot-frame">
-          <img src="./assets/workbench.png" width="1360" height="860" alt="Etch 真实字幕工作台，显示十阶段流水线、视频预览和逐句双语校对" />
-        </div>
-        <figcaption><strong>真实 Electron 工作台</strong><span>由隔离测试数据生成；不含个人账号或私人文件。</span></figcaption>
-      </figure>
+      <p class="prototype-footnote">可点：任务队列、三类任务卡、人工校对步骤、流水线、阶段节点、视频控制、工作台标签、cue、分页、HTML 四方向预览。正文均为示例数据，不读取你的真实任务。</p>
     </div>
   </section>
 
@@ -186,7 +169,7 @@
   <!-- ============ B站投稿 ============ -->
   <section class="band alt" id="publish">
     <div class="wrap">
-      <div class="publish-grid">
+      <div class="publish-grid publish-grid-single">
         <div class="publish-copy">
           <span class="eyebrow">公开 v0.2.18 已包含</span>
           <h2>成片验证通过后，可以直接投稿到 B站。</h2>
@@ -197,12 +180,6 @@
             <li class="publish-fact"><span class="num">03</span><div><strong>有回执才算成功</strong><span>只有取得 aid、BV 号等可验证回执才标记为已提交；结果不明时先到创作中心核对。</span></div></li>
           </ol>
         </div>
-        <figure class="shot publish-shot">
-          <div class="shot-frame">
-            <img src="./assets/bilibili-publish.png" width="1360" height="860" alt="Etch 投稿到 B站确认窗口，包含标题、分区、标签、版权类型、转载来源、简介与封面字段" />
-          </div>
-          <figcaption><span>真实 B站投稿确认界面，使用隔离测试数据；尚未用真实账号完成 L3 投稿验证。</span></figcaption>
-        </figure>
       </div>
       <p class="publish-boundary"><strong>当前边界</strong><span>只支持单账号、单投稿并发；不支持定时、多账号、审核轮询或远端稿件管理。提交后请到 B站创作中心查看审核状态。</span></p>
     </div>

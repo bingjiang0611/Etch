@@ -1,4 +1,4 @@
-/* Etch 官网 V1 原型 · 交互逻辑
+/* Etch 官网 V2 原型 · 交互逻辑
  *
  * 所有阶段 id、阶段名、状态枚举、并发池、Provider 名、分数维度、
  * 文档风格方向与按钮文案都取自 Etch 真实源码：
@@ -277,7 +277,7 @@
       title: 'Why local-first pipelines win',
       source: 'https://example.com/blog/local-first-pipelines',
       inputKind: 'url',
-      currentMessage: '完整性验证通过',
+      currentMessage: '等待人工校对 Markdown 文档',
       switchLabel: '网页 · 5 阶段',
       switchHint: '不进入视频逻辑 · 交付 translation.md / translation.html',
       mark: '网',
@@ -285,13 +285,13 @@
         { id: 'source', status: 'completed', sub: 'web' },
         { id: 'inspect', status: 'completed', sub: '146 blocks' },
         { id: 'translate', status: 'completed', sub: '146/146 blocks' },
-        { id: 'review', status: 'completed', sub: '' },
-        { id: 'verify', status: 'completed', sub: '通过' }
+        { id: 'review', status: 'checkpoint', sub: '等待人工校对 Markdown 文档' },
+        { id: 'verify', status: 'pending', sub: '' }
       ],
-      primaryAction: { label: '处理已完成', disabled: true },
+      primaryAction: { label: '等待完成校对', disabled: true },
       secondaryActions: [
         { id: 'open-source', label: '打开原网页', icon: 'link' },
-        { id: 'export-markdown', label: '导出 Markdown', icon: 'folder' }
+        { id: 'export-markdown', label: '导出 Markdown', icon: 'folder', disabled: true }
       ],
       checkpointBanner: null,
       tabs: [
@@ -300,7 +300,7 @@
         { id: 'info', label: '任务信息' }
       ],
       defaultTab: 'compare',
-      stateBar: '已载入 revision 34',
+      stateBar: '已载入 revision 10',
       info: [
         ['内容类型', '普通网页', false],
         ['来源 URL', 'https://example.com/blog/local-first-pipelines', false],
@@ -313,10 +313,10 @@
         ['译文 blocks', '146', false],
         ['标题结构', '12 / 12', false],
         ['本地媒体', '9 / 9', false],
-        ['完整性验证', '通过', true],
-        ['校对完成', '2026-08-09T05:30:32+08:00', true],
-        ['Artifacts', '11 / 11 有效', false],
-        ['Revision', '34', false]
+        ['完整性验证', '等待校对完成', false],
+        ['校对完成', '尚未确认', false],
+        ['Artifacts', '10 / 11 有效', false],
+        ['Revision', '10', false]
       ],
       infoKind: '普通网页'
     }
@@ -325,13 +325,16 @@
   /* ---------------- 状态 ---------------- */
 
   var state = {
-    kind: 'subtitle',
-    tab: { subtitle: 'review', summary: 'summary', document: 'compare' },
+    view: 'workbench',
+    kind: 'document',
+    tab: { subtitle: 'glossary', summary: 'summary', document: 'compare' },
     cueId: 101,
     cuePage: 0,
     stage: null,
     direction: 'A',
     htmlGenerated: false,
+    documentReviewed: false,
+    videoPlaying: false,
     notice: ''
   };
 
@@ -368,26 +371,20 @@
     var tag = PROVIDER_NAMES[task.provider] + ' · ' + (activeStage ? stageLabel(task, activeStage.id) : task.currentMessage);
 
     var actions = task.secondaryActions.map(function (action) {
-      return '<button class="secondary-button" type="button" data-demo-action="' + action.id + '">' + ICONS[action.icon] + esc(action.label) + '</button>';
+      return '<button class="secondary-button" type="button" data-demo-action="' + action.id + '"'
+        + (action.disabled ? ' disabled' : '') + '>' + ICONS[action.icon] + esc(action.label) + '</button>';
     }).join('');
     actions += '<button class="primary-button" type="button" data-primary-action="true"' + (task.primaryAction.disabled ? ' disabled' : '') + '>'
       + esc(task.primaryAction.label) + '</button>';
 
-    // 真实行为：同一条视频的字幕与总结成果可以互相切换（onOpenOutput）
+    // 真实 App 只显示当前视频已有的成果；其他示例从任务队列进入。
     var outputTabs = '';
     if (task.kind !== 'document') {
       outputTabs = '<div class="output-tabs" role="group" aria-label="视频成果">'
-        + ['subtitle', 'summary'].map(function (kind) {
-          var other = TASKS[kind];
-          var active = kind === task.kind;
-          return '<button type="button" class="' + (active ? 'is-active' : '') + '"'
-            + ' data-output="' + kind + '" aria-pressed="' + active + '"'
-            + (active ? ' disabled' : '')
-            + ' aria-label="切换到' + esc(other.kindLabel) + '">'
-            + '<span>' + esc(other.kindLabel) + '</span>'
-            + '<small>' + esc(other.currentMessage) + '</small>'
-            + '</button>';
-        }).join('')
+        + '<button type="button" class="is-active" aria-pressed="true" disabled>'
+        + '<span>' + esc(task.kindLabel) + '</span>'
+        + '<small>' + esc(task.currentMessage) + '</small>'
+        + '</button>'
         + '</div>';
     }
 
@@ -535,11 +532,12 @@
       + ' aria-valuenow="' + percent + '"><i style="width:' + percent + '%"></i></span>'
       + (checkpointCount ? '<span class="warn">' + ICONS.warning + checkpointCount + ' 处待确认</span>' : '');
 
-    return '<details class="pipeline-collapse" open>'
+    return '<details class="pipeline-collapse"' + (task.kind === 'document' ? ' open' : '') + '>'
       + '<summary><span class="pipeline-chevron">' + ICONS.chevron + '</span>'
       + '<span class="pc-title">处理流水线</span>'
       + '<span class="pc-mini">' + mini + '</span></summary>'
-      + '<div class="pc-body">' + body + renderStageDetail(task) + renderPools(task) + '</div>'
+      + '<div class="pc-body">' + body + renderStageDetail(task)
+      + (task.kind === 'document' ? '' : renderPools(task)) + '</div>'
       + '</details>';
   }
 
@@ -699,9 +697,105 @@
       + tabs + statebar + panel + '</div>';
   }
 
+  function renderVideoPane(task) {
+    var playing = state.videoPlaying;
+    return '<section class="video-preview-panel" aria-label="视频预览">'
+      + '<div class="video-well">'
+      + '<div class="video-synthetic-frame" aria-hidden="true">'
+      + '<span>ETCH PREVIEW · 1920 × 1080</span>'
+      + '<strong>ATTENTION<br />IS A ROUTING SYSTEM</strong>'
+      + '<i></i><i></i><i></i>'
+      + '</div>'
+      + '<div class="subtitle-overlay"><span>Every attention head learns a different relationship.</span>'
+      + '<b>每个注意力头都会学到一种不同的关系。</b></div>'
+      + '</div>'
+      + '<div class="video-controls">'
+      + '<button type="button" aria-label="后退 5 秒" data-video-action="back">−5</button>'
+      + '<button type="button" class="video-play" aria-label="' + (playing ? '暂停视频' : '播放视频') + '" data-video-action="toggle">'
+      + (playing ? ICONS.pause : ICONS.play) + '</button>'
+      + '<button type="button" aria-label="前进 5 秒" data-video-action="forward">+5</button>'
+      + '<code>' + (playing ? '9:12' : '0:00') + ' / 18:42</code>'
+      + '<span class="video-scrub"><i style="width:' + (playing ? '49%' : '0%') + '"></i></span>'
+      + '<button type="button" data-video-action="speed">1×</button>'
+      + '<button type="button" class="video-mode" data-video-action="mode">字幕预览</button>'
+      + '</div>'
+      + '</section>';
+  }
+
+  function renderMediaWorkspace(task) {
+    return '<div class="media-workspace">' + renderVideoPane(task) + renderWorkspace(task) + '</div>';
+  }
+
+  function renderDocumentWarning() {
+    return '<aside class="document-warning" role="note">' + ICONS.warning
+      + '<div><strong>X 内容警告</strong><span>X 首版只处理当前 status；线程、引用帖与投票不会自动展开</span></div>'
+      + '</aside>';
+  }
+
+  function renderDocumentReviewBar() {
+    if (state.documentReviewed) {
+      return '<div class="document-review-bar is-complete" role="status">'
+        + '<span class="review-checkpoint-icon">' + ICONS.check + '</span>'
+        + '<div><strong>校对已完成</strong><small>完整性验证通过，可以生成 HTML 方向预览。</small></div>'
+        + '</div>';
+    }
+    return '<div class="document-review-bar" role="status">'
+      + '<span class="review-checkpoint-icon">' + ICONS.warning + '</span>'
+      + '<div><strong>校对 checkpoint</strong><small>检查已通过，可以完成校对。</small></div>'
+      + '<button class="primary-button document-review-complete" type="button">' + ICONS.check + '完成校对</button>'
+      + '</div>';
+  }
+
+  function queueCard(task, eyebrow, detail, meta) {
+    return '<button class="demo-task-card" type="button" data-open-kind="' + task.kind + '">'
+      + '<span class="task-cover task-cover-' + task.kind + '"><small>' + esc(eyebrow) + '</small>'
+      + '<strong>' + (task.kind === 'document' ? 'WEB →<br />MARKDOWN' : task.kind === 'summary' ? 'A · B · C<br />SUMMARY' : 'BILINGUAL<br />SUBTITLES') + '</strong>'
+      + '<em>' + (task.kind === 'document' ? 'HTML' : '18:42') + '</em></span>'
+      + '<span class="demo-task-copy"><span class="task-card-overline">' + esc(PROVIDER_NAMES[task.provider]) + ' · ' + esc(task.kindLabel) + ' · URL</span>'
+      + '<b>' + esc(task.title) + '</b><span>' + esc(task.currentMessage) + '</span>'
+      + '<code>' + esc(task.source) + '</code><small>' + esc(meta) + '</small></span>'
+      + '<span class="task-card-progress"><span><b style="width:' + (task.kind === 'document' ? '60%' : task.kind === 'summary' ? '87.5%' : '60%') + '"></b></span>'
+      + '<em>' + (task.kind === 'document' ? '3 / 5' : task.kind === 'summary' ? '7 / 8' : '6 / 10') + ' 阶段</em></span>'
+      + '</button>';
+  }
+
+  function renderQueue() {
+    return '<div class="queue-view">'
+      + '<header class="queue-header"><div><span>本地双语字幕流水线</span><h3>任务队列</h3></div>'
+      + '<button class="primary-button" type="button" data-demo-action="new-task">＋ 新建任务</button></header>'
+      + renderNotice()
+      + '<div class="queue-toolbar"><span class="is-active">全部任务 <b>3</b></span><span>未分类 <b>3</b></span>'
+      + '<em>每阶段并发 3 · 队列空闲</em></div>'
+      + '<div class="demo-task-grid">'
+      + queueCard(TASKS.summary, '视频总结 · 等待配图', '7 / 8', '更新于刚刚 · 7 / 8 阶段')
+      + queueCard(TASKS.subtitle, '双语字幕 · 人工校对', '6 / 10', '更新于刚刚 · 6 / 10 阶段')
+      + queueCard(TASKS.document, '网页翻译 · 文档校对', '3 / 5', '更新于刚刚 · 3 / 5 阶段')
+      + '</div></div>';
+  }
+
+  function renderShellGlossary() {
+    return '<div class="queue-view glossary-view"><header class="queue-header"><div><span>跨任务统一写法</span><h3>统一术语表</h3></div>'
+      + '<button class="secondary-button" type="button" data-demo-action="glossary-export">导出术语表</button></header>'
+      + renderNotice()
+      + '<div class="glossary-panel"><div class="glossary-panel-head"><strong>' + GLOSSARY.length + ' 条术语</strong>'
+      + '<span>修改只影响示例原型，不会写入本机。</span></div>'
+      + '<div class="glossary-table"><span>原文术语</span><span>统一写法</span>'
+      + GLOSSARY.map(function (item) { return '<b>' + esc(item.en) + '</b><em>' + esc(item.zh) + '</em>'; }).join('')
+      + '</div></div></div>';
+  }
+
   /* ---------------- 渲染：发布为网页（文档任务的二级路径） ---------------- */
 
   function renderHtmlPublication() {
+    if (!state.documentReviewed) {
+      return '<section class="html-publication is-gated" aria-label="发布为网页">'
+        + '<header class="html-heading"><div><span class="provider-tag">独立工作流 · Single-file HTML</span>'
+        + '<h4>发布为网页</h4><p>基于已验证 Markdown 生成，不改变翻译流水线与 Markdown 成品。</p></div>'
+        + '<span class="html-status" data-status="pending">尚未开始</span></header>'
+        + '<div class="html-gated-copy"><div><strong>先生成四个真实风格方向，再选择最终方案。</strong>'
+        + '<span>文档通过完整性验证后即可开始。</span></div>'
+        + '<button class="primary-button" type="button" disabled>生成四方向预览</button></div></section>';
+    }
     var selected = HTML_DIRECTIONS.filter(function (item) { return item.id === state.direction; })[0];
     var directions = HTML_DIRECTIONS.map(function (item) {
       var isSelected = item.id === state.direction;
@@ -747,25 +841,46 @@
 
   function render() {
     var task = currentTask();
+    var main = query('#proto-app');
+    var queueActive = state.view === 'queue' || state.view === 'workbench';
 
-    document.querySelectorAll('.kind-tab').forEach(function (button) {
-      var active = button.dataset.kind === state.kind;
-      button.setAttribute('aria-selected', String(active));
-      button.tabIndex = active ? 0 : -1;
+    document.querySelectorAll('.etch-nav-item').forEach(function (button) {
+      var active = button.dataset.shellView === 'queue' ? queueActive : state.view === button.dataset.shellView;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
     });
 
-    query('#proto-app').innerHTML = renderHeader(task)
-      + renderNotice()
-      + renderCheckpointBanner(task)
-      + renderPipeline(task)
-      + renderWorkspace(task)
-      + (task.kind === 'document' ? renderHtmlPublication() : '');
+    main.dataset.view = state.view;
+    if (state.view === 'queue') {
+      main.innerHTML = renderQueue();
+    } else if (state.view === 'glossary') {
+      main.innerHTML = renderShellGlossary();
+    } else if (task.kind === 'document') {
+      main.innerHTML = '<div class="app-body document-app-body">'
+        + renderHeader(task)
+        + renderNotice()
+        + renderPipeline(task)
+        + renderHtmlPublication()
+        + renderDocumentWarning()
+        + renderWorkspace(task)
+        + renderDocumentReviewBar()
+        + '</div>';
+    } else {
+      main.innerHTML = '<div class="app-body video-app-body">'
+        + renderHeader(task)
+        + renderNotice()
+        + renderCheckpointBanner(task)
+        + renderPipeline(task)
+        + renderMediaWorkspace(task)
+        + '</div>';
+    }
 
-    query('#proto-title').textContent = task.kindLabel;
+    query('#proto-title').textContent = 'Etch';
   }
 
   function setKind(kind) {
-    if (!TASKS[kind] || kind === state.kind) return;
+    if (!TASKS[kind]) return;
+    state.view = 'workbench';
     state.kind = kind;
     state.stage = null;
     state.cuePage = 0;
@@ -775,8 +890,6 @@
   }
 
   /* ---------------- 事件 ---------------- */
-
-  var KIND_ORDER = ['subtitle', 'summary', 'document'];
 
   function roving(list, currentIndex, key) {
     if (key === 'ArrowRight' || key === 'ArrowDown') return (currentIndex + 1) % list.length;
@@ -790,20 +903,61 @@
     var target = event.target;
     if (!(target instanceof Element)) return;
 
-    var kindTab = target.closest('.kind-tab');
-    if (kindTab) {
-      setKind(kindTab.dataset.kind);
+    var shellView = target.closest('[data-shell-view]');
+    if (shellView) {
+      state.view = shellView.dataset.shellView;
+      state.notice = '';
+      render();
+      return;
+    }
+
+    var taskCard = target.closest('[data-open-kind]');
+    if (taskCard) {
+      setKind(taskCard.dataset.openKind);
       return;
     }
 
     var demoAction = target.closest('[data-demo-action]');
     if (demoAction) {
       var action = demoAction.dataset.demoAction;
-      state.notice = action === 'queue'
-        ? '原型只展示工作台；请使用上方三类任务切换其他示例。'
-        : action === 'open-source'
+      if (action === 'queue') {
+        state.view = 'queue';
+        state.notice = '';
+        render();
+        return;
+      }
+      state.notice = action === 'open-source'
           ? '原型演示：正式 App 会在默认浏览器打开原网页。'
-          : '原型演示：正式 App 会导出已验证的 translation.md。';
+          : action === 'export-markdown'
+            ? '原型演示：正式 App 会导出已验证的 translation.md。'
+            : action === 'new-task'
+              ? '原型演示：正式 App 会打开“新建任务”窗口，并选择字幕、总结或网页翻译。'
+              : '原型演示：正式 App 会导出本机统一术语表。';
+      render();
+      return;
+    }
+
+    var documentReview = target.closest('.document-review-complete');
+    if (documentReview && !state.documentReviewed) {
+      state.documentReviewed = true;
+      TASKS.document.stages.forEach(function (stage) {
+        if (stage.id === 'review' || stage.id === 'verify') stage.status = 'completed';
+      });
+      TASKS.document.stages[3].sub = '已确认';
+      TASKS.document.stages[4].sub = '通过';
+      TASKS.document.currentMessage = '完整性验证通过';
+      TASKS.document.primaryAction = { label: '处理已完成', disabled: true };
+      TASKS.document.secondaryActions[1].disabled = false;
+      TASKS.document.stateBar = '已载入 revision 11';
+      state.notice = '原型演示：文档校对已确认，完整性验证通过，现在可以生成 HTML 方向预览。';
+      render();
+      return;
+    }
+
+    var videoAction = target.closest('[data-video-action]');
+    if (videoAction) {
+      if (videoAction.dataset.videoAction === 'toggle') state.videoPlaying = !state.videoPlaying;
+      else state.notice = '原型演示：视频控制与当前 cue 已同步。';
       render();
       return;
     }
@@ -885,15 +1039,6 @@
     if (!(target instanceof Element)) return;
     var keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
     if (keys.indexOf(event.key) < 0) return;
-
-    if (target.classList.contains('kind-tab')) {
-      var next = roving(KIND_ORDER, KIND_ORDER.indexOf(state.kind), event.key);
-      if (next < 0) return;
-      event.preventDefault();
-      setKind(KIND_ORDER[next]);
-      query('.kind-tab[data-kind="' + state.kind + '"]').focus();
-      return;
-    }
 
     if (target.classList.contains('tp-tab')) {
       var tabs = currentTask().tabs.map(function (item) { return item.id; });
