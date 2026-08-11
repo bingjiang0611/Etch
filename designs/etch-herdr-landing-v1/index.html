@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Etch — v0.2.18 本地视频与网页内容工作站</title>
+<meta name="description" content="Etch 是在自己 Mac 上运行的本地视频与网页内容工作站，公开版 v0.2.18 支持双语硬字幕、视频总结和网页翻译。" />
+<meta name="theme-color" content="#0b0d10" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'" />
+<link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <img src="./assets/favicon.svg" width="27" height="27" alt="" />
+      Etch <span class="ipa">/etʃ/</span>
+    </a>
+    <nav class="nav-links" aria-label="主要导航">
+      <a href="#prototype">交互原型</a>
+      <a href="#workflows">三类任务</a>
+      <a href="#resume">为什么能恢复</a>
+      <a href="#publish">B站投稿</a>
+      <a href="#runtime">运行环境</a>
+    </nav>
+    <div class="nav-right">
+      <a class="ghost" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener" aria-label="在 GitHub 查看 Etch 源码">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+        <span>GitHub</span>
+      </a>
+      <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.18/Etch-0.2.18-arm64.dmg">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
+        下载 v0.2.18
+      </a>
+    </div>
+  </div>
+</header>
+
+<span id="top"></span>
+<main id="main">
+
+  <!-- ============ 首屏 ============ -->
+  <section class="hero">
+    <div class="wrap">
+      <span class="eyebrow">公开版 v0.2.18 · 本地视频与网页内容工作站</span>
+      <h1><span>把视频和网页，</span><span>刻成能交付的中文成果。</span></h1>
+      <p class="lede">Etch 是一个跑在你自己 Mac 上的桌面工作站。<b>双语硬字幕、视频总结、网页翻译</b>三类任务共用一条按阶段保存进度的流水线，中断之后从已确认的地方继续。</p>
+      <div class="hero-cta">
+        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.18/Etch-0.2.18-arm64.dmg">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
+          下载 v0.2.18
+        </a>
+        <a class="ghost" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener">查看 GitHub 源码</a>
+      </div>
+      <p class="release-note">公开版 0.2.18 · Apple Silicon · macOS 13.5+ · 仅支持 HTTP(S) URL · 暂不支持本地文件导入 · Apple Development 签名，未经公证</p>
+    </div>
+  </section>
+
+  <!-- ============ 交互原型 ============ -->
+  <section class="band alt" id="prototype" data-screen-label="Etch 官网 V1 · 可操作原型">
+    <div class="wrap">
+      <div class="proto-head">
+        <div>
+          <span class="eyebrow">可操作原型</span>
+          <h2>三类任务，走的是三条不同的流水线。</h2>
+        </div>
+        <p class="proto-note"><strong>这是原型，不是真实 App。</strong>阶段名、状态、并发池、评分维度与风格方向都取自 Etch 源码；正文是标注过的示例数据。</p>
+      </div>
+
+      <div class="kind-switch" role="tablist" aria-label="切换任务类型">
+        <button class="kind-tab" type="button" role="tab" data-kind="subtitle" aria-selected="true" aria-controls="proto-app">
+          <span class="kt-top"><span class="kt-mark">译</span><strong>双语硬字幕</strong></span>
+          <small>视频 · 10 阶段 · bilingual.srt / final.mp4</small>
+        </button>
+        <button class="kind-tab" type="button" role="tab" data-kind="summary" aria-selected="false" aria-controls="proto-app" tabindex="-1">
+          <span class="kt-top"><span class="kt-mark">总</span><strong>视频总结</strong></span>
+          <small>视频 · 8 阶段 · summary.md / images/</small>
+        </button>
+        <button class="kind-tab" type="button" role="tab" data-kind="document" aria-selected="false" aria-controls="proto-app" tabindex="-1">
+          <span class="kt-top"><span class="kt-mark">网</span><strong>网页翻译</strong></span>
+          <small>网页 · 5 阶段 · translation.md / translation.html</small>
+        </button>
+      </div>
+
+      <div class="app-shell">
+        <div class="titlebar">
+          <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>Etch — <span id="proto-title">双语硬字幕</span></span>
+        </div>
+        <div class="app-body" id="proto-app"></div>
+      </div>
+
+      <p class="proto-note" style="max-width:none;margin-top:16px">可点：任务类型、成果切换、完成校对、流水线折叠、任意阶段节点、工作台标签页、cue 行与翻页、HTML 风格方向与生成结果。键盘可用方向键在标签页与风格方向间移动。</p>
+    </div>
+  </section>
+
+  <!-- ============ 真实界面 ============ -->
+  <section class="band">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">真实界面</span>
+        <h2>上面是原型，这是真的 App。</h2>
+        <p>同一套流水线在真实 Electron 工作台里的样子：十阶段状态、视频预览与逐句双语校对。</p>
+      </div>
+      <figure class="shot">
+        <div class="shot-frame">
+          <img src="./assets/workbench.png" width="1360" height="860" alt="Etch 真实字幕工作台，显示十阶段流水线、视频预览和逐句双语校对" />
+        </div>
+        <figcaption><strong>真实 Electron 工作台</strong><span>由隔离测试数据生成；不含个人账号或私人文件。</span></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ 三类任务 ============ -->
+  <section class="band alt" id="workflows">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">三类任务</span>
+        <h2>同一个入口，三条不同的流水线。</h2>
+        <p>Etch 在创建任务时分流：视频走字幕或总结，网页走文档处理。三者共享恢复机制，但各自产出不同文件。</p>
+      </div>
+      <div class="workflow-grid">
+        <article class="workflow-card">
+          <span class="workflow-id">01</span>
+          <div class="workflow-copy">
+            <h3>双语硬字幕</h3>
+            <p>支持 YouTube、Vimeo 和 X / Twitter 的公开视频链接。取不到英文字幕时，使用 mlx_whisper 在本机转写。</p>
+          </div>
+          <ul class="proof-list">
+            <li>按来源选择媒体与字幕获取方式</li>
+            <li>长字幕分批翻译，每批通过校验后保存</li>
+            <li>校对后生成双语 SRT，再压制并验证成片</li>
+          </ul>
+          <p class="workflow-foot"><strong>交付</strong>bilingual.srt<br />final.mp4</p>
+        </article>
+        <article class="workflow-card">
+          <span class="workflow-id">02</span>
+          <div class="workflow-copy">
+            <h3>视频总结</h3>
+            <p>从字幕生成素材包，核验可外查事实，再让 A / B / C 三个隔离会话分别成稿、评分与融合。</p>
+          </div>
+          <ul class="proof-list">
+            <li>外部核验记录随任务保存；不可用时明确标记限制</li>
+            <li>候选稿、评分和遗漏清单彼此隔离</li>
+            <li>配图可以跳过；真实视频与真实 Provider 的完整 L3 尚未执行</li>
+          </ul>
+          <p class="workflow-foot"><strong>交付</strong>summary.md<br />images/（可选）</p>
+        </article>
+        <article class="workflow-card">
+          <span class="workflow-id">03</span>
+          <div class="workflow-copy">
+            <h3>网页转 Markdown / 离线 HTML</h3>
+            <p>支持普通网页、单条 X 帖子和 X Article。可以只转 Markdown，也可以选择标准翻译或精校翻译。</p>
+          </div>
+          <ul class="proof-list">
+            <li>静态图片本地化，结构异常时退回校对</li>
+            <li>长文分批保存；精校模式增加润色与终检</li>
+            <li>校对后可生成资源内嵌的离线单文件 HTML</li>
+          </ul>
+          <p class="workflow-foot"><strong>交付</strong>translation.md<br />translation.html</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 为什么能恢复 ============ -->
+  <section class="band" id="resume">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">为什么能恢复</span>
+        <h2>中断后，从已确认的地方继续。</h2>
+        <p>任务状态、已提交产物和人工选择都写入本机任务记录。异常退出后，Etch 读取 <span class="mono">task.json</span> 和已验证文件继续执行。</p>
+      </div>
+      <div class="principles">
+        <article class="principle"><span class="num">01</span><div><h3>媒体处理留在本机</h3><p>下载、转写、字幕生成和压制都在 Mac 上完成；翻译数据是否离开设备取决于所选 Agent CLI。</p></div></article>
+        <article class="principle"><span class="num">02</span><div><h3>完成一批，保存一批</h3><p>字幕与长文翻译按批提交。后续失败或重启时，已通过本地校验的批次不会重做。</p></div></article>
+        <article class="principle"><span class="num">03</span><div><h3>关键决定留给人</h3><p>成本、字幕歧义、文档校对、外部核验受限和配图选择需要明确确认，不会静默越过。</p></div></article>
+        <article class="principle"><span class="num">04</span><div><h3>分类只负责归档</h3><p>字幕、总结和文档任务都能自定义分类；分类不会改变任务类型或流水线状态。</p></div></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ B站投稿 ============ -->
+  <section class="band alt" id="publish">
+    <div class="wrap">
+      <div class="publish-grid">
+        <div class="publish-copy">
+          <span class="eyebrow">公开 v0.2.18 已包含</span>
+          <h2>成片验证通过后，可以直接投稿到 B站。</h2>
+          <p>用有投稿权限的账号扫码连接后，可手动确认投稿信息，也可在新建字幕任务时开启自动投稿。</p>
+          <ol class="publish-facts">
+            <li class="publish-fact"><span class="num">01</span><div><strong>投稿前确认</strong><span>标题、分区、标签、简介、版权类型、转载来源与封面都可以检查。</span></div></li>
+            <li class="publish-fact"><span class="num">02</span><div><strong>凭据留在本机</strong><span>账号凭据由 macOS safeStorage 加密，内置 biliup 从本机直连 B站。</span></div></li>
+            <li class="publish-fact"><span class="num">03</span><div><strong>有回执才算成功</strong><span>只有取得 aid、BV 号等可验证回执才标记为已提交；结果不明时先到创作中心核对。</span></div></li>
+          </ol>
+        </div>
+        <figure class="shot publish-shot">
+          <div class="shot-frame">
+            <img src="./assets/bilibili-publish.png" width="1360" height="860" alt="Etch 投稿到 B站确认窗口，包含标题、分区、标签、版权类型、转载来源、简介与封面字段" />
+          </div>
+          <figcaption><span>真实 B站投稿确认界面，使用隔离测试数据；尚未用真实账号完成 L3 投稿验证。</span></figcaption>
+        </figure>
+      </div>
+      <p class="publish-boundary"><strong>当前边界</strong><span>只支持单账号、单投稿并发；不支持定时、多账号、审核轮询或远端稿件管理。提交后请到 B站创作中心查看审核状态。</span></p>
+    </div>
+  </section>
+
+  <!-- ============ 运行环境 ============ -->
+  <section class="band" id="runtime">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">运行环境</span>
+        <h2>启动时，缺什么就显示什么。</h2>
+        <p>Etch 会逐项检查本机工具。网页只转 Markdown 不需要视频工具或 Agent；网页翻译、字幕翻译和视频总结需要至少一个已登录的 Agent CLI。</p>
+      </div>
+      <div class="runtime-lines">
+        <div class="runtime-line"><span>系统</span><strong>Apple Silicon Mac · macOS 13.5 或更高版本</strong></div>
+        <div class="runtime-line"><span>视频处理</span><strong>yt-dlp · ffmpeg · ffprobe · Python · mlx_whisper</strong></div>
+        <div class="runtime-line"><span>Agent CLI</span><strong>Claude · Codex · Qoder · OpenCode，至少登录一个</strong></div>
+        <div class="runtime-line"><span>输入</span><strong>仅支持 HTTP(S) URL，暂不支持本地文件导入</strong></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 底部 CTA ============ -->
+  <section class="closing">
+    <div class="wrap">
+      <span class="eyebrow">公开版 v0.2.18</span>
+      <h2>装上它，让下一条视频自己走完流水线。</h2>
+      <p>Apple Silicon Mac、macOS 13.5 或更高版本。首次打开需要在系统设置里允许运行。</p>
+      <div class="hero-cta">
+        <a class="btn" href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.18/Etch-0.2.18-arm64.dmg">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
+          下载 v0.2.18
+        </a>
+        <a class="ghost" href="https://github.com/bingjiang0611/Etch" target="_blank" rel="noopener">查看 GitHub 源码</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap footer-inner">
+    <strong>Etch · 本地视频与网页内容工作站</strong>
+    <span>© 2026 Etch · Apple Silicon macOS</span>
+  </div>
+</footer>
+
+<script src="./prototype.js"></script>
+</body>
+</html>
