@@ -169,6 +169,7 @@ import {
   type DocumentProxyResolver
 } from '../content/document-source'
 import {
+  activeSessionGenerationDrifted,
   activateSessionGeneration,
   replaceContaminatedSessionGeneration,
   replaceLostSessionGeneration
@@ -406,7 +407,33 @@ export class TaskPipeline {
       return error?.startsWith(PROVIDER_SESSION_UNAVAILABLE_PREFIX)
         || error?.startsWith(PROVIDER_SESSION_CONTAMINATED_PREFIX)
     })
-    if (lostStage) {
+    const unfinishedDocumentProviderDrift = initial.kind === 'document'
+      && initial.pipeline.stages.translate.status !== 'completed'
+      && activeSessionGenerationDrifted(initial)
+    if (unfinishedDocumentProviderDrift) {
+      initial = await this.store.mutate(taskDirectory, (draft) => {
+        const replacement = replaceContaminatedSessionGeneration(draft, taskDirectory)
+        if (replacement.provider === 'codex') replacement.stateRoot = join(homedir(), '.codex')
+        if (draft.kind === 'document' && draft.pipeline.stages.translate.status !== 'completed') {
+          draft.document.translationRunId = randomUUID()
+          draft.document.translationPhase = 'analyze'
+          draft.document.phaseArtifacts = {}
+          for (const batch of draft.document.translationBatches) {
+            batch.status = 'stale'
+            delete batch.artifact
+          }
+          delete draft.artifacts.translatedDocument
+          delete draft.artifacts.translatedMarkdown
+          draft.document.translatedBlockCount = 0
+          draft.pipeline.stages.translate.progress = 0
+        }
+        if (lostStage) {
+          draft.pipeline.stages[lostStage].errorCode = 'Provider/模型已按当前选择重新对齐；已废弃旧 session，等待安全重试'
+        }
+        draft.runtime.currentMessage = '检测到实际执行配置与当前选择不一致；已建立匹配的新 session'
+      })
+      this.#publishManifest(taskDirectory, initial)
+    } else if (lostStage) {
       initial = await this.store.mutate(taskDirectory, (draft) => {
         const contaminated = draft.pipeline.stages[lostStage].errorCode?.startsWith(PROVIDER_SESSION_CONTAMINATED_PREFIX)
         const replacement = contaminated
@@ -516,6 +543,9 @@ export class TaskPipeline {
   async #executeStage(taskDirectory: string, stage: StageId, signal: AbortSignal): Promise<boolean> {
     if (signal.aborted || !this.#mayAcquire()) throw new PoolCancelledError()
     const before = await this.store.load(taskDirectory)
+    const activeGeneration = before.translation.sessionGenerations.find((generation) =>
+      generation.id === before.translation.activeGenerationId && generation.status === 'active'
+    )
     const context: StageContext = stage === 'translate' && before.kind === 'subtitle'
       ? {
           signal,
@@ -533,8 +563,8 @@ export class TaskPipeline {
       : Object.entries(before.artifacts)
     const inputFingerprint = fingerprint(`etch:${stage}`, stage === 'cues' ? 2 : 1, {
       input: before.input,
-      provider: before.translation.selectedProvider ?? null,
-      model: before.translation.selectedModel ?? null,
+      provider: activeGeneration?.provider ?? before.translation.selectedProvider ?? null,
+      model: activeGeneration?.model ?? before.translation.selectedModel ?? null,
       styleNote: ['translate', 'digest', 'summary'].includes(stage) ? before.translation.styleNote : null,
       translationGlossary: stage === 'translate' ? context.translationGlossary ?? null : null,
       manualEdits: before.translation.manualEdits.map(({ cueId, translation, englishCueHash }) => ({ cueId, translation, englishCueHash })),

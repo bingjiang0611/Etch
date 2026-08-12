@@ -33,6 +33,7 @@ vi.mock('../src/main/providers/codex-capability', () => ({
 import { createMarkdownBlocks, type MarkdownDocument } from '../src/core/document'
 import { sha256File } from '../src/main/core/fingerprint'
 import { HistoricalGlossaryService } from '../src/main/historical-glossary'
+import { activateSessionGeneration } from '../src/main/pipeline/session-generation'
 import { TaskPipeline } from '../src/main/pipeline/task-pipeline'
 import { PROVIDER_SESSION_CONTAMINATED_PREFIX } from '../src/main/providers/session-errors'
 import { TaskStore } from '../src/main/storage/task-store'
@@ -173,6 +174,120 @@ describe('document translation recovery', () => {
     expect(completed.document.translationBatches).toEqual([
       expect.objectContaining({ id: 'draft:document-001', status: 'verified', attempt: 2 })
     ])
+  })
+
+  it.each([
+    ['session contamination', `${PROVIDER_SESSION_CONTAMINATED_PREFIX}Codex line 2: unapproved error item message`, true],
+    ['ordinary failure', 'Codex provider unavailable', false]
+  ])('realigns selected Qoder before retrying a drifted Codex %s', async (_label, errorCode, withCachedProgress) => {
+    const task = await translationTask('A reliable system.')
+    const oldSessionId = '019f7e34-385f-7de3-9fac-000000000001'
+    const staleRunId = '019f7e34-385f-7de3-9fac-000000000002'
+    let cachedProgressInvalidated = false
+    let staleAnalysisPath: string | undefined
+    let staleBatchPath: string | undefined
+    if (withCachedProgress) {
+      staleAnalysisPath = 'stale-analysis.json'
+      staleBatchPath = 'stale-batch.json'
+      await writeFile(join(task.directory, staleAnalysisPath), '{}\n', 'utf8')
+      await writeFile(join(task.directory, staleBatchPath), '{}\n', 'utf8')
+    }
+    await task.store.mutate(task.directory, (manifest) => {
+      manifest.translation.selectedModel = { source: 'discovered', modelId: 'DeepSeek-V4-Pro' }
+      const drifted = activateSessionGeneration(
+        manifest,
+        'codex',
+        { source: 'cli-default' },
+        task.directory,
+        'initial'
+      )
+      drifted.externalSessionId = oldSessionId
+      manifest.pipeline.stages.translate.status = 'failed'
+      manifest.pipeline.stages.translate.errorCode = errorCode
+      manifest.pipeline.stages.translate.progress = 0.8
+      if (staleAnalysisPath && staleBatchPath) {
+        manifest.document.translationRunId = staleRunId
+        manifest.document.translationPhase = 'draft'
+        manifest.document.phaseArtifacts.analysis = {
+          relativePath: staleAnalysisPath,
+          sha256: '1'.repeat(64),
+          size: 3,
+          valid: true,
+          producer: 'codex',
+          inputFingerprint: '2'.repeat(64)
+        }
+        manifest.document.translationBatches = [{
+          id: 'draft:document-001',
+          blockIds: ['block-0001'],
+          fragmentIds: [],
+          inputFingerprint: '3'.repeat(64),
+          status: 'verified',
+          attempt: 1,
+          artifact: {
+            relativePath: staleBatchPath,
+            sha256: '4'.repeat(64),
+            size: 3,
+            valid: true,
+            producer: 'codex',
+            inputFingerprint: '3'.repeat(64)
+          }
+        }]
+        manifest.document.translatedBlockCount = 1
+        manifest.artifacts.translatedDocument = manifest.document.phaseArtifacts.analysis
+        manifest.artifacts.translatedMarkdown = manifest.document.translationBatches[0].artifact!
+      }
+    })
+    runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
+      if (withCachedProgress && !cachedProgressInvalidated) {
+        const aligned = await task.store.load(task.directory)
+        expect(aligned.document.translationRunId).not.toBe(staleRunId)
+        expect(aligned.document.phaseArtifacts).toEqual({})
+        expect(aligned.document.translationBatches).toEqual([
+          expect.objectContaining({ id: 'draft:document-001', status: 'stale' })
+        ])
+        expect(aligned.document.translationBatches[0].artifact).toBeUndefined()
+        expect(aligned.document.translatedBlockCount).toBe(0)
+        expect(aligned.pipeline.stages.translate.progress).toBe(0)
+        expect(aligned.artifacts.translatedDocument).toBeUndefined()
+        expect(aligned.artifacts.translatedMarkdown).toBeUndefined()
+        cachedProgressInvalidated = true
+      }
+      const sessionId = providerSessionFromArgs(spec.args)
+      if (spec.stdin.includes('document-analysis-blocks')) {
+        return providerResult(JSON.stringify({
+          contentType: 'article', tone: 'technical', audience: 'developers', glossary: [], risks: []
+        }), sessionId)
+      }
+      const blocks = sectionData(spec.stdin, 'document-blocks')
+      return providerResult(JSON.stringify({
+        blocks: blocks.map((block) => ({ id: block.id, markdown: '可靠的系统。' }))
+      }), sessionId)
+    })
+
+    await task.pipeline.start(task.directory)
+
+    const completed = await task.store.load(task.directory)
+    expect(completed.pipeline.stages.review.status).toBe('checkpoint')
+    expect(completed.translation.sessionGenerations).toHaveLength(2)
+    expect(completed.translation.sessionGenerations[0]).toMatchObject({ provider: 'codex', status: 'lost' })
+    expect(completed.translation.sessionGenerations[1]).toMatchObject({
+      provider: 'qoder',
+      model: { source: 'discovered', modelId: 'DeepSeek-V4-Pro' },
+      status: 'active',
+      reason: 'resume-replacement'
+    })
+    expect(completed.document.translationRunId).not.toBe(staleRunId)
+    expect(completed.document.phaseArtifacts.analysis?.producer).toBe('qoder')
+    expect(completed.document.translationBatches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'draft:document-001', status: 'verified', artifact: expect.objectContaining({ producer: 'qoder' }) })
+    ]))
+    expect(cachedProgressInvalidated).toBe(withCachedProgress)
+    expect(runProcessMock).toHaveBeenCalled()
+    for (const [spec] of runProcessMock.mock.calls as Array<[{ command: string; args: string[] }]>) {
+      expect(spec.command).toBe('/mock/qoder')
+      expect(spec.args).toContain('DeepSeek-V4-Pro')
+      expect(spec.args).not.toContain(oldSessionId)
+    }
   })
 
   it('records Provider calls when a later batch attempt throws', async () => {

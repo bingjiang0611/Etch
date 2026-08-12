@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { fingerprint } from '../src/main/core/fingerprint'
 import {
+  activeSessionGenerationDrifted,
   activateSessionGeneration,
   replaceContaminatedSessionGeneration,
   replaceLostSessionGeneration
@@ -64,6 +65,65 @@ describe('TaskStore CAS', () => {
     expect(generation.provider).toBe('qoder')
     expect(generation.model).toEqual({ source: 'user-entered', modelId: 'DeepSeek-V4-Pro' })
     expect(generation.stateRoot).toContain('provider-state/qoder/')
+  })
+
+  it.each(['lost', 'contaminated'] as const)(
+    'realigns a drifted %s replacement generation with the selected provider and model',
+    async (reason) => {
+      const directory = await taskDirectory()
+      const manifest = createTaskManifest(
+        { kind: 'url', url: 'https://example.com/video' },
+        '',
+        'qoder',
+        '',
+        'standard',
+        false,
+        'document'
+      )
+      manifest.translation.selectedModel = { source: 'discovered', modelId: 'DeepSeek-V4-Pro' }
+      const drifted = activateSessionGeneration(manifest, 'codex', { source: 'cli-default' }, directory, 'initial')
+      if (reason === 'lost') drifted.externalSessionId = '019f7e34-385f-7de3-9fac-000000000001'
+
+      const replacement = reason === 'lost'
+        ? replaceLostSessionGeneration(manifest, directory)
+        : replaceContaminatedSessionGeneration(manifest, directory)
+
+      expect(drifted.status).toBe('lost')
+      expect(replacement.provider).toBe('qoder')
+      expect(replacement.model).toEqual({ source: 'discovered', modelId: 'DeepSeek-V4-Pro' })
+      expect(replacement.stateRoot).toContain('provider-state/qoder/')
+    }
+  )
+
+  it('detects provider and model drift without flagging the selected active generation', async () => {
+    const directory = await taskDirectory()
+    const manifest = createTaskManifest(
+      { kind: 'url', url: 'https://example.com/video' },
+      '',
+      'qoder',
+      '',
+      'standard',
+      false,
+      'document'
+    )
+    manifest.translation.selectedModel = { source: 'discovered', modelId: 'DeepSeek-V4-Pro' }
+    activateSessionGeneration(manifest, 'codex', { source: 'cli-default' }, directory, 'initial')
+
+    expect(activeSessionGenerationDrifted(manifest)).toBe(true)
+
+    replaceContaminatedSessionGeneration(manifest, directory)
+    expect(activeSessionGenerationDrifted(manifest)).toBe(false)
+  })
+
+  it('does not switch a non-document replacement to a different selected provider', async () => {
+    const directory = await taskDirectory()
+    const manifest = createTaskManifest({ kind: 'url', url: 'https://example.com/video' }, '', 'qoder')
+    const drifted = activateSessionGeneration(manifest, 'codex', { source: 'cli-default' }, directory, 'initial')
+
+    const replacement = replaceContaminatedSessionGeneration(manifest, directory)
+
+    expect(drifted.status).toBe('lost')
+    expect(replacement).toMatchObject({ provider: 'codex', model: { source: 'cli-default' } })
   })
 
   it('uses the full URL or local source path as the default task title', () => {
