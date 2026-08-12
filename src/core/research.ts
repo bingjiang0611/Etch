@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { SummaryResearchClaimSchema, type SummaryResearchClaim } from '../shared/task-schema'
 import { untrustedJsonSection } from './prompt-boundary'
-import { jsonContract } from './schema-contract'
+import { extractJsonObject, jsonContract } from './schema-contract'
 import type { SummaryDigest } from './summary'
 
 const ResearchCandidateSchema = z.object({
@@ -75,10 +75,7 @@ export function parseResearchResponse(
   expected: readonly ResearchCandidate[],
   now = new Date().toISOString()
 ): SummaryResearchLedger {
-  const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('外部核验没有返回 JSON 对象')
-  const parsed = ResearchResponseSchema.parse(JSON.parse(text.slice(start, end + 1)))
+  const parsed = ResearchResponseSchema.parse(JSON.parse(extractJsonObject(text, '外部核验没有返回 JSON 对象')))
   if (parsed.claims.length !== expected.length) throw new Error(`外部核验条目不完整：${parsed.claims.length}/${expected.length}`)
   const byId = new Map(parsed.claims.map((claim) => [claim.id, claim]))
   const claims: SummaryResearchClaim[] = expected.map((candidate) => {

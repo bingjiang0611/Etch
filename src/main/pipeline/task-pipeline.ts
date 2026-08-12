@@ -48,7 +48,7 @@ import {
   type EnglishSourceAuditResult
 } from '../../core/english-source-audit'
 import { untrustedJsonSection } from '../../core/prompt-boundary'
-import { describeValidationFailure } from '../../core/schema-contract'
+import { describeValidationFailure, extractJsonObject } from '../../core/schema-contract'
 import {
   SUMMARY_COVER_FILENAME,
   SUMMARY_STEP_MAX_ATTEMPTS,
@@ -452,14 +452,22 @@ export class TaskPipeline {
       let documentTranslationPreflightFailed = false
       let documentTranslationCostNeedsConfirmation = false
       if (stage === 'translate' && manifest.kind === 'document' && documentNeedsTranslation(manifest)) {
-        try {
-          const sourceDocument = await this.#documentArtifact(taskDirectory, manifest.artifacts.sourceDocument, '网页源文档')
+        const sourceDocument = await this.#documentArtifact(
+          taskDirectory,
+          manifest.artifacts.sourceDocument,
+          '网页源文档'
+        ).catch(() => undefined)
+        if (sourceDocument) {
           documentTranslationPreflightFailed = Boolean(documentTranslationBudgetError(sourceDocument.blocks, sourceDocument.warnings))
-          const cost = planDocumentTranslationCost(sourceDocument.blocks)
-          documentTranslationCostNeedsConfirmation = cost.classification === 'checkpoint'
-            && manifest.document.translationCostAcceptedFingerprint !== documentTranslationCostFingerprint(manifest, cost)
-        } catch {
-          documentTranslationPreflightFailed = true
+          if (!documentTranslationPreflightFailed) {
+            try {
+              const cost = planDocumentTranslationCost(sourceDocument.blocks)
+              documentTranslationCostNeedsConfirmation = cost.classification === 'checkpoint'
+                && manifest.document.translationCostAcceptedFingerprint !== documentTranslationCostFingerprint(manifest, cost)
+            } catch {
+              // 预检只负责预算分流；其余异常由真实 translate stage 记录为阶段失败。
+            }
+          }
         }
       }
       const needsTranslationSession = (
@@ -1177,7 +1185,10 @@ export class TaskPipeline {
         let parsed: Map<string, string> | undefined
         let rawOutput = ''
         let failure = ''
+        let attemptedCalls = 0
+        const priorAttempts = prior?.attempt ?? 0
         for (let attempt = 1; attempt <= DOCUMENT_TRANSLATION_MAX_ATTEMPTS; attempt += 1) {
+          attemptedCalls = attempt
           const basePrompt = documentTranslationPrompt(item.batch, {
             phase: phaseState === 'draft' ? 'normal' : 'refined',
             audience: manifest.document.audience,
@@ -1190,22 +1201,37 @@ export class TaskPipeline {
             ? `\n\n上一次校验失败（不可信 JSON）：\n${untrustedJsonSection('document-batch-failure', failure)}`
             : ''}`
           const requestedSessionId = session.current
-          const provider = await this.#provider(
-            taskDirectory,
-            manifest.taskId,
-            'translate',
-            generation.provider,
-            generation.model,
-            prompt,
-            requestedSessionId,
-            `${phaseId}-${item.batch.id}-attempt-${String(attempt).padStart(2, '0')}`,
-            phaseId === 'draft' && !requestedSessionId
-              ? async (externalSessionId) => {
-                  if (!persistExternalSession) throw new Error('文档翻译无法持久化 external session')
-                  await persistExternalSession(generation.id, externalSessionId)
-                }
-              : undefined
-          )
+          let provider: { text: string; sessionId: string }
+          try {
+            provider = await this.#provider(
+              taskDirectory,
+              manifest.taskId,
+              'translate',
+              generation.provider,
+              generation.model,
+              prompt,
+              requestedSessionId,
+              `${phaseId}-${item.batch.id}-attempt-${String(attempt).padStart(2, '0')}`,
+              phaseId === 'draft' && !requestedSessionId
+                ? async (externalSessionId) => {
+                    if (!persistExternalSession) throw new Error('文档翻译无法持久化 external session')
+                    await persistExternalSession(generation.id, externalSessionId)
+                  }
+                : undefined
+            )
+          } catch (error) {
+            await persistProgress((draft) => {
+              const record = draft.document.translationBatches.find((batch) => batch.id === item.id)
+              if (!record) throw new Error(`${item.id} 批次计划已漂移`)
+              record.attempt = Math.max(record.attempt, priorAttempts + attempt)
+            })
+            throw error
+          }
+          await persistProgress((draft) => {
+            const record = draft.document.translationBatches.find((batch) => batch.id === item.id)
+            if (!record) throw new Error(`${item.id} 批次计划已漂移`)
+            record.attempt = Math.max(record.attempt, priorAttempts + attempt)
+          })
           if (requestedSessionId && provider.sessionId !== requestedSessionId) throw new Error(`${item.id} 没有复用当前 external session`)
           session.current = provider.sessionId
           rawOutput = provider.text
@@ -1219,7 +1245,6 @@ export class TaskPipeline {
                 const record = draft.document.translationBatches.find((batch) => batch.id === item.id)
                 if (!record) throw new Error(`${item.id} 批次计划已漂移`)
                 record.status = 'failed'
-                record.attempt += attempt
                 delete record.artifact
               })
               throw new Error(`${item.id} 连续 ${DOCUMENT_TRANSLATION_MAX_ATTEMPTS} 次未通过结构校验：${failure}`)
@@ -1236,7 +1261,7 @@ export class TaskPipeline {
           fragmentIds: item.batch.blocks.filter((block) => block.sourceId).map((block) => block.id),
           inputFingerprint: item.inputFingerprint,
           status: 'verified' as const,
-          attempt: (prior?.attempt ?? 0) + 1,
+          attempt: priorAttempts + attemptedCalls,
           artifact
         }
         knownBatches.set(item.id, record)
@@ -4204,10 +4229,7 @@ export class TaskPipeline {
   }
 
   #jsonObject(text: string): string {
-    const start = text.indexOf('{')
-    const end = text.lastIndexOf('}')
-    if (start < 0 || end <= start) throw new Error('审计输出中没有合法 JSON 对象')
-    return text.slice(start, end + 1)
+    return extractJsonObject(text, '审计输出中没有合法 JSON 对象')
   }
 
   #commandFailure(prefix: string, stderr: string): string {

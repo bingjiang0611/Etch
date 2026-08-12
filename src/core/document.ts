@@ -121,6 +121,12 @@ export interface DocumentProcessingSummary {
   warnings: string[]
 }
 
+interface TextRange {
+  start: number
+  end: number
+  value: string
+}
+
 const headingLevels = (): Record<HeadingLevel, number> => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 })
 
 export function createMarkdownBlocks(inputs: readonly MarkdownBlockInput[]): MarkdownBlock[] {
@@ -418,14 +424,138 @@ function tableShape(markdown: string): { rows: number; cells: number } {
 }
 
 function markdownTableCells(row: string): number {
-  const trimmed = row.trim().replace(/^\|/u, '').replace(/\|$/u, '')
-  return trimmed ? trimmed.split(/(?<!\\)\|/u).length : 0
+  const visible = maskMarkdownRanges(row, markdownInlineCodeRanges(row)).trim()
+  const body = visible.replace(/^\|/u, '').replace(/\|$/u, '')
+  if (!body.trim()) return 0
+  let separators = 0
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] !== '|') continue
+    let backslashes = 0
+    for (let cursor = index - 1; cursor >= 0 && body[cursor] === '\\'; cursor -= 1) backslashes += 1
+    if (backslashes % 2 === 0) separators += 1
+  }
+  return separators + 1
 }
 
-function markdownUrls(value: string): string[] {
-  const linked = [...value.matchAll(/(?:!?)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gu)].map((match) => match[1])
-  const literal = [...value.matchAll(/https?:\/\/[^\s)<>{}\]]+/gu)].map((match) => match[0])
-  return [...linked, ...literal].sort()
+export function markdownInlineCodeRanges(value: string): TextRange[] {
+  const spans: TextRange[] = []
+  for (let index = 0; index < value.length;) {
+    if (value[index] !== '`') {
+      index += 1
+      continue
+    }
+    const start = index
+    while (value[index] === '`') index += 1
+    const markerLength = index - start
+    let cursor = index
+    let end = -1
+    while (cursor < value.length) {
+      const next = value.indexOf('`', cursor)
+      if (next < 0) break
+      cursor = next
+      while (value[cursor] === '`') cursor += 1
+      if (cursor - next === markerLength) {
+        end = cursor
+        break
+      }
+    }
+    if (end < 0) continue
+    spans.push({ start, end, value: value.slice(start, end) })
+    index = end
+  }
+  return spans
+}
+
+function markdownLinkDestinationRanges(value: string): TextRange[] {
+  const ranges: TextRange[] = []
+  for (let index = 0; index < value.length; index += 1) {
+    const labelStart = value[index] === '[' ? index : value[index] === '!' && value[index + 1] === '[' ? index + 1 : -1
+    if (labelStart < 0) continue
+    let labelEnd = labelStart + 1
+    let labelDepth = 0
+    while (labelEnd < value.length) {
+      if (value[labelEnd] === '\\') {
+        labelEnd += 2
+        continue
+      }
+      if (value[labelEnd] === '[') labelDepth += 1
+      else if (value[labelEnd] === ']') {
+        if (labelDepth === 0) break
+        labelDepth -= 1
+      }
+      labelEnd += 1
+    }
+    if (value[labelEnd] !== ']' || value[labelEnd + 1] !== '(') continue
+    let cursor = labelEnd + 2
+    while (/\s/u.test(value[cursor] ?? '')) cursor += 1
+    const destinationStart = value[cursor] === '<' ? cursor + 1 : cursor
+    if (value[cursor] === '<') {
+      cursor += 1
+      while (cursor < value.length && value[cursor] !== '>') cursor += 1
+      if (value[cursor] !== '>') continue
+      ranges.push({ start: destinationStart, end: cursor, value: value.slice(destinationStart, cursor) })
+      index = cursor
+      continue
+    }
+    let depth = 0
+    while (cursor < value.length) {
+      const character = value[cursor]
+      if (character === '\\') {
+        cursor += 2
+        continue
+      }
+      if (character === '(') depth += 1
+      else if (character === ')') {
+        if (depth === 0) break
+        depth -= 1
+      } else if (/\s/u.test(character) && depth === 0) break
+      cursor += 1
+    }
+    if (cursor > destinationStart) {
+      ranges.push({ start: destinationStart, end: cursor, value: value.slice(destinationStart, cursor) })
+      index = cursor
+    }
+  }
+  return ranges
+}
+
+function bareUrlRanges(value: string): TextRange[] {
+  const ranges: TextRange[] = []
+  for (const match of value.matchAll(/https?:\/\//gu)) {
+    const start = match.index
+    let cursor = start
+    let depth = 0
+    while (cursor < value.length && !/[\s<>{}[\]"'“”‘’，。；：！？、]/u.test(value[cursor])) {
+      if (value[cursor] === '(') depth += 1
+      else if (value[cursor] === ')') {
+        if (depth === 0) break
+        depth -= 1
+      }
+      cursor += 1
+    }
+    while (cursor > start && /[.,;:!?，。；：！？、]/u.test(value[cursor - 1])) cursor -= 1
+    if (cursor > start) ranges.push({ start, end: cursor, value: value.slice(start, cursor) })
+  }
+  return ranges
+}
+
+export function markdownUrls(value: string): string[] {
+  return markdownUrlRanges(value).map((range) => value.slice(range.start, range.end)).sort()
+}
+
+export function markdownUrlRanges(value: string): ReadonlyArray<Pick<TextRange, 'start' | 'end'>> {
+  const linked = markdownLinkDestinationRanges(value)
+  return [
+    ...linked,
+    ...bareUrlRanges(value).filter((candidate) =>
+      !linked.some((range) => candidate.start >= range.start && candidate.start < range.end))
+  ]
+}
+
+export function maskMarkdownRanges(value: string, ranges: ReadonlyArray<Pick<TextRange, 'start' | 'end'>>): string {
+  const characters = value.split('')
+  for (const range of ranges) characters.fill(' ', range.start, range.end)
+  return characters.join('')
 }
 
 function headingLevelFromMarkdown(markdown: string): HeadingLevel {

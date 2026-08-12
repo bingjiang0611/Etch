@@ -1,7 +1,14 @@
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
 import { guardedPrompt, untrustedJsonSection } from './prompt-boundary'
-import type { MarkdownBlock } from './document'
+import { extractJsonObject } from './schema-contract'
+import {
+  markdownInlineCodeRanges,
+  markdownUrlRanges,
+  markdownUrls,
+  maskMarkdownRanges,
+  type MarkdownBlock
+} from './document'
 
 export const DOCUMENT_TRANSLATION_MAX_ATTEMPTS = 3
 export const DOCUMENT_TRANSLATION_MAX_BATCHES = 12
@@ -288,22 +295,18 @@ export function documentTranslationRepairPrompt(batch: DocumentTranslationBatch,
   )
 }
 
-function jsonObject(text: string): string {
-  const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('翻译输出中没有 JSON 对象')
-  return text.slice(start, end + 1)
-}
-
-function markdownUrls(value: string): string[] {
-  const linked = [...value.matchAll(/(?:!?)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gu)]
-    .map((match) => match[1])
-  const literal = [...value.matchAll(/https?:\/\/[^\s)<>{}\]]+/gu)].map((match) => match[0])
-  return [...linked, ...literal].sort()
-}
-
 function tableShape(value: string): number[] {
-  return value.split('\n').filter(Boolean).map((line) => line.split('|').length)
+  return value.split('\n').filter(Boolean).map((line) => {
+    const visible = maskMarkdownRanges(line, markdownInlineCodeRanges(line))
+    let separators = 0
+    for (let index = 0; index < visible.length; index += 1) {
+      if (visible[index] !== '|') continue
+      let backslashes = 0
+      for (let cursor = index - 1; cursor >= 0 && visible[cursor] === '\\'; cursor -= 1) backslashes += 1
+      if (backslashes % 2 === 0) separators += 1
+    }
+    return separators
+  })
 }
 
 function structuralPrefix(block: MarkdownBlock, markdown: string): string {
@@ -323,13 +326,18 @@ function validateTranslatedBlock(source: MarkdownBlock, markdown: string): void 
   if (JSON.stringify(markdownUrls(source.markdown)) !== JSON.stringify(markdownUrls(translated))) {
     throw new Error(`${source.id} 的链接 URL 发生变化`)
   }
+  const sourceInline = markdownInlineCodeRanges(source.markdown).map((range) => range.value).sort()
+  const translatedInline = markdownInlineCodeRanges(translated).map((range) => range.value).sort()
+  if (JSON.stringify(sourceInline) !== JSON.stringify(translatedInline)) {
+    throw new Error(`${source.id} 的行内代码发生变化`)
+  }
   if (source.type === 'table' && JSON.stringify(tableShape(source.markdown)) !== JSON.stringify(tableShape(translated))) {
     throw new Error(`${source.id} 的表格行列发生变化`)
   }
 }
 
 export function parseDocumentTranslation(batch: DocumentTranslationBatch, text: string): Map<string, string> {
-  const parsed = TranslationOutputSchema.parse(JSON.parse(jsonObject(text)))
+  const parsed = TranslationOutputSchema.parse(JSON.parse(extractJsonObject(text, '翻译输出中没有 JSON 对象')))
   const expected = batch.blocks.map((block) => block.id)
   const observed = parsed.blocks.map((block) => block.id)
   if (JSON.stringify(observed) !== JSON.stringify(expected)) throw new Error(`${batch.id} 的 block id 或顺序不完整`)
@@ -370,16 +378,10 @@ function auditText(value: string): string {
     .replace(/[`*_~]/gu, '')
 }
 
-function normalizeEnglishMonthDates(value: string): string {
-  const months: Record<string, string> = {
-    january: '1', jan: '1', february: '2', feb: '2', march: '3', mar: '3', april: '4', apr: '4',
-    may: '5', june: '6', jun: '6', july: '7', jul: '7', august: '8', aug: '8', september: '9', sep: '9', sept: '9',
-    october: '10', oct: '10', november: '11', nov: '11', december: '12', dec: '12'
-  }
-  const name = Object.keys(months).join('|')
-  return value
-    .replace(new RegExp(`\\b(${name})\\.?\\s+(\\d{4})\\b`, 'giu'), (_, month, year) => `${months[String(month).toLocaleLowerCase('en-US')]} ${year}`)
-    .replace(new RegExp(`\\b(\\d{1,2})\\s+(${name})\\.?\\s+(\\d{4})\\b`, 'giu'), (_, day, month, year) => `${day} ${months[String(month).toLocaleLowerCase('en-US')]} ${year}`)
+const ENGLISH_MONTHS: Record<string, number> = {
+  january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+  may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8, september: 9, sep: 9, sept: 9,
+  october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12
 }
 
 export function freezeDocumentGlossary(input: {
@@ -403,10 +405,129 @@ export function freezeDocumentGlossary(input: {
   return Object.freeze({ entries: Object.freeze(entries), fingerprint })
 }
 
+function englishNumber(value: string): number | undefined {
+  const small: Record<string, number> = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+    sixty: 60, seventy: 70, eighty: 80, ninety: 90
+  }
+  let total = 0
+  let group = 0
+  for (const word of value.toLocaleLowerCase('en-US').split(/[\s-]+/u)) {
+    if (word === 'and') continue
+    if (word in small) group += small[word]
+    else if (word === 'hundred') group = Math.max(1, group) * 100
+    else if (word === 'thousand') {
+      total += Math.max(1, group) * 1_000
+      group = 0
+    } else return undefined
+  }
+  return total + group
+}
+
+function chineseNumber(value: string): number | undefined {
+  const [integer, decimal] = value.split('点')
+  const digits: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+  let integerValue = 0
+  if ([...integer].every((character) => character in digits)) {
+    integerValue = Number([...integer].map((character) => digits[character]).join(''))
+  } else {
+    let section = 0
+    let digit = 0
+    for (const character of integer) {
+      if (character in digits) digit = digits[character]
+      else if (character === '十' || character === '百' || character === '千') {
+        const unit = character === '十' ? 10 : character === '百' ? 100 : 1_000
+        section += Math.max(1, digit) * unit
+        digit = 0
+      } else if (character === '万') {
+        integerValue += (section + digit) * 10_000
+        section = 0
+        digit = 0
+      } else return undefined
+    }
+    integerValue += section + digit
+  }
+  if (decimal === undefined) return integerValue
+  if (!decimal || ![...decimal].every((character) => character in digits)) return undefined
+  return Number(`${integerValue}.${[...decimal].map((character) => digits[character]).join('')}`)
+}
+
+function normalizedNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(12)))
+}
+
+function numericAuditText(value: string): string {
+  return maskMarkdownRanges(value, [
+    ...markdownInlineCodeRanges(value),
+    ...markdownUrlRanges(value)
+  ])
+    .replace(/\b(?:about|approximately)\s+(?=\d)/giu, '约')
+    .replace(/\b(?:a|an|single|few|thousands|multi-million)\b/giu, ' ')
+    .replace(/(?:数百|数千|数万|数十万|数百万|几个|一个|一种|一开始|一套|一项|(?<![零〇一二两三四五六七八九十百千万])多种(?!格式)|更多|每一(?:种|层))/gu, ' ')
+    .replace(/\b(\d+(?:\.\d+)?)x\s+less\b/giu, ' ')
+    .replace(/(?:约为[^，。；：！？,.!?:;]*的)?三分之一/gu, ' ')
+    .replace(/百分之\s*([零〇一二两三四五六七八九十百千万点]+|\d+(?:\.\d+)?)/gu, (_, number: string) => {
+      const parsed = /^\d/u.test(number) ? Number(number) : chineseNumber(number)
+      return parsed === undefined ? _ : `${normalizedNumber(parsed)}%`
+    })
+    .replace(/([零〇一二两三四五六七八九十百千万]+)(?:多|余)(?=[种项个条台倍\s，。；：！？,.!?:;]|$)/gu, (match, number: string) => {
+      const parsed = chineseNumber(number)
+      return parsed === undefined ? match : `${normalizedNumber(parsed)}+`
+    })
+    .replace(/\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)(?:[\s-]+(?:and[\s-]+)?(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand))*(?=\s*(?:points?|times?|percent|pixels?|milliseconds?|seconds?|kilograms?|grams?|kilometers?|meters?|centimeters?|millimeters?|bytes?|items?|tools?|formats?|(?:different\s+)?harnesses|(?:distinct\s+)?capability\s+tiers?)\b)/giu, (number) => String(englishNumber(number)))
+    .replace(/([零〇一二两三四五六七八九十百千万]+(?:点[零〇一二两三四五六七八九]+)?)(?=\s*(?:款|个百分点|个(?!百分点)|项|种|台|层|条|百分点|点|倍|像素|毫秒|秒|千克|公斤|克|公里|米|厘米|毫米|GB|MB|KB|美元|美金|人民币|元|欧元|英镑))/gu, (number) => {
+      const parsed = chineseNumber(number)
+      return parsed === undefined ? number : normalizedNumber(parsed)
+    })
+    .replace(/第([零〇一二两三四五六七八九十百千万]+)(?=\s*(?:版|代|章|节|项|条|次))/gu, (_, number: string) => {
+      const parsed = chineseNumber(number)
+      return parsed === undefined ? _ : normalizedNumber(parsed)
+    })
+    .replace(/(?<![第零〇一二两三四五六七八九十百千万])([零〇一二两三四五六七八九十百千万]+)(?=[\s，。；：！？,.!?:;]|$)/gu, (number) => {
+      const parsed = chineseNumber(number)
+      return parsed === undefined ? number : normalizedNumber(parsed)
+    })
+}
+
 function preservedNumericTokens(value: string): string[] {
-  return [...normalizeEnglishMonthDates(value).replace(/`[^`\n]+`/gu, '').matchAll(
-    /\b\d{1,4}(?:[-/.]\d{1,2}){1,2}\b|\b\d+(?:[.,]\d+)*(?:\s?(?:%|°[CF]|px|ms|s|kg|g|km|m|cm|mm|GB|MB|KB))?\b/giu
-  )].map((match) => match[0]).sort()
+  const facts: string[] = []
+  const months = Object.keys(ENGLISH_MONTHS).join('|')
+  let text = numericAuditText(value)
+  const takeDates = (pattern: RegExp, format: (...parts: string[]) => string): void => {
+    text = text.replace(pattern, (...match: string[]) => {
+      facts.push(`date:${format(...match.slice(1))}`)
+      return ' '
+    })
+  }
+  takeDates(new RegExp(`\\b(${months})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?[,]?\\s+(\\d{4})\\b`, 'giu'), (month, day, year) => `${year}-${ENGLISH_MONTHS[month.toLocaleLowerCase('en-US')]}-${Number(day)}`)
+  takeDates(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${months})\\.?[,]?\\s+(\\d{4})\\b`, 'giu'), (day, month, year) => `${year}-${ENGLISH_MONTHS[month.toLocaleLowerCase('en-US')]}-${Number(day)}`)
+  takeDates(/\b(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/gu, (year, month, day) => `${year}-${Number(month)}-${Number(day)}`)
+  takeDates(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/gu, (year, month, day) => `${year}-${Number(month)}-${Number(day)}`)
+  takeDates(new RegExp(`\\b(${months})\\.?\\s+(\\d{4})\\b`, 'giu'), (month, year) => `${year}-${ENGLISH_MONTHS[month.toLocaleLowerCase('en-US')]}`)
+  takeDates(/\b(\d{4})\s*年\s*(\d{1,2})\s*月/gu, (year, month) => `${year}-${Number(month)}`)
+
+  const units: Record<string, string> = {
+    '$': 'USD', 美元: 'USD', 美金: 'USD', '¥': 'CNY', '￥': 'CNY', 人民币: 'CNY', 元: 'CNY',
+    '€': 'EUR', 欧元: 'EUR', '£': 'GBP', 英镑: 'GBP', '%': 'percent', '％': 'percent',
+    x: 'ratio', '×': 'ratio', 倍: 'ratio', point: 'point', points: 'point', '个百分点': 'point', 百分点: 'point', 点: 'point',
+    px: 'px', 像素: 'px', ms: 'ms', 毫秒: 'ms', s: 's', 秒: 's', kg: 'kg', 千克: 'kg', 公斤: 'kg',
+    g: 'g', 克: 'g', km: 'km', 公里: 'km', m: 'm', 米: 'm', cm: 'cm', 厘米: 'cm', mm: 'mm', 毫米: 'mm',
+    gb: 'GB', mb: 'MB', kb: 'KB', '°c': '°C', 摄氏度: '°C', '°f': '°F', 华氏度: '°F'
+  }
+  const unitPattern = Object.keys(units).sort((left, right) => right.length - left.length).map((unit) => unit.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|')
+  const numberPattern = /((?:(?:约|大约|近|~|≈)\s*)?(?:(?:-|−|负)\s*)?(?:[$¥￥€£]\s*)?|(?:(?:约|大约|近|~|≈)\s*)?(?:[$¥￥€£]\s*)?(?:(?:-|−|负)\s*)?)(\d+(?:,\d{3})*(?:\.\d+)?)(\s*(?:\+|＋|多|余))?\s*/gu
+  for (const match of text.matchAll(new RegExp(`${numberPattern.source}(${unitPattern})?`, 'giu'))) {
+    const prefix = match[1]
+    const rawUnit = match[4]?.toLocaleLowerCase('en-US')
+    const currency = /[$¥￥€£]/u.exec(prefix)?.[0]
+    const unit = currency ? units[currency] : rawUnit ? units[rawUnit] : ''
+    const modifiers = [/[~≈]|约|大约|近/u.test(prefix) ? 'approx' : '', match[3] ? 'plus' : ''].filter(Boolean).join('+')
+    const sign = /[-−负]/u.test(prefix) ? '-' : ''
+    facts.push(`number:${sign}${normalizedNumber(Number(match[2].replace(/,/gu, '')))}:${modifiers}:${unit}`)
+  }
+  return facts.sort()
 }
 
 function termAppears(value: string, term: string): boolean {
@@ -436,8 +557,8 @@ export function auditDocumentTranslationDeterministically(
   for (const source of translatableDocumentBlocks(sourceBlocks)) {
     const translated = translatedById.get(source.id)
     if (!translated) continue
-    const sourceInline = [...source.markdown.matchAll(/`[^`\n]+`/gu)].map((match) => match[0]).sort()
-    const translatedInline = [...translated.matchAll(/`[^`\n]+`/gu)].map((match) => match[0]).sort()
+    const sourceInline = markdownInlineCodeRanges(source.markdown).map((range) => range.value).sort()
+    const translatedInline = markdownInlineCodeRanges(translated).map((range) => range.value).sort()
     if (JSON.stringify(sourceInline) !== JSON.stringify(translatedInline)) issues.push({ blockId: source.id, code: 'inline-code', detail: '行内代码发生变化' })
     const sourceTokens = preservedNumericTokens(source.markdown)
     const translatedTokens = preservedNumericTokens(translated)

@@ -44,6 +44,19 @@ describe('文档 block 翻译', () => {
     expect(merged[3].markdown).toContain('const ok')
   })
 
+  it('从带解释的 Provider 输出中只提取首个完整 JSON 对象', () => {
+    const [batch] = partitionDocumentBlocks(blocks)
+    const output = JSON.stringify({ blocks: [
+      { id: batch.blocks[0].id, markdown: '# 可靠的工具' },
+      { id: batch.blocks[1].id, markdown: '阅读[原文](https://example.com/a)。' }
+    ] })
+    expect(parseDocumentTranslation(batch, `结果如下：\n${output}\n说明：{done}`))
+      .toEqual(new Map([
+        [batch.blocks[0].id, '# 可靠的工具'],
+        [batch.blocks[1].id, '阅读[原文](https://example.com/a)。']
+      ]))
+  })
+
   it('拒绝 Provider 改写链接或漏 block', () => {
     const [batch] = partitionDocumentBlocks(blocks)
     expect(() => parseDocumentTranslation(batch, JSON.stringify({ blocks: [
@@ -62,6 +75,47 @@ describe('文档 block 翻译', () => {
     expect(() => parseDocumentTranslation(batch, JSON.stringify({ blocks: [
       { id: batch.blocks[0].id, markdown: '详情请打开 https://example.com/changed。' }
     ] }))).toThrow('链接 URL')
+  })
+
+  it('在批次结构校验中硬拦行内代码改写', () => {
+    const [batch] = partitionDocumentBlocks(createMarkdownBlocks([{
+      type: 'paragraph',
+      markdown: 'Run ``echo `3` `` now.'
+    }]))
+    expect(() => parseDocumentTranslation(batch, JSON.stringify({ blocks: [{
+      id: batch.blocks[0].id,
+      markdown: '现在运行 ``echo `4` ``。'
+    }] }))).toThrow('行内代码')
+  })
+
+  it('正确解析含平衡括号、尾标点及重复次数的 Markdown URL', () => {
+    const [batch] = partitionDocumentBlocks(createMarkdownBlocks([{
+      type: 'paragraph',
+      markdown: 'See [API](https://example.com/a_(b)) and https://example.com/a_(b). Again: https://example.com/a_(b).'
+    }]))
+    expect(() => parseDocumentTranslation(batch, JSON.stringify({ blocks: [{
+      id: batch.blocks[0].id,
+      markdown: '参见 [API](https://example.com/a_(b)) 和 https://example.com/a_(b)。再看：https://example.com/a_(b)。'
+    }] }))).not.toThrow()
+    expect(() => parseDocumentTranslation(batch, JSON.stringify({ blocks: [{
+      id: batch.blocks[0].id,
+      markdown: '参见 [API](https://example.com/a_(b)) 和 https://example.com/a_(b)。'
+    }] }))).toThrow('链接 URL')
+  })
+
+  it('表格结构忽略 escaped pipe 与 inline-code pipe', () => {
+    const [batch] = partitionDocumentBlocks(createMarkdownBlocks([{
+      type: 'table',
+      markdown: '| Syntax | Meaning |\n| --- | --- |\n| `a|b` | A \\| B |'
+    }]))
+    expect(() => parseDocumentTranslation(batch, JSON.stringify({ blocks: [{
+      id: batch.blocks[0].id,
+      markdown: '| 语法 | 含义 |\n| --- | --- |\n| `a|b` | 甲 \\| 乙 |'
+    }] }))).not.toThrow()
+    expect(() => parseDocumentTranslation(batch, JSON.stringify({ blocks: [{
+      id: batch.blocks[0].id,
+      markdown: '| 语法 | 含义 | 新列 |\n| --- | --- | --- |\n| `a|b` | 甲 \\| 乙 | 值 |'
+    }] }))).toThrow('表格行列')
   })
 
   it('把 13–40 批归类为 checkpoint，而不是硬拒绝', () => {
@@ -158,6 +212,118 @@ describe('文档 block 翻译', () => {
       'number-date-unit',
       'glossary'
     ])
+  })
+
+  it('确定性审计接受日期、中文数字和量纲的等价表达', () => {
+    const source = createMarkdownBlocks([{
+      type: 'paragraph',
+      markdown: 'On July 8, 2026, 3 tools covered ~1.7x, $2.09, six points, 81%, and 10+ formats.'
+    }])
+    const translated = createMarkdownBlocks([{
+      type: 'paragraph',
+      markdown: '2026年7月8日，三款工具覆盖约1.7倍、2.09美元、六点、百分之八十一和十多种格式。'
+    }])
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
+  })
+
+  it('接受真实失败件中的等价日期、计数与单位表达', () => {
+    const source = createMarkdownBlocks([
+      { id: 'date', type: 'paragraph', markdown: 'July 8, 2026' },
+      { id: 'tiers', type: 'paragraph', markdown: 'The models clustered into 3 capability tiers.' },
+      { id: 'metrics', type: 'paragraph', markdown: 'Sonnet 5 is ~1.7x cheaper than Opus 4.8, but cost $2.09 vs $1.94, scoring six points lower (81% vs 87%) and consuming 1.9x more tokens.' },
+      { id: 'languages', type: 'unordered-list-item', markdown: '- The codebase spans 10+ languages.' }
+    ])
+    const translated = createMarkdownBlocks([
+      { id: 'date', type: 'paragraph', markdown: '2026 年 7 月 8 日' },
+      { id: 'tiers', type: 'paragraph', markdown: '模型聚集成了三个能力层级。' },
+      { id: 'metrics', type: 'paragraph', markdown: 'Sonnet 5 比 Opus 4.8 低约 1.7 倍，但成本为 2.09 美元对 1.94 美元，低了 6 个百分点（81% 对 87%），并消耗了 1.9 倍的词元。' },
+      { id: 'languages', type: 'unordered-list-item', markdown: '- 该代码库横跨十多种语言。' }
+    ])
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
+  })
+
+  it('确定性审计接受裸数字的中文等价表达', () => {
+    const source = createMarkdownBlocks([{ type: 'paragraph', markdown: 'Answer: 3.' }])
+    const translated = createMarkdownBlocks([{ type: 'paragraph', markdown: '答案：三。' }])
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
+  })
+
+  it('确定性审计接受英文 points 到中文个百分点', () => {
+    const source = createMarkdownBlocks([{ type: 'paragraph', markdown: 'The score fell six points.' }])
+    const translated = createMarkdownBlocks([{ type: 'paragraph', markdown: '得分下降了六个百分点。' }])
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
+  })
+
+  it.each([
+    ['近似词', 'about 3 seconds', '约 3 秒'],
+    ['序数版本', 'Version 2', '第二版']
+  ])('确定性审计接受%s的中英文等价表达', (_name, markdown, translatedMarkdown) => {
+    const source = createMarkdownBlocks([{ type: 'paragraph', markdown }])
+    const translated = createMarkdownBlocks([{ type: 'paragraph', markdown: translatedMarkdown }])
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
+  })
+
+  it.each([
+    ['真实数值变化', '3 tools', '四款工具'],
+    ['负号丢失', '-3ms', '3毫秒'],
+    ['币种改变', '$2.09', '2.09欧元'],
+    ['百分比丢失', '81%', '八十一'],
+    ['常用单位改变', '12ms', '十二秒']
+  ])('确定性审计硬拦%s', (_name, markdown, translatedMarkdown) => {
+    const source = createMarkdownBlocks([{ type: 'paragraph', markdown }])
+    const translated = createMarkdownBlocks([{ type: 'paragraph', markdown: translatedMarkdown }])
+    expect(auditDocumentTranslationDeterministically(source, translated).map((issue) => issue.code)).toContain('number-date-unit')
+  })
+
+  it('数字审计屏蔽 URL 与合法多反引号 inline code span', () => {
+    const source = createMarkdownBlocks([{
+      type: 'paragraph',
+      markdown: '🚀 Open [v2](https://example.com/v2?q=81) and run ``echo `3` ``.'
+    }])
+    const translated = createMarkdownBlocks([{
+      type: 'paragraph',
+      markdown: '🚀 打开 [v2](https://example.com/v2?q=81)，然后运行 ``echo `3` ``。'
+    }])
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
+
+    const changed = createMarkdownBlocks([{
+      type: 'paragraph',
+      markdown: '🚀 打开 [v2](https://example.com/v2?q=81)，然后运行 ``echo `4` ``。'
+    }])
+    expect(auditDocumentTranslationDeterministically(source, changed).map((issue) => issue.code)).toEqual(['inline-code'])
+  })
+
+  it('普通中文数词片段不进入高置信数字硬拦', () => {
+    const source = createMarkdownBlocks([{ type: 'paragraph', markdown: 'The system stays consistent and offers a premium experience.' }])
+    const translated = createMarkdownBlocks([{ type: 'paragraph', markdown: '系统保持一致，并提供一流体验。' }])
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
+  })
+
+  it('真实任务中的模糊量词与关系改写不进入数字硬拦', () => {
+    const source = createMarkdownBlocks([
+      { id: 'block-0007', type: 'paragraph', markdown: 'Tasks featured edits against a multi-million line codebase covering many popular languages.' },
+      { id: 'block-0019', type: 'paragraph', markdown: 'Figure 2: Three distinct capability tiers emerged, with nuance in which models were effective in each group.' },
+      { id: 'block-0029', type: 'paragraph', markdown: 'We ran the same model through two different harnesses. The cost per task differed by more than 2x in some cases.' },
+      { id: 'block-0031', type: 'paragraph', markdown: 'Pi sent about 3x less context per turn.' },
+      { id: 'block-0044', type: 'paragraph', markdown: 'Our engineers merge thousands of code changes a day. A good pull request is a rich artifact.' },
+      { id: 'block-0054', type: 'paragraph', markdown: 'What came out of this exercise was a single task.' },
+      { id: 'block-0063', type: 'paragraph', markdown: 'In our early experiments, a few model scores looked too good to be true.' },
+      { id: 'block-0065', type: 'paragraph', markdown: 'We started with a simple question.' },
+      { id: 'block-0066', type: 'paragraph', markdown: 'Any team already has a benchmark. We are adding more tasks and will run every new agent through it.' }
+    ])
+    const translated = createMarkdownBlocks([
+      { id: 'block-0007', type: 'paragraph', markdown: '任务涉及修改一个包含数百万行代码、覆盖多种主流语言的代码库。' },
+      { id: 'block-0019', type: 'paragraph', markdown: '图 2：整体结果呈现出三个能力层级，但每一层中哪些模型真正有效仍有差异。' },
+      { id: 'block-0029', type: 'paragraph', markdown: '我们通过两种不同的智能体运行框架运行同一模型，某些情况下单任务成本差异超过两倍。' },
+      { id: 'block-0031', type: 'paragraph', markdown: 'Pi 每轮发送的上下文量约为其他框架的三分之一。' },
+      { id: 'block-0044', type: 'paragraph', markdown: '我们的工程师每天都会合并数千项代码变更。高质量的拉取请求是一种信息丰富的产物。' },
+      { id: 'block-0054', type: 'paragraph', markdown: '经过这一流程，最终得到的是一项任务。' },
+      { id: 'block-0063', type: 'paragraph', markdown: '在早期实验中，有几个模型的得分好得令人难以置信。' },
+      { id: 'block-0065', type: 'paragraph', markdown: '一开始，我们提出了一个简单的问题。' },
+      { id: 'block-0066', type: 'paragraph', markdown: '任何团队都已经拥有一套基准评测。我们会添加更多任务，并评测每一种新的智能体。' }
+    ])
+
+    expect(auditDocumentTranslationDeterministically(source, translated)).toEqual([])
   })
 
   it('确定性审计接受 Markdown 标记和英文月份的等价译法', () => {

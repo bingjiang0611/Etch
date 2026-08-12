@@ -156,4 +156,110 @@ const value = 1
       { code: 'link-target-mismatch', blockId: 'link' }
     ])
   })
+
+  it('accepts balanced-parenthesis URLs with translated trailing punctuation', () => {
+    const source: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{
+        id: 'link',
+        type: 'paragraph',
+        markdown: 'See [API](https://example.com/a_(b)) and https://example.com/a_(b). Again: https://example.com/a_(b).'
+      }])
+    }
+    const translated: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{
+        id: 'link',
+        type: 'paragraph',
+        markdown: '参见 [API](https://example.com/a_(b)) 和 https://example.com/a_(b)。再看：https://example.com/a_(b)。'
+      }])
+    }
+
+    expect(verifyDocumentCompleteness(source, translated).issues).toEqual([])
+  })
+
+  it('rejects removing one occurrence of a repeated URL', () => {
+    const source: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{ id: 'link', type: 'paragraph', markdown: 'First https://example.com/a_(b). Second https://example.com/a_(b).' }])
+    }
+    const translated: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{ id: 'link', type: 'paragraph', markdown: '仅保留 https://example.com/a_(b)。' }])
+    }
+
+    expect(verifyDocumentCompleteness(source, translated).issues).toMatchObject([
+      { code: 'link-target-mismatch', blockId: 'link' }
+    ])
+  })
+
+  it('validates relative targets behind nested link labels', () => {
+    const source: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{ id: 'link', type: 'paragraph', markdown: 'See [API [v2]](docs/v2/page.md).' }])
+    }
+    const translated: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{ id: 'link', type: 'paragraph', markdown: '参见 [API [v2]](docs/v3/page.md)。' }])
+    }
+
+    expect(verifyDocumentCompleteness(source, translated).issues).toMatchObject([
+      { code: 'link-target-mismatch', blockId: 'link' }
+    ])
+  })
+
+  it('does not include surrounding quotation marks in bare URLs', () => {
+    const source: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{ id: 'link', type: 'paragraph', markdown: 'Open "https://example.com/docs".' }])
+    }
+    const translated: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{ id: 'link', type: 'paragraph', markdown: '打开“https://example.com/docs”。' }])
+    }
+
+    expect(verifyDocumentCompleteness(source, translated).issues).toEqual([])
+  })
+
+  it('ignores escaped and inline-code pipes when comparing table shape', () => {
+    const source: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{
+        id: 'table',
+        type: 'table',
+        markdown: '| Syntax | Meaning |\n| --- | --- |\n| `a|b` | A \\| B |'
+      }])
+    }
+    const translated: MarkdownDocument = {
+      metadata,
+      warnings: [],
+      blocks: createMarkdownBlocks([{
+        id: 'table',
+        type: 'table',
+        markdown: '| 语法 | 含义 |\n| --- | --- |\n| `甲|乙` | 甲 \\| 乙 |'
+      }])
+    }
+
+    expect(documentStructureStats(source).tableCells).toBe(4)
+    expect(verifyDocumentCompleteness(source, translated).issues).toEqual([])
+
+    const extraColumn: MarkdownDocument = {
+      ...translated,
+      blocks: createMarkdownBlocks([{
+        id: 'table',
+        type: 'table',
+        markdown: '| 语法 | 含义 | 新列 |\n| --- | --- | --- |\n| `甲|乙` | 甲 \\| 乙 | 值 |'
+      }])
+    }
+    expect(verifyDocumentCompleteness(source, extraColumn).issues.map((issue) => issue.code)).toContain('table-shape-mismatch')
+  })
 })

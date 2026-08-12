@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { VALIDATION_FAILURE_PROMPT_LIMIT, describeValidationFailure, jsonContract } from '../src/core/schema-contract'
+import { VALIDATION_FAILURE_PROMPT_LIMIT, describeValidationFailure, extractJsonObject, jsonContract } from '../src/core/schema-contract'
 import {
   DigestReduceSchema,
   DigestSegmentSchema,
@@ -131,6 +131,25 @@ describe('校验失败反馈', () => {
       [],
       failure
     )).toContain(kept)
+  })
+})
+
+describe('JSON 对象提取', () => {
+  it('忽略字符串中的花括号与对象后解释', () => {
+    expect(extractJsonObject('结果：{"text":"a } { b","nested":{"ok":true}}\n说明 {not-json}'))
+      .toBe('{"text":"a } { b","nested":{"ok":true}}')
+  })
+
+  it('跳过不闭合的前置花括号，找到后续完整对象', () => {
+    expect(extractJsonObject('草稿 { 不完整\n{"ok":true}')).toBe('{"ok":true}')
+  })
+
+  it('跳过前置说明中不是 JSON 的花括号', () => {
+    expect(extractJsonObject('请按 {field} 阅读：{"ok":true}')).toBe('{"ok":true}')
+  })
+
+  it('没有完整对象时保留业务错误', () => {
+    expect(() => extractJsonObject('not json', '指定错误')).toThrow('指定错误')
   })
 })
 

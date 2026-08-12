@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -100,6 +100,185 @@ function providerSessionFromArgs(args: readonly string[]): string {
 }
 
 describe('document translation recovery', () => {
+  async function translationTask(markdown: string) {
+    const directory = await mkdtemp(join(tmpdir(), 'etch-document-boundary-'))
+    directories.push(directory)
+    const store = new TaskStore()
+    const manifest = createTaskManifest(
+      { kind: 'url', url: 'https://example.com/document-boundary' },
+      'Document boundary',
+      'qoder',
+      '',
+      'standard',
+      false,
+      'document',
+      '',
+      'translate',
+      'normal'
+    )
+    const sourceDocument: MarkdownDocument = {
+      metadata: {
+        processingMode: 'translate',
+        targetLanguage: 'zh-CN',
+        fetchedAt: '2026-08-12T00:00:00.000Z',
+        contentType: 'web',
+        sourceUrl: 'https://example.com/document-boundary',
+        sourceLanguage: 'en'
+      },
+      blocks: createMarkdownBlocks([{ type: 'paragraph', markdown }]),
+      warnings: []
+    }
+    await writeFile(join(directory, 'source-document.json'), `${JSON.stringify(sourceDocument)}\n`, 'utf8')
+    manifest.pipeline.stages.source.status = 'completed'
+    manifest.pipeline.stages.inspect.status = 'completed'
+    manifest.pipeline.stages.translate.status = 'ready'
+    manifest.document.resolvedAction = 'translate'
+    manifest.document.resolvedSource = 'web'
+    manifest.document.sourceLanguage = 'en'
+    manifest.document.blockCount = 1
+    manifest.artifacts.sourceDocument = await artifact(directory, 'source-document.json')
+    await store.create(directory, manifest)
+    return {
+      directory,
+      store,
+      pipeline: new TaskPipeline(
+        store,
+        defaultSettings('/Users/test'),
+        new HistoricalGlossaryService(store, () => []),
+        () => undefined
+      )
+    }
+  }
+
+  it('records every Provider call before a translation batch succeeds', async () => {
+    const task = await translationTask('A reliable system.')
+    let draftCalls = 0
+    runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
+      const sessionId = providerSessionFromArgs(spec.args)
+      if (spec.stdin.includes('document-analysis-blocks')) {
+        return providerResult(JSON.stringify({
+          contentType: 'article', tone: 'technical', audience: 'developers', glossary: [], risks: []
+        }), sessionId)
+      }
+      const blocks = sectionData(spec.stdin, 'document-blocks')
+      draftCalls += 1
+      if (draftCalls === 1) return providerResult('not-json', sessionId)
+      return providerResult(JSON.stringify({ blocks: blocks.map((block) => ({ id: block.id, markdown: '可靠的系统。' })) }), sessionId)
+    })
+
+    await task.pipeline.start(task.directory)
+
+    const completed = await task.store.load(task.directory)
+    expect(completed.pipeline.stages.review.status).toBe('checkpoint')
+    expect(completed.document.translationBatches).toEqual([
+      expect.objectContaining({ id: 'draft:document-001', status: 'verified', attempt: 2 })
+    ])
+  })
+
+  it('records Provider calls when a later batch attempt throws', async () => {
+    const task = await translationTask('A reliable system.')
+    let draftCalls = 0
+    runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
+      const sessionId = providerSessionFromArgs(spec.args)
+      if (spec.stdin.includes('document-analysis-blocks')) {
+        return providerResult(JSON.stringify({
+          contentType: 'article', tone: 'technical', audience: 'developers', glossary: [], risks: []
+        }), sessionId)
+      }
+      draftCalls += 1
+      if (draftCalls === 1) return providerResult('not-json', sessionId)
+      throw new Error('provider unavailable')
+    })
+
+    await expect(task.pipeline.start(task.directory)).rejects.toThrow('provider unavailable')
+
+    const failed = await task.store.load(task.directory)
+    expect(failed.document.translationBatches).toEqual([
+      expect.objectContaining({ id: 'draft:document-001', attempt: 2 })
+    ])
+  })
+
+  it('keeps residual deterministic audit issues as hard failures', async () => {
+    const task = await translationTask('Version 2 is stable.')
+    runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
+      const sessionId = providerSessionFromArgs(spec.args)
+      if (spec.stdin.includes('document-analysis-blocks')) {
+        return providerResult(JSON.stringify({
+          contentType: 'article', tone: 'technical', audience: 'developers', glossary: [], risks: []
+        }), sessionId)
+      }
+      const blocks = sectionData(spec.stdin, 'document-blocks')
+      return providerResult(JSON.stringify({ blocks: blocks.map((block) => ({ id: block.id, markdown: '版本 3 很稳定。' })) }), sessionId)
+    })
+
+    await expect(task.pipeline.start(task.directory)).rejects.toThrow('文档确定性终检未通过')
+
+    const completed = await task.store.load(task.directory)
+    expect(completed.pipeline.stages.translate.status).toBe('failed')
+    expect(completed.pipeline.stages.review.status).toBe('pending')
+    expect(completed.document.warnings).toContain(`${completed.document.translationBatches[0].blockIds[0]}: 数字、日期或单位发生变化`)
+    expect(completed.document.translationBatches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'audit-repair:document-001', status: 'stale', attempt: 1 })
+    ]))
+  })
+
+  it('reuses a previously verified draft after a deterministic-only failure without another Provider call', async () => {
+    const task = await translationTask('On July 8, 2026, the codebase spans 10+ languages.')
+    runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
+      const sessionId = providerSessionFromArgs(spec.args)
+      if (spec.stdin.includes('document-analysis-blocks')) {
+        return providerResult(JSON.stringify({
+          contentType: 'article', tone: 'technical', audience: 'developers', glossary: [], risks: []
+        }), sessionId)
+      }
+      const blocks = sectionData(spec.stdin, 'document-blocks')
+      return providerResult(JSON.stringify({ blocks: blocks.map((block) => ({
+        id: block.id,
+        markdown: '2026 年 7 月 8 日，该代码库横跨十多种语言。'
+      })) }), sessionId)
+    })
+
+    await task.pipeline.start(task.directory)
+    const first = await task.store.load(task.directory)
+    const draft = first.document.translationBatches.find((batch) => batch.id === 'draft:document-001')
+    expect(draft).toMatchObject({ status: 'verified', attempt: 1 })
+
+    const draftText = await readFile(join(task.directory, draft!.artifact!.relativePath), 'utf8')
+    const retry = await task.store.mutate(task.directory, (manifest) => {
+      manifest.pipeline.stages.translate.status = 'failed'
+      manifest.pipeline.stages.translate.errorCode = '文档确定性终检未通过（1 项）'
+      manifest.pipeline.stages.review.status = 'pending'
+      delete manifest.pipeline.stages.review.checkpointId
+      delete manifest.artifacts.translatedDocument
+      delete manifest.artifacts.translatedMarkdown
+      manifest.document.translationPhase = 'draft'
+    })
+    runProcessMock.mockReset()
+
+    await task.pipeline.start(task.directory)
+
+    const recovered = await task.store.load(task.directory)
+    expect(runProcessMock).not.toHaveBeenCalled()
+    expect(recovered.pipeline.stages.translate.status).toBe('completed')
+    expect(recovered.pipeline.stages.review).toMatchObject({ status: 'checkpoint', checkpointId: 'document-review' })
+    expect(recovered.document.translationBatches.find((batch) => batch.id === 'draft:document-001'))
+      .toMatchObject({ status: 'verified', attempt: 1 })
+    expect(await readFile(join(task.directory, draft!.artifact!.relativePath), 'utf8')).toBe(draftText)
+    expect(recovered.revision).toBeGreaterThan(retry.revision)
+  })
+
+  it('does not disguise a corrupt source artifact as a translation budget preflight failure', async () => {
+    const task = await translationTask('Source text.')
+    await writeFile(join(task.directory, 'source-document.json'), '{invalid', 'utf8')
+
+    await expect(task.pipeline.start(task.directory)).rejects.toThrow()
+
+    const failed = await task.store.load(task.directory)
+    expect(failed.pipeline.stages.translate.status).toBe('failed')
+    expect(failed.translation.sessionGenerations).toHaveLength(1)
+    expect(failed.translation.sessionGenerations[0]).toMatchObject({ status: 'active', reason: 'initial' })
+  })
+
   it('reuses all verified draft batches after a real interrupted recovery without requiring a new draft session', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'etch-document-recovery-'))
     directories.push(directory)

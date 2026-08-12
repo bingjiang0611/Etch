@@ -6,6 +6,37 @@ import { z } from 'zod'
 // 修复轮里允许带多少校验失败详情：宁愿多花几百 token，也不能把枚举可选值、字段路径这类关键信息截掉。
 export const VALIDATION_FAILURE_PROMPT_LIMIT = 1500
 
+// 提取模型输出中第一个完整 JSON object；字符串里的花括号与对象后解释不参与边界计算。
+export function extractJsonObject(text: string, missingMessage = '输出中没有合法 JSON 对象'): string {
+  for (let start = text.indexOf('{'); start >= 0; start = text.indexOf('{', start + 1)) {
+    let depth = 0
+    let quoted = false
+    let escaped = false
+    for (let index = start; index < text.length; index += 1) {
+      const character = text[index]
+      if (quoted) {
+        if (escaped) escaped = false
+        else if (character === '\\') escaped = true
+        else if (character === '"') quoted = false
+        continue
+      }
+      if (character === '"') quoted = true
+      else if (character === '{') depth += 1
+      else if (character === '}' && --depth === 0) {
+        const candidate = text.slice(start, index + 1)
+        try {
+          const parsed: unknown = JSON.parse(candidate)
+          if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) return candidate
+        } catch {
+          // 常见的前置说明会带 {field} 这类花括号；继续寻找后续真正的 JSON object。
+        }
+        break
+      }
+    }
+  }
+  throw new Error(missingMessage)
+}
+
 interface Bounds {
   min?: number
   max?: number
