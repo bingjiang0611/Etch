@@ -28,6 +28,7 @@ const api: EtchApi = {
   summaryImage: (taskId, filename, expectedSha256) => ipcRenderer.invoke('task:summary-image', { taskId, filename, expectedSha256 }),
   exportSummary: (taskId) => ipcRenderer.invoke('task:export-summary', { taskId }),
   documentPage: (taskId) => ipcRenderer.invoke('task:document-page', { taskId }),
+  documentImage: (taskId, mediaId, expectedSha256) => ipcRenderer.invoke('task:document-image', { taskId, mediaId, expectedSha256 }),
   updateDocumentTranslation: (taskId, expectedRevision, markdown) => ipcRenderer.invoke('task:update-document-translation', { taskId, expectedRevision, markdown }),
   exportDocument: (taskId) => ipcRenderer.invoke('task:export-document', { taskId }),
   openDocumentSource: (taskId) => ipcRenderer.invoke('task:open-document-source', { taskId }),

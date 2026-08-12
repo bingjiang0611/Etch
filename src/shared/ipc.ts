@@ -424,6 +424,14 @@ export const DocumentVerificationSchema = z.object({
 })
 export type DocumentVerification = z.infer<typeof DocumentVerificationSchema>
 
+export const DocumentImageStateSchema = z.object({
+  mediaId: z.string().min(1).max(200),
+  localPath: z.string().min(1).max(4096),
+  alt: z.string().max(1000).default(''),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u)
+})
+export type DocumentImageState = z.infer<typeof DocumentImageStateSchema>
+
 export const DocumentPageSchema = z.object({
   taskId: z.string().uuid(),
   revision: z.number().int().nonnegative(),
@@ -431,10 +439,18 @@ export const DocumentPageSchema = z.object({
   message: z.string().max(500).optional(),
   sourceMarkdown: z.string().max(5_000_000).default(''),
   translatedMarkdown: z.string().max(5_000_000).default(''),
+  images: z.array(DocumentImageStateSchema).max(32).default([]),
   metadata: DocumentMetadataSchema.optional(),
   verification: DocumentVerificationSchema.optional()
 })
 export type DocumentPage = z.infer<typeof DocumentPageSchema>
+
+export const DocumentImagePayloadSchema = z.object({
+  taskId: z.string().uuid(),
+  mediaId: z.string().min(1).max(200),
+  expectedSha256: z.string().regex(/^[a-f0-9]{64}$/u)
+})
+export const DocumentImageDataUrlSchema = z.string().startsWith('data:image/').max(14_000_000).optional()
 
 export const UpdateDocumentTranslationSchema = z.object({
   taskId: z.string().uuid(),
@@ -508,6 +524,7 @@ export interface EtchApi {
   summaryImage(taskId: string, filename: string, expectedSha256: string): Promise<string | undefined>
   exportSummary(taskId: string): Promise<ExportSummaryResult>
   documentPage(taskId: string): Promise<DocumentPage>
+  documentImage(taskId: string, mediaId: string, expectedSha256: string): Promise<string | undefined>
   updateDocumentTranslation(taskId: string, expectedRevision: number, markdown: string): Promise<TaskDetail>
   exportDocument(taskId: string): Promise<ExportDocumentResult>
   openDocumentSource(taskId: string): Promise<void>

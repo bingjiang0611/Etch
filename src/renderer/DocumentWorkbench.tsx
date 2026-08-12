@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { DocumentPage, TaskDetail } from '../shared/ipc'
+import type { DocumentImageState, DocumentPage, TaskDetail } from '../shared/ipc'
 import type { StageId } from '../shared/task-schema'
 import { parseSummaryMarkdown, type InlineToken, type SummaryBlock } from './summary-markdown'
 import { Icon, providerNames } from './ui'
@@ -90,13 +90,72 @@ function Inline({ tokens }: { tokens: readonly InlineToken[] }): React.JSX.Eleme
   )
 }
 
-function MarkdownImage({ block }: { block: Extract<SummaryBlock, { kind: 'image' }> }): React.JSX.Element {
+function DocumentImage({ taskId, block, image }: {
+  taskId: string
+  block: Extract<SummaryBlock, { kind: 'image' }>
+  image?: DocumentImageState
+}): React.JSX.Element {
+  const requestKey = image ? `${taskId}:${image.mediaId}:${image.sha256}` : ''
+  const figureRef = useRef<HTMLElement>(null)
+  const [visible, setVisible] = useState(false)
+  const [loaded, setLoaded] = useState<{ key: string; dataUrl: string }>()
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    const node = figureRef.current
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setVisible(true)
+      return
+    }
+    setVisible(false)
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return
+      setVisible(true)
+      observer.disconnect()
+    }, { rootMargin: '240px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [requestKey])
+
+  useEffect(() => {
+    setLoaded(undefined)
+    setFailed(false)
+    if (!image || !visible) {
+      return
+    }
+    let cancelled = false
+    void window.etch.documentImage(taskId, image.mediaId, image.sha256).then((value) => {
+      if (cancelled) return
+      if (value) setLoaded({ key: requestKey, dataUrl: value })
+      else setFailed(true)
+    }).catch(() => {
+      if (!cancelled) setFailed(true)
+    })
+    return () => { cancelled = true }
+  }, [image, requestKey, taskId, visible])
+
+  if (loaded?.key === requestKey) {
+    return (
+      <figure className="summary-image document-image" ref={figureRef}>
+        <img
+          src={loaded.dataUrl}
+          alt={block.alt || image?.alt || block.filename}
+          loading="lazy"
+          onError={() => {
+            setLoaded(undefined)
+            setFailed(true)
+          }}
+        />
+        <figcaption>{block.alt || image?.alt || block.filename}</figcaption>
+      </figure>
+    )
+  }
   return (
-    <figure className="summary-image is-pending">
+    <figure className="summary-image is-pending" ref={figureRef}>
       <div className="summary-image-placeholder">
         <Icon name="empty" />
         <span>{block.alt || block.filename}</span>
-        <small>{block.filename}</small>
+        <small>{image ? failed ? '本地图片读取失败' : visible ? '正在读取本地图片…' : '滚动到此处时加载' : '图片未登记或不可用'}</small>
       </div>
     </figure>
   )
@@ -127,14 +186,19 @@ function MarkdownTable({ block }: { block: Extract<SummaryBlock, { kind: 'table'
   )
 }
 
-function MarkdownArticle({ markdown }: { markdown: string }): React.JSX.Element {
-  const blocks = useMemo(() => parseSummaryMarkdown(markdown), [markdown])
+function MarkdownArticle({ taskId, markdown, images }: { taskId: string; markdown: string; images: readonly DocumentImageState[] }): React.JSX.Element {
+  const imagePaths = useMemo(() => new Set(images.map((image) => image.localPath)), [images])
+  const imageByPath = useMemo(() => new Map(images.map((image) => [image.localPath, image])), [images])
+  const blocks = useMemo(() => parseSummaryMarkdown(markdown, imagePaths), [imagePaths, markdown])
   if (!markdown.trim()) return <div className="review-placeholder">{DASH}</div>
 
   return (
     <article className="summary-article">
       {blocks.map((block, index) => {
-        if (block.kind === 'image') return <MarkdownImage block={block} key={index} />
+        if (block.kind === 'image') {
+          const image = imageByPath.get(block.filename)
+          return <DocumentImage taskId={taskId} block={block} image={image} key={`${taskId}:${image?.mediaId ?? block.filename}:${image?.sha256 ?? index}`} />
+        }
         if (block.kind === 'divider') return <hr key={index} />
         if (block.kind === 'heading') {
           const Tag = (block.level === 1 ? 'h1' : block.level === 2 ? 'h2' : 'h3') as 'h1' | 'h2' | 'h3'
@@ -242,6 +306,7 @@ export function DocumentWorkbench({
   const matchingPage = page?.taskId === taskId ? page : undefined
   const readyPage = matchingPage?.availability === 'ready' ? matchingPage : undefined
   const pageMarkdown = readyPage?.translatedMarkdown ?? ''
+  const images = readyPage?.images ?? []
   const [activeTab, setActiveTab] = useState<DocumentTab>('compare')
   const [draft, setDraft] = useState(pageMarkdown)
   const [pendingAction, setPendingAction] = useState<PendingAction>()
@@ -504,6 +569,24 @@ export function DocumentWorkbench({
                       />
                     </section>
                   </div>
+                  {images.length > 0 && (
+                    <section className="document-review-images" aria-label="文档配图">
+                      <div className="document-review-images-heading">
+                        <strong>文档配图</strong>
+                        <span>{images.length} 张 · 中文预览会按正文位置显示</span>
+                      </div>
+                      <div className="document-review-image-grid">
+                        {images.map((image) => (
+                          <DocumentImage
+                            taskId={taskId}
+                            block={{ kind: 'image', filename: image.localPath, alt: image.alt }}
+                            image={image}
+                            key={`${taskId}:${image.mediaId}:${image.sha256}`}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )}
                   <footer className="review-checkpoint-banner">
                     <div className="review-checkpoint-copy">
                       <span className="review-checkpoint-icon"><Icon name={reviewCompleted ? 'check' : 'warning'} /></span>
@@ -545,7 +628,7 @@ export function DocumentWorkbench({
                   aria-labelledby={`${tabPrefix}-tab-preview`}
                 >
                   <div className="summary-panel-body">
-                    <MarkdownArticle markdown={draft} />
+                    <MarkdownArticle taskId={taskId} markdown={draft} images={images} />
                   </div>
                 </section>
               )}

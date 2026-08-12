@@ -14,7 +14,7 @@ export type SummaryBlock =
   | { kind: 'image'; filename: string; alt: string }
   | { kind: 'divider' }
 
-const IMAGE_LINE = /^!\[([^\]]*)\]\(images\/([^)]+)\)$/u
+const IMAGE_LINE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/u
 const HEADING_LINE = /^(#{1,3})\s+(.*)$/u
 const QUOTE_LINE = /^>\s?(.*)$/u
 const UNORDERED_LINE = /^[-*]\s+(.*)$/u
@@ -69,7 +69,7 @@ export function parseInline(value: string): InlineToken[] {
   return tokens.length ? tokens : [{ kind: 'text', text: value }]
 }
 
-export function parseSummaryMarkdown(markdown: string): SummaryBlock[] {
+export function parseSummaryMarkdown(markdown: string, documentImagePaths?: ReadonlySet<string>): SummaryBlock[] {
   const blocks: SummaryBlock[] = []
   const lines = markdown.replace(/\r\n?/gu, '\n').split('\n')
   let paragraph: string[] = []
@@ -117,9 +117,10 @@ export function parseSummaryMarkdown(markdown: string): SummaryBlock[] {
       continue
     }
     const image = IMAGE_LINE.exec(line)
-    if (image) {
+    const imagePath = image?.[2]
+    if (imagePath && (imagePath.startsWith('images/') || documentImagePaths?.has(imagePath))) {
       flush()
-      blocks.push({ kind: 'image', alt: image[1], filename: image[2] })
+      blocks.push({ kind: 'image', alt: image[1], filename: imagePath.startsWith('images/') ? imagePath.slice('images/'.length) : imagePath })
       continue
     }
     const heading = HEADING_LINE.exec(line)

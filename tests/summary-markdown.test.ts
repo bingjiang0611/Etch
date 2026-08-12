@@ -48,14 +48,28 @@ describe('总结正文渲染 token 化', () => {
     expect(parseInline('纯文本')).toEqual([{ kind: 'text', text: '纯文本' }])
   })
 
-  it('只把 images/ 前缀的图片行当配图，外部图片不解析成配图', () => {
+  it('保持 images/ 配图识别行为', () => {
+    const blocks = parseSummaryMarkdown('![本地](images/02-alpha.png)')
+    expect(blocks).toEqual([{ kind: 'image', alt: '本地', filename: '02-alpha.png' }])
+    expect(summaryImageFilenames(blocks)).toEqual(['02-alpha.png'])
+  })
+
+  it('只把已登记的 .etch-artifacts 文档图片路径解析成配图', () => {
+    const registered = '.etch-artifacts/inspect/run-id/media-001.png'
+    const blocks = parseSummaryMarkdown(`![基准图](${registered})`, new Set([registered]))
+    expect(blocks).toEqual([{ kind: 'image', alt: '基准图', filename: registered }])
+  })
+
+  it('未登记的本地图片路径与远程图片仍按普通段落解析', () => {
     const blocks = parseSummaryMarkdown([
-      '![本地](images/02-alpha.png)',
+      '![未登记](.etch-artifacts/inspect/run-id/media-002.png)',
       '',
       '![远程](https://example.com/a.png)'
-    ].join('\n'))
-    expect(summaryImageFilenames(blocks)).toEqual(['02-alpha.png'])
+    ].join('\n'), new Set(['.etch-artifacts/inspect/run-id/media-001.png']))
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toMatchObject({ kind: 'paragraph' })
     expect(blocks[1]).toMatchObject({ kind: 'paragraph' })
+    expect(summaryImageFilenames(blocks)).toEqual([])
   })
 
   it('把网页翻译里的 HTML table 解析成表格 block', () => {

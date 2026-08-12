@@ -4,7 +4,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, safeStorage, session, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
-import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateCompanionSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, DocumentHtmlPageSchema, DocumentPageSchema, ExportDocumentHtmlResultSchema, ExportDocumentResultSchema, ExportSummaryResultSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ResolveDocumentHtmlStyleSchema, ResolveDocumentTranslationCostSchema, ResolveIllustrationAgentSchema, ResolveIllustrationCoverSchema, ResolveResearchCheckpointSchema, ResolveVideoCheckpointSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, SetTaskCategoryPayloadSchema, StartDocumentHtmlSchema, SummaryImageDataUrlSchema, SummaryImagePayloadSchema, SummaryPageSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateDocumentTranslationSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
+import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateCompanionSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, DocumentHtmlPageSchema, DocumentImageDataUrlSchema, DocumentImagePayloadSchema, DocumentPageSchema, ExportDocumentHtmlResultSchema, ExportDocumentResultSchema, ExportSummaryResultSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ResolveDocumentHtmlStyleSchema, ResolveDocumentTranslationCostSchema, ResolveIllustrationAgentSchema, ResolveIllustrationCoverSchema, ResolveResearchCheckpointSchema, ResolveVideoCheckpointSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, SetTaskCategoryPayloadSchema, StartDocumentHtmlSchema, SummaryImageDataUrlSchema, SummaryImagePayloadSchema, SummaryPageSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateDocumentTranslationSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
 import { ToolIdSchema, type ThemePreference, type ToolId } from '../shared/settings-schema'
 import { createTaskManifest, taskThumbnailArtifact, type ProviderId } from '../shared/task-schema'
 import { isSupportedMediaSourceUrl } from '../shared/media-source'
@@ -663,6 +663,15 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   ipcMain.handle('task:document-page', async (_event, raw) => {
     const { taskId } = TaskIdPayloadSchema.parse(raw)
     return DocumentPageSchema.parse(await documents.page(taskId))
+  })
+  ipcMain.handle('task:document-image', async (_event, raw) => {
+    const { taskId, mediaId, expectedSha256 } = DocumentImagePayloadSchema.parse(raw)
+    try {
+      return DocumentImageDataUrlSchema.parse(await documents.image(taskId, mediaId, expectedSha256))
+    } catch (error) {
+      console.warn('document image unavailable', { taskId, mediaId, error: error instanceof Error ? error.message : String(error) })
+      return undefined
+    }
   })
   ipcMain.handle('task:update-document-translation', async (_event, raw) => {
     const { taskId, expectedRevision, markdown } = UpdateDocumentTranslationSchema.parse(raw)

@@ -13,7 +13,7 @@ import {
   type MarkdownBlockType,
   type MarkdownDocument
 } from '../core/document'
-import type { DocumentMetadata, DocumentPage, DocumentVerification, ExportDocumentResult } from '../shared/ipc'
+import type { DocumentImageState, DocumentMetadata, DocumentPage, DocumentVerification, ExportDocumentResult } from '../shared/ipc'
 import type { TaskManifest } from '../shared/task-schema'
 import { fingerprint, sha256File } from './core/fingerprint'
 import { artifactCandidateRelativePath, ensureArtifactRunDirectory } from './pipeline/artifact-publisher'
@@ -28,7 +28,7 @@ type Artifact = TaskManifest['artifacts'][string]
 const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 const MAX_METADATA_BYTES = 2 * 1024 * 1024
 const MAX_MEDIA_MANIFEST_BYTES = 5 * 1024 * 1024
-const MAX_MEDIA_BYTES = 25 * 1024 * 1024
+const MAX_MEDIA_BYTES = 10 * 1024 * 1024
 const BLOCK_TYPES = new Set<MarkdownBlockType>([
   'heading', 'paragraph', 'blockquote', 'unordered-list-item', 'ordered-list-item',
   'code', 'table', 'image', 'divider', 'html'
@@ -110,6 +110,34 @@ function mediaCounts(media: readonly DocumentMedia[]): { expected: number; local
     expected: supported.length,
     localized: supported.filter((item) => item.status === 'localized' && item.localPath).length
   }
+}
+
+function documentImageMime(bytes: Buffer): 'image/avif' | 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp' {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))) return 'image/gif'
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
+  if (isAvif(bytes)) return 'image/avif'
+  throw new Error('文档媒体不是受支持的图片格式')
+}
+
+function isAvif(bytes: Buffer): boolean {
+  if (bytes.length < 12 || bytes.subarray(4, 8).toString('ascii') !== 'ftyp') return false
+  const boxSize = bytes.readUInt32BE(0)
+  if (boxSize < 12 || boxSize > bytes.length) return false
+  for (let offset = 8; offset + 4 <= boxSize; offset += 4) {
+    if (/^(?:avif|avis)$/u.test(bytes.subarray(offset, offset + 4).toString('ascii'))) return true
+  }
+  return false
+}
+
+function pageImages(manifest: TaskManifest, media: readonly DocumentMedia[]): DocumentImageState[] {
+  return media.flatMap((item) => {
+    if (item.kind === 'video' || item.status !== 'localized' || !item.localPath) return []
+    const artifact = manifest.artifacts[`documentMedia:${item.id}`]
+    if (!artifact?.valid || artifact.relativePath !== item.localPath) return []
+    return [{ mediaId: item.id, localPath: item.localPath, alt: (item.alt ?? '').slice(0, 1000), sha256: artifact.sha256 }]
+  })
 }
 
 function pageMetadata(metadata: CoreDocumentMetadata, media: readonly DocumentMedia[]): DocumentMetadata {
@@ -238,13 +266,14 @@ export class DocumentService {
 
   async page(taskId: string): Promise<DocumentPage> {
     const { directory, manifest } = await this.#task(taskId)
-    const base = { taskId, revision: manifest.revision, sourceMarkdown: '', translatedMarkdown: '' }
+    const base = { taskId, revision: manifest.revision, sourceMarkdown: '', translatedMarkdown: '', images: [] as DocumentImageState[] }
     if (manifest.kind !== 'document') return { ...base, availability: 'not-ready', message: '当前任务不是网页翻译任务' }
     const sourceArtifact = manifest.artifacts.sourceDocument
     if (!sourceArtifact?.valid) return { ...base, availability: 'not-ready', message: '网页正文还没生成完成' }
 
     const source = await this.#document(directory, sourceArtifact, '网页源文档')
     const media = await this.#optionalJson(directory, manifest.artifacts.mediaManifest, '媒体清单', MAX_MEDIA_MANIFEST_BYTES, parseMediaManifest) ?? []
+    const images = pageImages(manifest, media)
     const metadataArtifact = await this.#optionalJson(directory, manifest.artifacts.sourceMetadata, '网页 metadata', MAX_METADATA_BYTES, (value) => {
       if (!isObject(value)) throw new Error('网页 metadata 格式无效')
       return value as unknown as CoreDocumentMetadata
@@ -257,6 +286,7 @@ export class DocumentService {
         availability: 'not-ready',
         message: '中文 Markdown 还没生成完成',
         sourceMarkdown: renderMarkdownBlocks(source.blocks),
+        images,
         metadata
       }
     }
@@ -269,9 +299,32 @@ export class DocumentService {
       availability: 'ready',
       sourceMarkdown: renderMarkdownBlocks(source.blocks),
       translatedMarkdown: renderMarkdownBlocks(translated.blocks),
+      images,
       metadata,
       verification: pageVerification(verificationValue, source, translated, media, warnings)
     }
+  }
+
+  async image(taskId: string, mediaId: string, expectedSha256: string): Promise<string | undefined> {
+    const { directory, manifest } = await this.#task(taskId)
+    if (manifest.kind !== 'document') return undefined
+    const media = await this.#optionalJson(directory, manifest.artifacts.mediaManifest, '媒体清单', MAX_MEDIA_MANIFEST_BYTES, parseMediaManifest) ?? []
+    const item = media.find((candidate) => candidate.id === mediaId)
+    const artifact = manifest.artifacts[`documentMedia:${mediaId}`]
+    if (
+      !item?.localPath
+      || item.kind === 'video'
+      || item.status !== 'localized'
+      || !artifact?.valid
+      || artifact.relativePath !== item.localPath
+      || artifact.sha256 !== expectedSha256
+    ) return undefined
+    const file = await readContainedFile(directory, artifact.relativePath, '文档媒体', {
+      maxBytes: MAX_MEDIA_BYTES,
+      expectedSize: artifact.size,
+      expectedSha256: artifact.sha256
+    })
+    return `data:${documentImageMime(file.bytes)};base64,${file.bytes.toString('base64')}`
   }
 
   async updateTranslation(taskId: string, expectedRevision: number, markdown: string): Promise<TaskManifest> {

@@ -23,6 +23,7 @@ import { createTaskManifest, type TaskManifest } from '../src/shared/task-schema
 type Artifact = TaskManifest['artifacts'][string]
 
 const directories: string[] = []
+const PNG_BYTES = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlHYAAAAASUVORK5CYII=', 'base64')
 
 afterEach(async () => {
   electron.showOpenDialog.mockReset()
@@ -84,7 +85,7 @@ async function fixture(options: { withMedia?: boolean; completed?: boolean } = {
       status: 'localized'
     })
     await mkdir(dirname(join(directory, localPath)), { recursive: true })
-    await writeFile(join(directory, localPath), Buffer.from([1, 2, 3, 4]))
+    await writeFile(join(directory, localPath), PNG_BYTES)
   }
   await Promise.all([
     writeFile(join(directory, 'source-document.json'), `${JSON.stringify(source)}\n`),
@@ -137,6 +138,101 @@ async function fixture(options: { withMedia?: boolean; completed?: boolean } = {
 }
 
 describe('DocumentService', () => {
+  it('page 暴露已登记图片映射，image 返回经哈希约束的 data URL', async () => {
+    const item = await fixture({ withMedia: true })
+    const imageArtifact = item.manifest.artifacts['documentMedia:media-001']
+
+    await expect(item.service.page(item.manifest.taskId)).resolves.toMatchObject({
+      availability: 'ready',
+      images: [{
+        mediaId: 'media-001',
+        localPath: '.etch-artifacts/inspect/media-run/media-001.png',
+        alt: '',
+        sha256: imageArtifact.sha256
+      }]
+    })
+    await expect(item.service.image(item.manifest.taskId, 'media-001', imageArtifact.sha256))
+      .resolves.toBe(`data:image/png;base64,${PNG_BYTES.toString('base64')}`)
+  })
+
+  it('page 截断超长 alt，不让单张图片阻断整个文档页', async () => {
+    const item = await fixture({ withMedia: true })
+    const mediaPath = item.manifest.artifacts.mediaManifest.relativePath
+    const media = JSON.parse(await readFile(join(item.directory, mediaPath), 'utf8')) as DocumentMedia[]
+    media[0].alt = '图'.repeat(1_200)
+    await writeFile(join(item.directory, mediaPath), `${JSON.stringify(media)}\n`)
+    const replacement = await artifact(item.directory, mediaPath)
+    const next = await item.store.mutate(item.directory, (manifest) => {
+      manifest.artifacts.mediaManifest = replacement
+    }, item.manifest.revision)
+    item.index.upsert(item.directory, next)
+
+    const page = await item.service.page(next.taskId)
+    expect(page.images[0].alt).toHaveLength(1_000)
+  })
+
+  it('image 拒绝调用方错误 hash 与文件内容 hash 不匹配', async () => {
+    const item = await fixture({ withMedia: true })
+    const imageArtifact = item.manifest.artifacts['documentMedia:media-001']
+
+    await expect(item.service.image(item.manifest.taskId, 'media-001', '0'.repeat(64))).resolves.toBeUndefined()
+    await writeFile(join(item.directory, imageArtifact.relativePath), Buffer.from(PNG_BYTES).fill(0, 8))
+    await expect(item.service.image(item.manifest.taskId, 'media-001', imageArtifact.sha256)).rejects.toThrow('SHA-256 不匹配')
+  })
+
+  it('page 与 image 拒绝未登记 artifact', async () => {
+    const item = await fixture({ withMedia: true })
+    const current = await item.store.load(item.directory)
+    const next = await item.store.mutate(item.directory, (manifest) => {
+      delete manifest.artifacts['documentMedia:media-001']
+    }, current.revision)
+    item.index.upsert(item.directory, next)
+
+    await expect(item.service.page(next.taskId)).resolves.toMatchObject({ images: [] })
+    await expect(item.service.image(next.taskId, 'media-001', '0'.repeat(64))).resolves.toBeUndefined()
+  })
+
+  it('page 与 image 拒绝 artifact 和媒体清单 path mismatch', async () => {
+    const item = await fixture({ withMedia: true })
+    const current = await item.store.load(item.directory)
+    const expectedSha256 = current.artifacts['documentMedia:media-001'].sha256
+    const next = await item.store.mutate(item.directory, (manifest) => {
+      manifest.artifacts['documentMedia:media-001'].relativePath = '.etch-artifacts/inspect/media-run/other.png'
+    }, current.revision)
+    item.index.upsert(item.directory, next)
+
+    await expect(item.service.page(next.taskId)).resolves.toMatchObject({ images: [] })
+    await expect(item.service.image(next.taskId, 'media-001', expectedSha256)).resolves.toBeUndefined()
+  })
+
+  it('image 拒绝哈希有效但内容不是图片的媒体', async () => {
+    const item = await fixture({ withMedia: true })
+    const current = await item.store.load(item.directory)
+    const imagePath = current.artifacts['documentMedia:media-001'].relativePath
+    await writeFile(join(item.directory, imagePath), 'not an image')
+    const replacement = await artifact(item.directory, imagePath)
+    const next = await item.store.mutate(item.directory, (manifest) => {
+      manifest.artifacts['documentMedia:media-001'] = replacement
+    }, current.revision)
+    item.index.upsert(item.directory, next)
+
+    await expect(item.service.image(next.taskId, 'media-001', replacement.sha256)).rejects.toThrow('不是受支持的图片格式')
+  })
+
+  it('image 不把 SVG 主动内容发送给 renderer', async () => {
+    const item = await fixture({ withMedia: true })
+    const current = await item.store.load(item.directory)
+    const imagePath = current.artifacts['documentMedia:media-001'].relativePath
+    await writeFile(join(item.directory, imagePath), '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/tracker.png" /></svg>')
+    const replacement = await artifact(item.directory, imagePath)
+    const next = await item.store.mutate(item.directory, (manifest) => {
+      manifest.artifacts['documentMedia:media-001'] = replacement
+    }, current.revision)
+    item.index.upsert(item.directory, next)
+
+    await expect(item.service.image(next.taskId, 'media-001', replacement.sha256)).rejects.toThrow('不是受支持的图片格式')
+  })
+
   it('同一 review run 原子换代 JSON 与 Markdown artifact', async () => {
     const item = await fixture()
     const previousDocument = item.manifest.artifacts.translatedDocument.relativePath
@@ -162,10 +258,10 @@ describe('DocumentService', () => {
 
     const exported = await item.service.export(item.manifest.taskId)
     expect(exported).toMatchObject({ cancelled: false, media: 1 })
-    expect(await readFile(join(exported.directory!, 'media/image-001.png'))).toEqual(Buffer.from([1, 2, 3, 4]))
+    expect(await readFile(join(exported.directory!, 'media/image-001.png'))).toEqual(PNG_BYTES)
     expect(await readFile(join(exported.directory!, 'translation.md'), 'utf8')).toContain('![图](media/image-001.png)')
 
-    await writeFile(join(item.directory, '.etch-artifacts/inspect/media-run/media-001.png'), Buffer.from([4, 3, 2, 1]))
+    await writeFile(join(item.directory, '.etch-artifacts/inspect/media-run/media-001.png'), Buffer.from(PNG_BYTES).fill(0, 8))
     await expect(item.service.export(item.manifest.taskId)).rejects.toThrow('SHA-256 不匹配')
   })
 
