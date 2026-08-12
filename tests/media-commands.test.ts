@@ -83,10 +83,17 @@ describe('media command builders', () => {
       pinned: false
     })
   })
-  it('explains a missing Whisper model cache without leaking raw ENOENT', async () => {
+  it('lets mlx_whisper download the model when no complete cache exists', async () => {
     const root = await mkdtemp(join(tmpdir(), 'etch-whisper-cache-'))
     tempRoots.push(root)
-    await expect(resolveWhisperModelSnapshot(root)).rejects.toThrow(/Whisper 模型缓存缺失或不完整/u)
+    await createSnapshot(root, WHISPER_MODEL.revision, false)
+    const expected = {
+      path: WHISPER_MODEL.repo,
+      revision: 'latest',
+      pinned: false
+    }
+    await expect(resolveWhisperModelSnapshot(root)).resolves.toEqual(expected)
+    await expect(resolveWhisperModelSnapshot(join(root, 'missing-snapshots'))).resolves.toEqual(expected)
   })
   it('normalizes downloaded audio without re-encoding video', () => {
     const args = normalizeDownloadedMediaArgs('source.mp4', 'source.normalized.mp4')

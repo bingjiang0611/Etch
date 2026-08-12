@@ -8,7 +8,6 @@ export const WHISPER_MODEL = {
 } as const
 
 export const WHISPER_MODEL_SNAPSHOTS_DIR = join(homedir(), '.cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo/snapshots')
-export const WHISPER_MODEL_SNAPSHOT = join(WHISPER_MODEL_SNAPSHOTS_DIR, WHISPER_MODEL.revision)
 
 export interface WhisperModelSnapshot {
   path: string
@@ -26,10 +25,6 @@ async function hasWhisperSnapshotFiles(path: string): Promise<boolean> {
   }
 }
 
-function missingWhisperModelError(): Error {
-  return new Error(`Whisper 模型缓存缺失或不完整：${WHISPER_MODEL.repo}@${WHISPER_MODEL.revision} 缺少 config.json 或 weights.safetensors。请重新下载该模型后重试。`)
-}
-
 export async function resolveWhisperModelSnapshot(snapshotsDir = WHISPER_MODEL_SNAPSHOTS_DIR): Promise<WhisperModelSnapshot> {
   const pinned = join(snapshotsDir, WHISPER_MODEL.revision)
   if (await hasWhisperSnapshotFiles(pinned)) return { path: pinned, revision: WHISPER_MODEL.revision, pinned: true }
@@ -37,13 +32,13 @@ export async function resolveWhisperModelSnapshot(snapshotsDir = WHISPER_MODEL_S
   try {
     entries = await readdir(snapshotsDir)
   } catch {
-    throw missingWhisperModelError()
+    return { path: WHISPER_MODEL.repo, revision: 'latest', pinned: false }
   }
   for (const entry of [...entries].sort()) {
     const candidate = join(snapshotsDir, entry)
     if (entry !== WHISPER_MODEL.revision && await hasWhisperSnapshotFiles(candidate)) return { path: candidate, revision: entry, pinned: false }
   }
-  throw missingWhisperModelError()
+  return { path: WHISPER_MODEL.repo, revision: 'latest', pinned: false }
 }
 
 const SINGLE_MEDIA_ARGS = [
