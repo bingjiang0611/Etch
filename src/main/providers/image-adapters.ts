@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { ModelSelection, ProviderId } from '../../shared/task-schema'
-import { CODEX_TEXT_ONLY_DISABLED_FEATURES } from './adapters'
+import { CODEX_TEXT_ONLY_DISABLED_FEATURES, qoderNoMcpServerName } from './adapters'
 import { codexSessionIdIsValid } from './session-id'
 
 // 配图是 Etch 里唯一允许 Provider 调工具的路径。只有真的有内置图像生成能力的 Provider 才出现在选择器里：
@@ -130,7 +130,9 @@ export function buildImageProviderInvocation(
       '--setting-sources', '',
       '--settings', JSON.stringify(QODER_IMAGE_SETTINGS),
       '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG,
+      '--allowed-mcp-server-names', qoderNoMcpServerName(),
       '--tools', IMAGE_TOOL_NAME,
+      '--allowed-tools', IMAGE_TOOL_NAME,
       '--permission-mode', 'dont_ask',
       '--session-id', request.sessionId,
       ...(request.model.source === 'cli-default' ? [] : ['--model', request.model.modelId])

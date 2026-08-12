@@ -19,7 +19,10 @@ export function inspectQoderResearchStream(stdout: string): ResearchStreamInspec
   const errors: string[] = []
   const texts: string[] = []
   const unexpectedTools = new Set<string>()
+  const toolUses = new Map<string, string>()
+  const completedToolUses = new Set<string>()
   let webSearches = 0
+  let initCount = 0
   for (const line of stdout.split(/\r?\n/u).filter(Boolean)) {
     let envelope: unknown
     try { envelope = JSON.parse(line) } catch {
@@ -32,16 +35,53 @@ export function inspectQoderResearchStream(stdout: string): ResearchStreamInspec
     }
     const record = envelope as Record<string, unknown>
     if (typeof record.session_id === 'string') sessions.add(record.session_id)
+    if (record.type === 'system' && record.subtype === 'init') {
+      initCount += 1
+      if (!Array.isArray(record.tools)
+        || record.tools.length !== 1
+        || record.tools[0] !== QODER_RESEARCH_TOOL) unexpectedTools.add('qoder-init-tools')
+      if (!Array.isArray(record.mcp_servers)) unexpectedTools.add('init-mcp-servers-not-array')
+      else for (const server of record.mcp_servers) {
+        if (!server || typeof server !== 'object' || Array.isArray(server)) {
+          unexpectedTools.add('invalid-mcp-server')
+          continue
+        }
+        const item = server as Record<string, unknown>
+        if (item.status !== 'disconnected') {
+          unexpectedTools.add(typeof item.name === 'string' && item.name ? item.name : 'active-mcp-server')
+        }
+      }
+    }
     const message = record.message && typeof record.message === 'object' && !Array.isArray(record.message)
       ? record.message as Record<string, unknown>
       : undefined
     for (const block of Array.isArray(message?.content) ? message.content : []) {
       if (!block || typeof block !== 'object' || Array.isArray(block)) continue
       const nested = block as Record<string, unknown>
-      if (nested.type !== 'tool_use') continue
-      const name = typeof nested.name === 'string' ? nested.name : 'unnamed-tool'
-      if (name === QODER_RESEARCH_TOOL) webSearches += 1
-      else unexpectedTools.add(name)
+      if (nested.type === 'tool_use') {
+        const name = typeof nested.name === 'string' && nested.name ? nested.name : 'unnamed-tool'
+        const id = typeof nested.id === 'string' && nested.id ? nested.id : undefined
+        if (!id) unexpectedTools.add(`${name}-missing-id`)
+        else if (toolUses.has(id)) unexpectedTools.add('duplicate-tool-use-id')
+        else toolUses.set(id, name)
+        if (name !== QODER_RESEARCH_TOOL) unexpectedTools.add(name)
+        continue
+      }
+      if (nested.type !== 'tool_result') continue
+      const id = typeof nested.tool_use_id === 'string' && nested.tool_use_id ? nested.tool_use_id : undefined
+      if (!id || !toolUses.has(id)) {
+        unexpectedTools.add('orphan-tool-result')
+        continue
+      }
+      if (completedToolUses.has(id)) {
+        unexpectedTools.add('duplicate-tool-result')
+        continue
+      }
+      completedToolUses.add(id)
+      if (toolUses.get(id) !== QODER_RESEARCH_TOOL) continue
+      if (nested.is_error === false) webSearches += 1
+      else if (nested.is_error === true) errors.push(`Qoder WebSearch 执行失败：${String(nested.content ?? '未知错误').slice(0, 500)}`)
+      else unexpectedTools.add('WebSearch-result-status')
     }
     if (record.type === 'result') {
       if (record.is_error === true) errors.push(String(record.result ?? 'Qoder Web Search 失败').slice(0, 500))
@@ -51,6 +91,10 @@ export function inspectQoderResearchStream(stdout: string): ResearchStreamInspec
     const event = parseProviderLine(line)
     if (event.type === 'error') errors.push(event.message.slice(0, 500))
   }
+  for (const [id, name] of toolUses) {
+    if (name === QODER_RESEARCH_TOOL && !completedToolUses.has(id)) unexpectedTools.add('WebSearch-result-missing')
+  }
+  if (initCount !== 1) unexpectedTools.add(`qoder-init-count-${initCount}`)
   if (sessions.size !== 1) throw new Error(`外部核验必须且只能产生一个 Qoder session，实际 ${sessions.size}`)
   const sessionId = [...sessions][0]
   if (!codexSessionIdIsValid(sessionId)) throw new Error('外部核验 Qoder session ID 无效')

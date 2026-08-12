@@ -91,10 +91,12 @@ export class ProviderStreamInspector {
   readonly #tools = new Set<string>()
   readonly #securityViolations: string[] = []
   readonly #protocolViolations: string[] = []
+  readonly #qoderToolUseIds = new Set<string>()
   #text = ''
   #textBytes = 0
   #stdoutLine = 0
   #stderrLine = 0
+  #qoderInitCount = 0
   #finished = false
   #inspection?: ProviderStreamInspection
 
@@ -164,6 +166,9 @@ export class ProviderStreamInspector {
         if (this.#lifecycle.agentMessage < 1) this.#record(this.#protocolViolations, 'lifecycle: expected at least 1 agent_message')
       }
     }
+    if (this.#provider === 'qoder' && this.#qoderInitCount !== 1) {
+      this.#record(this.#securityViolations, `Qoder 纯文本调用必须且只能报告一次 init，实际 ${this.#qoderInitCount}`)
+    }
     return events
   }
 
@@ -192,9 +197,19 @@ export class ProviderStreamInspector {
       }
       return
     }
-    for (const tool of toolNamesInEnvelope(value)) this.#recordTool(tool)
+    if (this.#provider === 'qoder') {
+      if (isQoderInit(value)) this.#qoderInitCount += 1
+      for (const violation of qoderTextOnlyInitViolations(value)) {
+        this.#record(this.#securityViolations, violation)
+      }
+      for (const violation of qoderToolResultViolations(value, this.#qoderToolUseIds)) {
+        this.#record(this.#securityViolations, violation)
+      }
+    }
+    const ignoreToolResults = this.#provider === 'qoder'
+    for (const tool of toolNamesInEnvelope(value, ignoreToolResults)) this.#recordTool(tool)
     const event = parseProviderLine(line)
-    for (const tool of observedProviderToolEvents([event])) this.#recordTool(tool)
+    for (const tool of observedProviderToolEvents([event], ignoreToolResults)) this.#recordTool(tool)
     if (this.#provider === 'codex') {
       const violation = validateCodexTextOnlyEnvelope(value, this.#lifecycle, this.#stdoutLine)
       if (violation) this.#record(this.#protocolViolations, `line ${this.#stdoutLine}: ${violation}`)
@@ -242,7 +257,8 @@ export class ProviderStreamInspector {
   }
 
   #recordTool(tool: string): void {
-    if (this.#tools.size < MAX_RECORDED_VIOLATIONS || this.#tools.has(tool)) this.#tools.add(tool)
+    const bounded = tool.slice(0, 200)
+    if (this.#tools.size < MAX_RECORDED_VIOLATIONS || this.#tools.has(bounded)) this.#tools.add(bounded)
     else this.#record(this.#securityViolations, 'Provider 输出包含过多不同工具标记')
   }
 }
@@ -310,7 +326,7 @@ export function parseProviderLine(line: string): ProviderEvent {
   return { type: 'raw', value }
 }
 
-function observedProviderToolEvents(events: readonly ProviderEvent[]): string[] {
+function observedProviderToolEvents(events: readonly ProviderEvent[], ignoreToolResults = false): string[] {
   const found = new Set<string>()
   for (const event of events) {
     if (event.type !== 'raw' || !event.value || typeof event.value !== 'object') continue
@@ -324,7 +340,7 @@ function observedProviderToolEvents(events: readonly ProviderEvent[]): string[] 
     }
     if (isToolEventMarker(type)) found.add(type)
     if (nestedType && isToolEventMarker(nestedType)) found.add(nestedType)
-    for (const tool of toolNamesInEnvelope(value)) found.add(tool)
+    for (const tool of toolNamesInEnvelope(value, ignoreToolResults)) found.add(tool)
   }
   return [...found]
 }
@@ -568,7 +584,7 @@ function nonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
-function toolNamesInEnvelope(root: unknown): string[] {
+function toolNamesInEnvelope(root: unknown, ignoreToolResults = false): string[] {
   const found = new Set<string>()
   const toolKey = /^(tool(?:_name|_call|_calls)?|function_call|web_search|mcp|command_execution|file_change|apply_patch)$/iu
   const visited = new WeakSet<object>()
@@ -586,13 +602,70 @@ function toolNamesInEnvelope(root: unknown): string[] {
       return
     }
     for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      if (['type', 'subtype', 'kind'].includes(key) && typeof nested === 'string' && isToolEventMarker(nested)) found.add(nested)
+      if (key === 'type' && nested === 'tool_use') {
+        const name = (value as Record<string, unknown>).name
+        found.add(typeof name === 'string' && name ? name : 'unnamed-tool')
+      } else if (key === 'type' && nested === 'tool_result' && ignoreToolResults) {
+        // tool_result 是调用回执，不是第二个工具；实际调用已经由配对的 tool_use 记录。
+      } else if (['type', 'subtype', 'kind'].includes(key) && typeof nested === 'string' && isToolEventMarker(nested)) {
+        found.add(nested)
+      }
       if (toolKey.test(key) && nested !== undefined && nested !== null && nested !== false && nested !== '') found.add(key)
       inspect(nested, depth + 1)
     }
   }
   inspect(root)
   return [...found]
+}
+
+function qoderToolResultViolations(value: unknown, observedToolUseIds: Set<string>): string[] {
+  if (!isRecord(value) || !isRecord(value.message) || !Array.isArray(value.message.content)) return []
+  const violations: string[] = []
+  for (const block of value.message.content) {
+    if (!isRecord(block)) continue
+    if (block.type === 'tool_use') {
+      if (typeof block.id === 'string' && block.id) {
+        if (observedToolUseIds.size < MAX_RECORDED_VIOLATIONS || observedToolUseIds.has(block.id)) {
+          observedToolUseIds.add(block.id)
+        } else {
+          violations.push('Qoder tool_use ID 过多')
+        }
+      }
+      continue
+    }
+    if (block.type !== 'tool_result') continue
+    if (typeof block.tool_use_id !== 'string' || !observedToolUseIds.has(block.tool_use_id)) {
+      violations.push('Qoder tool_result 缺少已观测的 tool_use')
+    }
+  }
+  return violations
+}
+
+function qoderTextOnlyInitViolations(value: unknown): string[] {
+  if (!isQoderInit(value)) return []
+  const violations: string[] = []
+  if (!Array.isArray(value.tools)) {
+    violations.push('Qoder init tools 必须是数组')
+  } else {
+    const tools = value.tools.map((tool) => typeof tool === 'string' && tool ? tool.slice(0, 200) : 'invalid-init-tool')
+    if (tools.length) violations.push(`Qoder 纯文本 init 暴露工具：${tools.slice(0, MAX_RECORDED_VIOLATIONS).join(', ')}`)
+  }
+  if (!Array.isArray(value.mcp_servers)) {
+    violations.push('Qoder init mcp_servers 必须是数组')
+  } else {
+    const active = value.mcp_servers.flatMap((server) => {
+      if (!isRecord(server)) return ['invalid-mcp-server']
+      if (server.status === 'disconnected') return []
+      const name = typeof server.name === 'string' && server.name ? server.name.slice(0, 200) : 'unnamed-mcp-server'
+      return [`${name}(${typeof server.status === 'string' ? server.status.slice(0, 40) : 'invalid-status'})`]
+    })
+    if (active.length) violations.push(`Qoder 纯文本 init 存在未隔离 MCP：${active.slice(0, MAX_RECORDED_VIOLATIONS).join(', ')}`)
+  }
+  return violations
+}
+
+function isQoderInit(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && value.type === 'system' && value.subtype === 'init'
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

@@ -2,6 +2,12 @@ import type { ProviderInvocation, ProviderRunRequest } from '../../shared/provid
 import { codexSessionIdIsValid } from './session-id'
 
 export const EMPTY_MCP_CONFIG = '{"mcpServers":{}}'
+// Qoder 1.0.45 会绕过 empty --tools / strict MCP，把插件 MCP 注入模型。
+// 每次生成一个不可能预注册的 server allowlist，既保留登录态，又避免固定哨兵与恶意/同名插件碰撞。
+export const QODER_NO_MCP_SERVER_PREFIX = '__etch_no_mcp_'
+export function qoderNoMcpServerName(): string {
+  return `${QODER_NO_MCP_SERVER_PREFIX}${crypto.randomUUID().replaceAll('-', '')}__`
+}
 export const QODER_TEXT_ONLY_SETTINGS = {
   disableAllHooks: true,
   skills: { enabled: false, disableShellExecution: true }
@@ -87,7 +93,9 @@ function qoderTextOnlyArgs(): string[] {
     '--disable-builtin-skills',
     '--setting-sources', '',
     '--settings', JSON.stringify(QODER_TEXT_ONLY_SETTINGS),
-    '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '', '--allowed-tools', '',
+    '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG,
+    '--allowed-mcp-server-names', qoderNoMcpServerName(),
+    '--tools', '', '--allowed-tools', '',
     '--permission-mode', 'dont_ask'
   ]
 }

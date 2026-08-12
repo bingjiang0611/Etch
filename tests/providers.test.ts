@@ -6,6 +6,7 @@ import {
   EMPTY_MCP_CONFIG,
   OPENCODE_TEXT_ONLY_AGENT,
   OPENCODE_TEXT_ONLY_CONFIG,
+  QODER_NO_MCP_SERVER_PREFIX,
   QODER_TEXT_ONLY_SETTINGS
 } from '../src/main/providers/adapters'
 import { codexTextOnlyExecutableIsSupported } from '../src/main/providers/codex-capability'
@@ -150,7 +151,9 @@ describe('provider adapters', () => {
       args: [
         '-p', '-o', 'stream-json', '--bare', '--disable-builtin-skills',
         '--setting-sources', '', '--settings', JSON.stringify(QODER_TEXT_ONLY_SETTINGS),
-        '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '', '--allowed-tools', '',
+        '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG,
+        '--allowed-mcp-server-names', expect.stringMatching(new RegExp(`^${QODER_NO_MCP_SERVER_PREFIX}[0-9a-f]{32}__$`, 'u')),
+        '--tools', '', '--allowed-tools', '',
         '--permission-mode', 'dont_ask', '--session-id', expect.stringMatching(/^[0-9a-f-]{36}$/u)
       ]
     })
@@ -164,7 +167,9 @@ describe('provider adapters', () => {
     expect(resumed.args).toEqual([
       '-p', '-o', 'stream-json', '--bare', '--disable-builtin-skills',
       '--setting-sources', '', '--settings', JSON.stringify(QODER_TEXT_ONLY_SETTINGS),
-      '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG, '--tools', '', '--allowed-tools', '',
+      '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG,
+      '--allowed-mcp-server-names', expect.stringMatching(new RegExp(`^${QODER_NO_MCP_SERVER_PREFIX}[0-9a-f]{32}__$`, 'u')),
+      '--tools', '', '--allowed-tools', '',
       '--permission-mode', 'dont_ask', '--session-id', expect.stringMatching(/^[0-9a-f-]{36}$/u)
     ])
     expect(resumed.args).not.toContain('-r')
@@ -840,16 +845,47 @@ describe('provider adapters', () => {
     expect(result.sessionIds).toEqual([CODEX_SESSION_ID])
   })
 
-  it('records Qoder tool_use/tool_result as text-only contamination', () => {
+  it('reports the real Qoder tool name and does not mislabel its denied result as another tool', () => {
+    const tool = 'mcp__plugin_clarify-requirements_clarification-reporter__clarify_replay_outbox'
+    const toolUseId = 'tool-use-1'
     const stream = [
-      { type: 'system', subtype: 'init', session_id: 'qoder-session' },
-      { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'WebSearch', input: { query: 'x' } }] } },
-      { type: 'user', message: { content: [{ type: 'tool_result', content: 'result' }] } },
+      { type: 'system', subtype: 'init', session_id: 'qoder-session', tools: [tool], mcp_servers: [{ name: 'plugin:clarify', status: 'connected' }] },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: toolUseId, name: tool, input: {} }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, is_error: true, content: 'denied' }] } },
       { type: 'result', result: 'OK' }
     ].map((item) => `${JSON.stringify(item)}\n`).join('')
     const inspection = inspect('qoder', stream)
-    expect(inspection.tools).toEqual(expect.arrayContaining(['tool_use', 'tool_result']))
+    expect(inspection.tools).toEqual([tool])
+    expect(inspection.securityViolations).toEqual(expect.arrayContaining([
+      `Qoder 纯文本 init 暴露工具：${tool}`,
+      'Qoder 纯文本 init 存在未隔离 MCP：plugin:clarify(connected)'
+    ]))
     expect(inspection.text).toBe('OK')
+  })
+
+  it('accepts a fully isolated Qoder init and fails closed on orphan tool results', () => {
+    const clean = inspect('qoder', [
+      { type: 'system', subtype: 'init', session_id: 'qoder-session', tools: [], mcp_servers: [{ name: 'plugin:clarify', status: 'disconnected' }] },
+      { type: 'result', result: 'OK' }
+    ].map((item) => `${JSON.stringify(item)}\n`).join(''))
+    expect(clean.tools).toEqual([])
+    expect(clean.securityViolations).toEqual([])
+
+    const orphan = inspect('qoder', [
+      { type: 'system', subtype: 'init', session_id: 'qoder-session', tools: [], mcp_servers: [] },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'missing', is_error: false, content: 'result' }] } }
+    ].map((item) => `${JSON.stringify(item)}\n`).join(''))
+    expect(orphan.securityViolations).toContain('Qoder tool_result 缺少已观测的 tool_use')
+  })
+
+  it('requires exactly one complete Qoder init envelope', () => {
+    const missing = inspect('qoder', `${JSON.stringify({ type: 'result', result: 'OK' })}\n`)
+    expect(missing.securityViolations).toContain('Qoder 纯文本调用必须且只能报告一次 init，实际 0')
+
+    const malformed = inspect('qoder', `${JSON.stringify({
+      type: 'system', subtype: 'init', session_id: 'qoder-session', tools: [], mcp_servers: [{ name: 'plugin:clarify', status: 'failed' }]
+    })}\n`)
+    expect(malformed.securityViolations).toContain('Qoder 纯文本 init 存在未隔离 MCP：plugin:clarify(failed)')
   })
 
   it('fails closed when a JSONL line or accumulated result exceeds its bound', () => {

@@ -42,13 +42,8 @@ afterEach(async () => {
 
 function stdout(text: string, sessionId: string): string {
   return [
-    JSON.stringify({ type: 'thread.started', thread_id: sessionId }),
-    JSON.stringify({ type: 'turn.started' }),
-    JSON.stringify({ type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text } }),
-    JSON.stringify({
-      type: 'turn.completed',
-      usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }
-    })
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId, tools: [], mcp_servers: [] }),
+    JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, result: text })
   ].join('\n')
 }
 

@@ -1,6 +1,11 @@
 import type { ModelSelection, ProviderId } from '../../shared/task-schema'
 import type { ToolId } from '../../shared/settings-schema'
-import { CODEX_TEXT_ONLY_DISABLED_FEATURES, EMPTY_MCP_CONFIG, QODER_TEXT_ONLY_SETTINGS } from './adapters'
+import {
+  CODEX_TEXT_ONLY_DISABLED_FEATURES,
+  EMPTY_MCP_CONFIG,
+  QODER_TEXT_ONLY_SETTINGS,
+  qoderNoMcpServerName
+} from './adapters'
 
 export type ResearchCapability = { available: true } | { available: false; reason: string }
 
@@ -11,7 +16,7 @@ const RESEARCH_PROVIDERS: readonly ProviderId[] = ['codex', 'qoder']
 
 // Qoder 的内建工具名；`--tools` 收窄可用工具，`--allowed-tools` 决定哪个能真的执行。
 // 实测：只给 `--tools WebSearch` 时 Bash/Edit/Write/Agent/ImageGen 这些内建工具直接不存在；
-// 但插件带进来的 MCP 工具仍会注册，只能靠 `dont_ask` 拒绝执行 + 观测层判污染兜住。
+// 插件 MCP 另由 server allowlist 从模型可见集合中移除，观测层再核对 init 白名单。
 export const QODER_RESEARCH_TOOL = 'WebSearch'
 
 export function researchCapability(provider: ProviderId): ResearchCapability {
@@ -46,6 +51,7 @@ export function buildResearchProviderInvocation(
         '--setting-sources', '',
         '--settings', JSON.stringify(QODER_TEXT_ONLY_SETTINGS),
         '--strict-mcp-config', '--mcp-config', EMPTY_MCP_CONFIG,
+        '--allowed-mcp-server-names', qoderNoMcpServerName(),
         // 只留 WebSearch 并显式放行；缺了 --allowed-tools 时 dont_ask 会把搜索也拒掉，
         // 模型就会退回记忆作答并把未核验内容当成核验结果。
         '--tools', QODER_RESEARCH_TOOL,

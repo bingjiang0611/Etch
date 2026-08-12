@@ -127,8 +127,15 @@ function imageRun(cwd: string, stdin: string) {
 
 function providerStdout(): string {
   return [
-    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'a2f0b0a4-0000-4000-8000-000000000000' }),
-    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'ImageGen' }] } }),
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'a2f0b0a4-0000-4000-8000-000000000000',
+      tools: ['ImageGen'],
+      mcp_servers: []
+    }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'image-call-1', name: 'ImageGen' }] } }),
+    JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'image-call-1', is_error: false, content: 'generated' }] } }),
     JSON.stringify({ type: 'result', subtype: 'success', result: 'done' })
   ].join('\n')
 }

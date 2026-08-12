@@ -3187,11 +3187,11 @@ export class TaskPipeline {
         if (inspection.unexpectedTools.length) {
           throw new Error(`外部核验调用了白名单以外的工具：${inspection.unexpectedTools.join(', ')}`)
         }
-        if (inspection.webSearches < 1) throw new Error('外部核验没有实际执行 Web Search')
-        queryCount = inspection.webSearches
         if (this.#processFailed(run) || inspection.errors.length) {
           throw new Error(this.#commandFailure(`${provider} Web Search 调用失败`, [run.stderr, ...inspection.errors].filter(Boolean).join('\n')))
         }
+        if (inspection.webSearches < 1) throw new Error('外部核验没有实际执行 Web Search')
+        queryCount = inspection.webSearches
         ledger = parseResearchResponse(inspection.text, candidates)
         producer = researchProducer(provider)
       } catch (error) {
@@ -3638,7 +3638,7 @@ export class TaskPipeline {
       { provider, model, prompt, sessionId: randomUUID() },
       health.executable!
     )
-    const reader = new ImageStreamReader()
+    const reader = new ImageStreamReader(provider)
     let registeredRunId: string | undefined
     const processSpec: ProcessSpec = {
       command: invocation.command,

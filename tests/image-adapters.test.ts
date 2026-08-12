@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CODEX_TEXT_ONLY_DISABLED_FEATURES, buildProviderInvocation } from '../src/main/providers/adapters'
+import { CODEX_TEXT_ONLY_DISABLED_FEATURES, QODER_NO_MCP_SERVER_PREFIX, buildProviderInvocation } from '../src/main/providers/adapters'
 import {
   CODEX_IMAGE_ALLOWED_FEATURES,
   IMAGE_GENERATION_SIZE,
@@ -90,6 +90,9 @@ describe('配图调用档', () => {
     expect(invocation.args[invocation.args.indexOf('--tools') + 1]).toBe(IMAGE_TOOL_NAME)
     expect(invocation.args).toContain('--strict-mcp-config')
     expect(invocation.args[invocation.args.indexOf('--mcp-config') + 1]).toBe('{"mcpServers":{}}')
+    expect(invocation.args[invocation.args.indexOf('--allowed-mcp-server-names') + 1])
+      .toMatch(new RegExp(`^${QODER_NO_MCP_SERVER_PREFIX}[0-9a-f]{32}__$`, 'u'))
+    expect(invocation.args[invocation.args.indexOf('--allowed-tools') + 1]).toBe(IMAGE_TOOL_NAME)
     expect(invocation.args).toContain('--disable-builtin-skills')
     expect(invocation.args[invocation.args.indexOf('--settings') + 1]).toContain('"disableAllHooks":true')
     expect(invocation.args).toContain('--session-id')
@@ -171,9 +174,10 @@ describe('Codex 配图调用档', () => {
 
 describe('配图输出流审计', () => {
   it('收集 session 与结果文本，只调 ImageGen 时不算越界', () => {
-    const reader = new ImageStreamReader()
-    reader.push(`${JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION })}\n`)
-    reader.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'ImageGen' }] } })}\n`)
+    const reader = new ImageStreamReader('qoder')
+    reader.push(`${JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION, tools: ['ImageGen'], mcp_servers: [] })}\n`)
+    reader.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'image-call-1', name: 'ImageGen' }] } })}\n`)
+    reader.push(`${JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'image-call-1', is_error: false, content: 'generated' }] } })}\n`)
     reader.push(`${JSON.stringify({ type: 'result', subtype: 'success', result: 'done' })}\n`)
     reader.finish()
     const inspection = reader.inspection()
@@ -184,28 +188,71 @@ describe('配图输出流审计', () => {
   })
 
   it('出现图像工具以外的工具调用会被记为越界', () => {
-    const reader = new ImageStreamReader()
+    const reader = new ImageStreamReader('qoder')
     reader.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash' }] } })}\n`)
     reader.finish()
     expect(reader.inspection().unexpectedTools).toContain('Bash')
   })
 
+  it('Qoder init 暴露额外工具或 connected MCP 时立即判越界', () => {
+    const reader = new ImageStreamReader('qoder')
+    reader.push(`${JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: SESSION,
+      tools: ['ImageGen', 'mcp__plugin__extra'],
+      mcp_servers: [{ name: 'plugin:extra', status: 'connected' }]
+    })}\n`)
+    reader.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'image-call-1', name: 'ImageGen' }] } })}\n`)
+    reader.finish()
+    expect(reader.inspection().unexpectedTools).toEqual(expect.arrayContaining(['qoder-init-tools', 'plugin:extra']))
+  })
+
+  it('Qoder 流混入 Codex envelope 也不能跳过 Qoder 协议门禁', () => {
+    const reader = new ImageStreamReader('qoder')
+    reader.push(`${JSON.stringify({ type: 'thread.started', thread_id: SESSION })}\n`)
+    reader.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'ImageGen' }] } })}\n`)
+    reader.finish()
+    expect(reader.inspection().unexpectedTools).toEqual(expect.arrayContaining([
+      'qoder-codex-envelope',
+      'qoder-init-count-0'
+    ]))
+  })
+
   it('Qoder 必须恰好调用一次 ImageGen', () => {
-    const missing = new ImageStreamReader()
+    const missing = new ImageStreamReader('qoder')
     missing.push(`${JSON.stringify({ type: 'result', subtype: 'success', result: 'done' })}\n`)
     missing.finish()
     expect(missing.inspection().unexpectedTools).toContain('ImageGen-call-count')
 
-    const duplicate = new ImageStreamReader()
+    const duplicate = new ImageStreamReader('qoder')
     for (let index = 0; index < 2; index += 1) {
-      duplicate.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'ImageGen' }] } })}\n`)
+      duplicate.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `image-call-${index}`, name: 'ImageGen' }] } })}\n`)
     }
     duplicate.finish()
     expect(duplicate.inspection().unexpectedTools).toContain('ImageGen-call-count')
   })
 
+  it('Qoder ImageGen 必须收到唯一且成功配对的 result', () => {
+    const denied = new ImageStreamReader('qoder')
+    denied.push(`${JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION, tools: ['ImageGen'], mcp_servers: [] })}\n`)
+    denied.push(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'image-call-1', name: 'ImageGen' }] } })}\n`)
+    denied.push(`${JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'image-call-1', is_error: true, content: 'denied' }] } })}\n`)
+    denied.finish()
+    expect(denied.inspection().unexpectedTools).toEqual(expect.arrayContaining([
+      'ImageGen-failed-result',
+      'ImageGen-call-count'
+    ]))
+
+    const orphan = new ImageStreamReader('qoder')
+    orphan.push(`${JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION, tools: ['ImageGen'], mcp_servers: [] })}\n`)
+    orphan.push(`${JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'missing', is_error: false, content: 'generated' }] } })}\n`)
+    orphan.finish()
+    expect(orphan.inspection().unexpectedTools).toContain('ImageGen-orphan-result')
+  })
+
   it('接受一次完整的 Codex image_generation 生命周期', () => {
-    const reader = new ImageStreamReader()
+    const reader = new ImageStreamReader('codex')
     for (const event of [
       { type: 'thread.started', thread_id: SESSION },
       { type: 'turn.started' },
@@ -227,7 +274,7 @@ describe('配图输出流审计', () => {
   it.each(['command_execution', 'file_change', 'apply_patch'])(
     '拒绝 Codex 越权 item：%s',
     (type) => {
-      const reader = new ImageStreamReader()
+      const reader = new ImageStreamReader('codex')
       reader.push(`${JSON.stringify({ type: 'thread.started', thread_id: SESSION })}\n`)
       reader.push(`${JSON.stringify({ type: 'item.started', item: { id: 'bad-1', type } })}\n`)
       reader.finish()
@@ -236,12 +283,12 @@ describe('配图输出流审计', () => {
   )
 
   it('拒绝缺失、重复或 ID 不匹配的 Codex image_generation 生命周期', () => {
-    const missing = new ImageStreamReader()
+    const missing = new ImageStreamReader('codex')
     missing.push(`${JSON.stringify({ type: 'thread.started', thread_id: SESSION })}\n`)
     missing.finish()
     expect(missing.inspection().unexpectedTools).toContain('image_generation-lifecycle')
 
-    const mismatched = new ImageStreamReader()
+    const mismatched = new ImageStreamReader('codex')
     mismatched.push(`${JSON.stringify({ type: 'thread.started', thread_id: SESSION })}\n`)
     mismatched.push(`${JSON.stringify({ type: 'item.started', item: { id: 'image-1', type: 'image_generation' } })}\n`)
     mismatched.push(`${JSON.stringify({ type: 'item.completed', item: { id: 'image-2', type: 'image_generation' } })}\n`)
@@ -254,7 +301,7 @@ describe('配图输出流审计', () => {
     ['jsonl-event-count-limit', { events: 1, totalBytes: 100 }, '{}\n{}\n'],
     ['jsonl-total-bytes-limit', { totalBytes: 4 }, '{}\n{}\n']
   ] as const)('对 %s fail closed', (marker, limits, stream) => {
-    const reader = new ImageStreamReader(limits)
+    const reader = new ImageStreamReader('qoder', limits)
     reader.push(stream)
     reader.finish()
     expect(reader.inspection().unexpectedTools).toContain(marker)

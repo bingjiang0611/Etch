@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { QODER_NO_MCP_SERVER_PREFIX } from '../src/main/providers/adapters'
 import {
   QODER_RESEARCH_TOOL,
   buildResearchProviderInvocation,
@@ -10,23 +11,33 @@ import { inspectQoderResearchStream } from '../src/main/providers/research-strea
 
 const SESSION = '93b6dac7-14a1-4d0a-bea5-cc417af1b586'
 
-// 下面两段是 2026-08 用真实 qodercli 1.1.17 抓到的流，只截短了文本内容。
+// 下面两段按 2026-08 本机 QoderWork qodercli 1.0.45 的真实字段形状脱敏，只截短文本。
+const SEARCH_ID = 'tool-use-web-search'
 const SEARCHED_STREAM = [
-  { type: 'system', subtype: 'init', session_id: SESSION },
-  { type: 'assistant', session_id: SESSION, message: { content: [{ type: 'tool_use', name: 'WebSearch', input: { query: 'zig official site' } }] } },
-  { type: 'user', session_id: SESSION, message: { content: [{ type: 'tool_result', content: 'Web search results for query: ...' }] } },
+  { type: 'system', subtype: 'init', session_id: SESSION, tools: ['WebSearch'], mcp_servers: [] },
+  { type: 'assistant', session_id: SESSION, message: { content: [{ type: 'tool_use', id: SEARCH_ID, name: 'WebSearch', input: { query: 'zig official site' } }] } },
+  { type: 'user', session_id: SESSION, message: { content: [{ type: 'tool_result', tool_use_id: SEARCH_ID, is_error: false, content: 'Web search results for query: ...' }] } },
   { type: 'result', subtype: 'success', is_error: false, session_id: SESSION, result: '{"schemaVersion":1,"claims":[]}' }
 ].map((event) => JSON.stringify(event)).join('\n')
 
 // 插件带进来的 MCP 工具即使被 dont_ask 拒绝执行，也在流里留下了一次 tool_use。
 const MCP_ATTEMPT_STREAM = [
-  { type: 'system', subtype: 'init', session_id: SESSION },
-  { type: 'assistant', session_id: SESSION, message: { content: [{ type: 'tool_use', name: 'WebSearch', input: { query: 'x' } }] } },
+  { type: 'system', subtype: 'init', session_id: SESSION, tools: ['WebSearch'], mcp_servers: [] },
+  { type: 'assistant', session_id: SESSION, message: { content: [{ type: 'tool_use', id: SEARCH_ID, name: 'WebSearch', input: { query: 'x' } }] } },
+  { type: 'user', session_id: SESSION, message: { content: [{ type: 'tool_result', tool_use_id: SEARCH_ID, is_error: false, content: 'result' }] } },
   {
     type: 'assistant',
     session_id: SESSION,
-    message: { content: [{ type: 'tool_use', name: 'mcp__plugin_clarify-requirements_clarification-reporter__clarify_run_info', input: {} }] }
+    message: {
+      content: [{
+        type: 'tool_use',
+        id: 'tool-use-plugin',
+        name: 'mcp__plugin_clarify-requirements_clarification-reporter__clarify_run_info',
+        input: {}
+      }]
+    }
   },
+  { type: 'user', session_id: SESSION, message: { content: [{ type: 'tool_result', tool_use_id: 'tool-use-plugin', is_error: true, content: 'denied' }] } },
   { type: 'result', subtype: 'success', is_error: false, session_id: SESSION, result: '{"schemaVersion":1,"claims":[]}' }
 ].map((event) => JSON.stringify(event)).join('\n')
 
@@ -59,6 +70,8 @@ describe('Qoder 外部核验隔离档', () => {
     expect(args).toContain('--disable-builtin-skills')
     expect(args).toContain('--strict-mcp-config')
     expect(args[args.indexOf('--mcp-config') + 1]).toBe('{"mcpServers":{}}')
+    expect(args[args.indexOf('--allowed-mcp-server-names') + 1])
+      .toMatch(new RegExp(`^${QODER_NO_MCP_SERVER_PREFIX}[0-9a-f]{32}__$`, 'u'))
     expect(args[args.indexOf('--setting-sources') + 1]).toBe('')
     expect(args[args.indexOf('--tools') + 1]).toBe(QODER_RESEARCH_TOOL)
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('dont_ask')
@@ -112,14 +125,33 @@ describe('Qoder 外部核验流观测', () => {
 
   it('is_error 结果与非 JSON 输出都被记下来', () => {
     const failed = inspectQoderResearchStream([
-      JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION }),
-      JSON.stringify({ type: 'assistant', session_id: SESSION, message: { content: [{ type: 'tool_use', name: 'WebSearch', input: {} }] } }),
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION, tools: ['WebSearch'], mcp_servers: [] }),
+      JSON.stringify({ type: 'assistant', session_id: SESSION, message: { content: [{ type: 'tool_use', id: SEARCH_ID, name: 'WebSearch', input: {} }] } }),
       JSON.stringify({ type: 'result', subtype: 'error', is_error: true, session_id: SESSION, result: 'quota exceeded' })
     ].join('\n'))
     expect(failed.errors).toEqual(['quota exceeded'])
 
     const noisy = inspectQoderResearchStream(`not json\n${SEARCHED_STREAM}`)
     expect(noisy.unexpectedTools).toContain('non-json-output')
+  })
+
+  it('只有成功配对的 WebSearch result 才算真实搜索', () => {
+    const denied = inspectQoderResearchStream([
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION, tools: ['WebSearch'], mcp_servers: [] }),
+      JSON.stringify({ type: 'assistant', session_id: SESSION, message: { content: [{ type: 'tool_use', id: SEARCH_ID, name: 'WebSearch', input: {} }] } }),
+      JSON.stringify({ type: 'user', session_id: SESSION, message: { content: [{ type: 'tool_result', tool_use_id: SEARCH_ID, is_error: true, content: 'denied' }] } }),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: SESSION, result: '{}' })
+    ].join('\n'))
+    expect(denied.webSearches).toBe(0)
+    expect(denied.errors).toContain('Qoder WebSearch 执行失败：denied')
+
+    const orphan = inspectQoderResearchStream([
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION, tools: ['WebSearch'], mcp_servers: [] }),
+      JSON.stringify({ type: 'user', session_id: SESSION, message: { content: [{ type: 'tool_result', tool_use_id: 'missing', is_error: false, content: 'result' }] } }),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: SESSION, result: '{}' })
+    ].join('\n'))
+    expect(orphan.webSearches).toBe(0)
+    expect(orphan.unexpectedTools).toContain('orphan-tool-result')
   })
 
   it('session 数不为 1 或 ID 非法时直接拒收', () => {
@@ -131,5 +163,19 @@ describe('Qoder 外部核验流观测', () => {
     ].join('\n'))).toThrow('必须且只能产生一个 Qoder session')
     expect(() => inspectQoderResearchStream(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'not-a-uuid' })))
       .toThrow('Qoder session ID 无效')
+  })
+
+  it('init 暴露额外工具或 connected MCP 时立即判越界', () => {
+    const inspection = inspectQoderResearchStream([
+      JSON.stringify({
+        type: 'system',
+        subtype: 'init',
+        session_id: SESSION,
+        tools: ['WebSearch', 'mcp__plugin__extra'],
+        mcp_servers: [{ name: 'plugin:extra', status: 'connected' }]
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: SESSION, result: '{}' })
+    ].join('\n'))
+    expect(inspection.unexpectedTools).toEqual(expect.arrayContaining(['qoder-init-tools', 'plugin:extra']))
   })
 })
