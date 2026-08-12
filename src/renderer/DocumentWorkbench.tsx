@@ -569,24 +569,6 @@ export function DocumentWorkbench({
                       />
                     </section>
                   </div>
-                  {images.length > 0 && (
-                    <section className="document-review-images" aria-label="文档配图">
-                      <div className="document-review-images-heading">
-                        <strong>文档配图</strong>
-                        <span>{images.length} 张 · 中文预览会按正文位置显示</span>
-                      </div>
-                      <div className="document-review-image-grid">
-                        {images.map((image) => (
-                          <DocumentImage
-                            taskId={taskId}
-                            block={{ kind: 'image', filename: image.localPath, alt: image.alt }}
-                            image={image}
-                            key={`${taskId}:${image.mediaId}:${image.sha256}`}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  )}
                   <footer className="review-checkpoint-banner">
                     <div className="review-checkpoint-copy">
                       <span className="review-checkpoint-icon"><Icon name={reviewCompleted ? 'check' : 'warning'} /></span>
