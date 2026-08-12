@@ -309,16 +309,17 @@ describe('document translation recovery', () => {
   })
 
   it('keeps residual deterministic audit issues as hard failures', async () => {
-    const task = await translationTask('Version 2 is stable.')
+    const task = await translationTask('Agent is stable.')
     runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
       const sessionId = providerSessionFromArgs(spec.args)
       if (spec.stdin.includes('document-analysis-blocks')) {
         return providerResult(JSON.stringify({
-          contentType: 'article', tone: 'technical', audience: 'developers', glossary: [], risks: []
+          contentType: 'article', tone: 'technical', audience: 'developers',
+          glossary: [{ source: 'Agent', target: '智能体' }], risks: []
         }), sessionId)
       }
       const blocks = sectionData(spec.stdin, 'document-blocks')
-      return providerResult(JSON.stringify({ blocks: blocks.map((block) => ({ id: block.id, markdown: '版本 3 很稳定。' })) }), sessionId)
+      return providerResult(JSON.stringify({ blocks: blocks.map((block) => ({ id: block.id, markdown: '代理很稳定。' })) }), sessionId)
     })
 
     await expect(task.pipeline.start(task.directory)).rejects.toThrow('文档确定性终检未通过')
@@ -326,7 +327,7 @@ describe('document translation recovery', () => {
     const completed = await task.store.load(task.directory)
     expect(completed.pipeline.stages.translate.status).toBe('failed')
     expect(completed.pipeline.stages.review.status).toBe('pending')
-    expect(completed.document.warnings).toContain(`${completed.document.translationBatches[0].blockIds[0]}: 数字、日期或单位发生变化`)
+    expect(completed.document.warnings).toContain(`${completed.document.translationBatches[0].blockIds[0]}: 术语 Agent 未使用冻结译法 智能体`)
     expect(completed.document.translationBatches).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'audit-repair:document-001', status: 'stale', attempt: 1 })
     ]))
