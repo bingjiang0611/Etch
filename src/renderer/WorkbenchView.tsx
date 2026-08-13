@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { BilibiliAccount } from '../shared/bilibili'
-import type { GlossaryApplyResult, GlossaryImpactPreview, ChromeCookieAccess, PipelineActivity, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
-import { POOL_BY_STAGE, POOL_LABELS, STAGE_ORDER } from '../shared/pipeline'
+import type { GlossaryApplyResult, GlossaryImpactPreview, ChromeCookieAccess, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
+import { STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
 import { SHARED_STAGE_IDS, lastStageForKind, taskInputName, type ModelSelection, type ProviderId, type StageId } from '../shared/task-schema'
 import { AuditGlossary, type GlossaryEdit } from './AuditGlossary'
@@ -21,9 +21,6 @@ import {
   durationLabel,
   getStage,
   isStageDone,
-  poolState,
-  poolStateLabel,
-  pools,
   providerNames,
   reviewTime,
   stageLabels,
@@ -67,8 +64,6 @@ interface WorkbenchViewProps {
   savingPreset: boolean
   glossaryBusy: boolean
   selectedIsRunning: boolean
-  selectedWaitingStage: StageId | undefined
-  activity: PipelineActivity
   selectedIsPaused: boolean
   stoppingTask: boolean
   creatingCompanion: boolean
@@ -321,8 +316,6 @@ export function WorkbenchView({
   savingPreset,
   glossaryBusy,
   selectedIsRunning,
-  selectedWaitingStage,
-  activity,
   selectedIsPaused,
   stoppingTask,
   creatingCompanion,
@@ -398,8 +391,6 @@ export function WorkbenchView({
     && selected?.manifest.video.sourcePlatform === 'youtube'
     && chromeCookieAccess !== 'granted'
   const verifyCompleted = selected ? getStage(selected, isSummaryTask ? 'illustrate' : 'verify').status === 'completed' : false
-  const waitingPool = selectedWaitingStage ? POOL_BY_STAGE[selectedWaitingStage] : undefined
-  const waitingOccupancy = waitingPool ? activity.pools[waitingPool] : undefined
   const publication = selected?.manifest.publication
   const publicationRunning = publication ? ['queued', 'uploading', 'submitting'].includes(publication.status) : false
   const publicationCanContinue = publication ? ['paused', 'failed'].includes(publication.status) && Boolean(publication.draft) : false
@@ -424,8 +415,6 @@ export function WorkbenchView({
   const sharedReady = sharedCompletedCount === SHARED_STAGE_IDS.length
   const companionKind = selected?.manifest.kind === 'subtitle' ? 'summary' : 'subtitle'
   const companionLabel = companionKind === 'subtitle' ? '双语硬字幕' : '视频总结'
-  // 字幕任务不该看到配图池，总结任务也不该看到压制池。
-  const taskPools = pools.filter((pool) => stages.some((id) => POOL_BY_STAGE[id] === pool))
   const overallProgress = Math.min(1, (selectedCompletedCount + (activeStage?.status === 'running' ? (activeStage.progress ?? 0) : 0)) / stages.length)
   const saveStateText = autoSaveBlocked ? '自动保存失败，需处理' : savingCues ? '正在自动保存…' : dirtyCount ? '等待自动保存…' : cueSaveNotice || '已自动保存'
   const primaryActionLabel = checkpoint
@@ -440,8 +429,6 @@ export function WorkbenchView({
       ? completingReview ? '正在继续…' : '完成校对并继续'
       : selectedIsRunning
         ? stoppingTask ? '正在停止…' : '停止处理'
-        : selectedWaitingStage
-          ? stoppingTask ? '正在退出排队…' : '退出排队'
         : selectedIsPaused
           ? '继续处理'
         : needsRebuild
@@ -456,7 +443,7 @@ export function WorkbenchView({
       ? true
     : reviewCheckpoint
       ? reviewCompletionBlocked
-      : selectedIsRunning || selectedWaitingStage
+      : selectedIsRunning
         ? stoppingTask
       : resolvingAudit || savingCues || Boolean(dirtyCount) || glossaryBusy || (verifyCompleted && !needsRebuild)
   const seekVideo = (startMs: number, play = false): void => {
@@ -538,7 +525,7 @@ export function WorkbenchView({
   const taskId = selected.manifest.taskId
   const failedStage = stages.find((id) => getStage(selected, id).status === 'failed')
   const failedErrorCode = failedStage ? getStage(selected, failedStage).errorCode : undefined
-  const recoveredTool = selectedIsRunning || selectedWaitingStage ? undefined : recoveredToolForStageFailure(failedErrorCode, toolHealth)
+  const recoveredTool = selectedIsRunning ? undefined : recoveredToolForStageFailure(failedErrorCode, toolHealth)
   const glossaryCount = reviewPage?.glossaryState === 'ready' ? reviewPage.glossary.length : undefined
   const tabs: Array<{ id: WorkspaceTab; label: string; count?: number }> = isSummaryTask
     ? [
@@ -589,14 +576,14 @@ export function WorkbenchView({
               </button>
             )}
             <button
-              className={selectedIsRunning || selectedWaitingStage ? 'danger-button wb-stop-button' : 'primary-button'}
+              className={selectedIsRunning ? 'danger-button wb-stop-button' : 'primary-button'}
               type="button"
               disabled={primaryActionDisabled}
               onClick={() => {
-                void (selectedIsRunning || selectedWaitingStage ? onStop() : reviewCheckpoint ? onCompleteReview() : onStart())
+                void (selectedIsRunning ? onStop() : reviewCheckpoint ? onCompleteReview() : onStart())
               }}
             >
-              {(selectedIsRunning || selectedWaitingStage) && <Icon name="pause" />}
+              {selectedIsRunning && <Icon name="pause" />}
               {primaryActionLabel}
             </button>
           </div>
@@ -625,18 +612,6 @@ export function WorkbenchView({
           <p className="task-action-error" role="alert">
             {taskActionError}
           </p>
-        )}
-        {selectedWaitingStage && waitingPool && waitingOccupancy && (
-          <div className="permission-banner" role="status">
-            <Icon name="warning" />
-            <div>
-              <strong>{POOL_LABELS[waitingPool]}正在排队</strong>
-              <span>
-                本任务的「{stageLabels[selectedWaitingStage]}」阶段已排队，当前同池运行中 {waitingOccupancy.active} 个。
-                {waitingOccupancy.waiting > 1 ? `同一个池里还有 ${waitingOccupancy.waiting - 1} 个任务在等。` : ''}
-              </span>
-            </div>
-          </div>
         )}
         {showChromeLoginHelp && (
           <div className="permission-banner" role="status">
@@ -777,19 +752,6 @@ export function WorkbenchView({
                     </span>
                   </button>
                 )}
-              </div>
-              <div className="pipeline-pools">
-                {taskPools.map((pool) => {
-                  const status = poolState(selected, pool)
-                  const queued = pool === waitingPool
-                  return (
-                    <span className="pool-tag" key={pool}>
-                      <span className="dot" data-status={queued ? 'queued' : status} />
-                      <b>{pool}</b>
-                      {queued ? '排队中' : poolStateLabel(status)}
-                    </span>
-                  )
-                })}
               </div>
             </section>
 

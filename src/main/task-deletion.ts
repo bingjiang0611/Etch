@@ -19,7 +19,7 @@ interface BaseTaskOptions {
   registry: Pick<LocationRegistry, 'load' | 'removeTaskLocation'>
   taskStore: Pick<TaskStore, 'load'>
   isRunning: (taskDirectory: string) => boolean
-  hasActiveProviderRun?: (taskId: string) => Promise<boolean>
+  hasActiveProviderRun?: (taskId: string, taskDirectory: string) => Promise<boolean>
   onCleanupWarning?: (warning: DeleteCleanupWarning) => void
 }
 
@@ -48,7 +48,7 @@ export async function moveTaskToTrash(options: DeleteTaskOptions): Promise<strin
   const indexed = options.indexStore.get(options.taskId)
   if (!indexed) throw new Error('任务不存在')
   if (options.isRunning(indexed.location)) throw new Error('运行中的任务不能删除')
-  if (await options.hasActiveProviderRun?.(options.taskId)) throw new Error('仍有活动 Provider 进程登记的任务不能删除')
+  if (await options.hasActiveProviderRun?.(options.taskId, indexed.location)) throw new Error('仍有活动 Provider 进程登记的任务不能删除')
 
   const manifest = await options.taskStore.load(indexed.location)
   if (manifest.taskId !== options.taskId) throw new Error('任务目录身份不匹配，拒绝删除')
@@ -78,7 +78,7 @@ export async function removeTaskRecord(options: RemoveTaskRecordOptions): Promis
   const indexed = options.indexStore.get(options.taskId)
   if (!indexed) throw new Error('任务不存在')
   if (options.isRunning(indexed.location)) throw new Error('运行中的任务不能删除')
-  if (await options.hasActiveProviderRun?.(options.taskId)) throw new Error('仍有活动 Provider 进程登记的任务不能删除')
+  if (await options.hasActiveProviderRun?.(options.taskId, indexed.location)) throw new Error('仍有活动 Provider 进程登记的任务不能删除')
 
   const manifest = await options.taskStore.load(indexed.location)
   if (manifest.taskId !== options.taskId) throw new Error('任务目录身份不匹配，拒绝删除')

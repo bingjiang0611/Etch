@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BilibiliPublisher, classifyBiliupFailure, parseBiliupReceipt, sanitizeBiliupDiagnostic } from '../src/main/bilibili-publisher'
 import { AsyncRunScope } from '../src/main/runtime/async-run-scope'
 import { runProcess, type ProcessResult, type ProcessSpec } from '../src/main/runtime/process-runner'
@@ -27,6 +27,10 @@ async function fixture(sidecarSource: string, runExternal?: (spec: ProcessSpec) 
   store: TaskStore
   publisher: BilibiliPublisher
   appRuns: AsyncRunScope
+  accountStore: {
+    markExpiredIfCurrent: ReturnType<typeof vi.fn>
+    saveRefreshedIfCurrent: ReturnType<typeof vi.fn>
+  }
   finalSha256: string
 }> {
   const directory = await mkdtemp(join(tmpdir(), 'etch-bili-publisher-'))
@@ -54,14 +58,15 @@ async function fixture(sidecarSource: string, runExternal?: (spec: ProcessSpec) 
   await store.create(directory, manifest)
   const appRuns = new AsyncRunScope()
   const settings = defaultSettings('/Users/test')
+  const accountStore = {
+    account: async () => ({ status: 'connected' as const, mid: '123', name: 'Etch Test' }),
+    loginInfo: async () => loginInfo,
+    markExpiredIfCurrent: vi.fn(async (_expected, message) => ({ status: 'expired' as const, message })),
+    saveRefreshedIfCurrent: vi.fn(async () => true)
+  }
   const publisher = new BilibiliPublisher({
     store,
-    accountStore: {
-      account: async () => ({ status: 'connected', mid: '123', name: 'Etch Test' }),
-      loginInfo: async () => loginInfo,
-      markExpired: async (message) => ({ status: 'expired', message }),
-      save: async () => undefined
-    },
+    accountStore,
     settings: () => settings,
     sidecarPath: sidecar,
     sidecarSha256,
@@ -74,7 +79,7 @@ async function fixture(sidecarSource: string, runExternal?: (spec: ProcessSpec) 
     sleep: async () => undefined
   })
   await publisher.initialize([directory])
-  return { directory, store, publisher, appRuns, finalSha256 }
+  return { directory, store, publisher, appRuns, accountStore, finalSha256 }
 }
 
 function draft(finalSha256: string) {
@@ -253,8 +258,7 @@ echo 'Web 接口投稿成功' >&2
     const test = await fixture('#!/bin/sh\nexit 0\n', () => new Promise((resolve) => { release = resolve }))
 
     await test.publisher.start(test.directory, draft(test.finalSha256))
-    for (let attempt = 0; attempt < 20 && !release; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(release).toBeDefined()
+    await vi.waitFor(() => expect(release).toBeDefined())
     await test.publisher.stop(test.directory)
     release!(interruptedResult())
     await test.appRuns.whenIdle()
@@ -272,11 +276,7 @@ echo 'Web 接口投稿成功' >&2
     })
 
     await test.publisher.start(test.directory, draft(test.finalSha256))
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      if ((await test.store.load(test.directory)).publication.status === 'submitting') break
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    }
-    expect((await test.store.load(test.directory)).publication.status).toBe('submitting')
+    await vi.waitFor(async () => expect((await test.store.load(test.directory)).publication.status).toBe('submitting'))
     await test.publisher.stop(test.directory)
     release!(interruptedResult())
     await test.appRuns.whenIdle()
@@ -286,14 +286,64 @@ echo 'Web 接口投稿成功' >&2
     expect(manifest.publication.lastError?.code).toBe('submission-outcome-unknown')
   })
 
-  it('runs only one B站 sidecar globally while preserving both receipts', async () => {
+  it('keeps a changed sidecar cookie untrusted when the same run reports authentication expiry', async () => {
+    const refreshed = {
+      ...loginInfo,
+      token_info: { ...loginInfo.token_info, access_token: 'untrusted-refresh' }
+    }
+    const test = await fixture('#!/bin/sh\nexit 1\n', async (spec) => {
+      const cookiePath = spec.args[1]!
+      await writeFile(cookiePath, JSON.stringify(refreshed))
+      return { ...interruptedResult(), cancelled: false, exitCode: 1, stderr: 'code: -101' }
+    })
+
+    await test.publisher.start(test.directory, draft(test.finalSha256))
+    await test.appRuns.whenIdle()
+
+    expect(test.accountStore.saveRefreshedIfCurrent).not.toHaveBeenCalled()
+    expect(test.accountStore.markExpiredIfCurrent).toHaveBeenCalledWith(loginInfo, 'B站登录已失效，请重新扫码登录')
+    expect((await test.store.load(test.directory)).publication.lastError?.code).toBe('auth-expired')
+  })
+
+  it('persists stop-all as unknown during submission and paused during upload', async () => {
+    let submittingRelease: ((result: ProcessResult) => void) | undefined
+    const submitting = await fixture('#!/bin/sh\nexit 0\n', (spec) => {
+      spec.onStdout?.('Upload completed: final.mp4\n')
+      return new Promise((resolve) => { submittingRelease = resolve })
+    })
+    await submitting.publisher.start(submitting.directory, draft(submitting.finalSha256))
+    await vi.waitFor(async () => expect((await submitting.store.load(submitting.directory)).publication.status).toBe('submitting'))
+    const stoppingSubmission = submitting.publisher.stopAllNow()
+    submittingRelease!(interruptedResult())
+    await stoppingSubmission
+    await submitting.publisher.whenIdle()
+    expect((await submitting.store.load(submitting.directory)).publication.status).toBe('unknown')
+
+    let uploadingRelease: ((result: ProcessResult) => void) | undefined
+    const uploading = await fixture('#!/bin/sh\nexit 0\n', () => new Promise((resolve) => { uploadingRelease = resolve }))
+    await uploading.publisher.start(uploading.directory, draft(uploading.finalSha256))
+    await vi.waitFor(() => expect(uploadingRelease).toBeDefined())
+    await vi.waitFor(async () => expect((await uploading.store.load(uploading.directory)).publication.status).toBe('uploading'))
+    const stoppingUpload = uploading.publisher.stopAllNow()
+    uploadingRelease!(interruptedResult())
+    await stoppingUpload
+    await uploading.publisher.whenIdle()
+    expect((await uploading.store.load(uploading.directory)).publication.status).toBe('paused')
+  })
+
+  it('runs multiple B站 sidecars concurrently while preserving every receipt', async () => {
     let active = 0
     let maximumActive = 0
     let completed = 0
+    let releaseUploads!: () => void
+    const uploadGate = new Promise<void>((resolve) => { releaseUploads = resolve })
+    let bothStarted!: () => void
+    const bothStartedGate = new Promise<void>((resolve) => { bothStarted = resolve })
     const test = await fixture('#!/bin/sh\nexit 0\n', async () => {
       active += 1
       maximumActive = Math.max(maximumActive, active)
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      if (active === 2) bothStarted()
+      await uploadGate
       active -= 1
       completed += 1
       return submittedResult(String(100 + completed))
@@ -308,14 +358,102 @@ echo 'Web 接口投稿成功' >&2
     secondManifest.publication = { autoPublish: false, status: 'idle', attempt: 0 }
     await test.store.create(secondDirectory, secondManifest)
 
-    await Promise.all([
+    const starts = Promise.all([
       test.publisher.start(test.directory, draft(test.finalSha256)),
       test.publisher.start(secondDirectory, draft(test.finalSha256))
     ])
+    await bothStartedGate
+    releaseUploads()
+    await starts
     await test.appRuns.whenIdle()
 
-    expect(maximumActive).toBe(1)
+    expect(maximumActive).toBe(2)
     expect((await test.store.load(test.directory)).publication.status).toBe('submitted')
     expect((await test.store.load(secondDirectory)).publication.status).toBe('submitted')
+  })
+
+  it('admits only one sidecar when the same task is started concurrently', async () => {
+    let runs = 0
+    let releaseUpload!: () => void
+    const uploadGate = new Promise<void>((resolve) => { releaseUpload = resolve })
+    const test = await fixture('#!/bin/sh\nexit 0\n', async () => {
+      runs += 1
+      await uploadGate
+      return submittedResult()
+    })
+
+    const attempts = await Promise.allSettled([
+      test.publisher.start(test.directory, draft(test.finalSha256)),
+      test.publisher.start(`${test.directory}/.`, draft(test.finalSha256))
+    ])
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1)
+    expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1)
+    expect(attempts.find((attempt) => attempt.status === 'rejected')?.reason).toMatchObject({ message: '这个任务已经在投稿队列中' })
+    releaseUpload()
+    await test.appRuns.whenIdle()
+    expect(runs).toBe(1)
+  })
+
+  it('does not lose an immediate stop while the publication start is still loading', async () => {
+    let releaseFirstLoad!: () => void
+    const firstLoadGate = new Promise<void>((resolve) => { releaseFirstLoad = resolve })
+    let firstLoadStarted!: () => void
+    const firstLoadStartedGate = new Promise<void>((resolve) => { firstLoadStarted = resolve })
+    let runs = 0
+    const test = await fixture('#!/bin/sh\nexit 0\n', async () => {
+      runs += 1
+      return submittedResult()
+    })
+    const originalLoad = test.store.load.bind(test.store)
+    let loadCount = 0
+    test.store.load = async (taskDirectory) => {
+      loadCount += 1
+      if (loadCount === 1) {
+        firstLoadStarted()
+        await firstLoadGate
+      }
+      return originalLoad(taskDirectory)
+    }
+
+    const starting = test.publisher.start(test.directory, draft(test.finalSha256))
+    await firstLoadStartedGate
+    expect(test.publisher.hasDirectory(test.directory)).toBe(true)
+    const stopping = test.publisher.stop(test.directory)
+    await stopping
+    releaseFirstLoad()
+    await expect(starting).rejects.toThrow('投稿已停止')
+    await test.appRuns.whenIdle()
+
+    expect(runs).toBe(0)
+    expect((await test.store.load(test.directory)).publication.status).toBe('paused')
+  })
+
+  it('does not start a sidecar after stop-all catches a publication still in preflight', async () => {
+    let releaseCover!: () => void
+    const coverGate = new Promise<void>((resolve) => { releaseCover = resolve })
+    let coverStarted!: () => void
+    const coverStartedGate = new Promise<void>((resolve) => { coverStarted = resolve })
+    let runs = 0
+    const test = await fixture('#!/bin/sh\nexit 0\n', async () => {
+      runs += 1
+      return submittedResult()
+    }, async (_sourcePath, taskDirectory) => {
+      coverStarted()
+      await coverGate
+      await mkdir(join(taskDirectory, 'publication'))
+      await writeFile(join(taskDirectory, 'publication/cover.jpg'), Buffer.from('jpeg-cover'))
+      return 'publication/cover.jpg'
+    })
+    await writeFile(join(test.directory, 'source.webp'), Buffer.from('webp-cover'))
+
+    await test.publisher.start(test.directory, { ...draft(test.finalSha256), coverRelativePath: 'source.webp' })
+    await coverStartedGate
+    const stopping = test.publisher.stopAllNow()
+    releaseCover()
+    await stopping
+    await test.appRuns.whenIdle()
+
+    expect(runs).toBe(0)
+    expect(test.publisher.activeTaskCount).toBe(0)
   })
 })

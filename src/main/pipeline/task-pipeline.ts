@@ -4,9 +4,8 @@ import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 
 import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { AppSettings, ToolId } from '../../shared/settings-schema'
-import type { PipelineActivity, TaskSchedule } from '../../shared/ipc'
+import type { TaskSchedule } from '../../shared/ipc'
 import { classifyMediaSourceUrl, isSupportedMediaSourceUrl } from '../../shared/media-source'
-import { POOL_BY_STAGE, POOL_LABELS } from '../../shared/pipeline'
 import {
   STAGE_IDS,
   SUMMARY_DRAFT_IDS,
@@ -179,7 +178,13 @@ import {
   cleanupArtifactRun,
   ensureArtifactRunDirectory
 } from './artifact-publisher'
-import { PoolCancelledError, StagePools } from './pool'
+
+class StageCancelledError extends Error {
+  constructor() {
+    super('阶段已取消')
+    this.name = 'StageCancelledError'
+  }
+}
 
 type Artifact = TaskManifest['artifacts'][string]
 type ImageInvocationScope = { sessionId?: string; codexHome?: string }
@@ -287,9 +292,7 @@ export class TaskPipeline {
   readonly #taskControllers = new Map<string, AbortController>()
   readonly #aliasQueues = new Map<string, Promise<void>>()
   readonly #stopRequestedTaskIds = new Set<string>()
-  readonly #slotWaits = new Map<string, StageId>()
   readonly #toolCache = new Map<string, ToolHealth>()
-  readonly #pools: StagePools
   #acquisitionController = new AbortController()
   #acquisitionPaused: boolean
   #acquisitionFrozen = false
@@ -307,7 +310,6 @@ export class TaskPipeline {
     readonly documentProxyResolver?: DocumentProxyResolver,
     readonly decodeImage?: (bytes: Buffer) => boolean
   ) {
-    this.#pools = new StagePools(settings.stageConcurrency)
     this.#acquisitionPaused = settings.queuePaused
     if (this.#acquisitionPaused) this.#acquisitionController.abort()
   }
@@ -321,7 +323,6 @@ export class TaskPipeline {
     const running = this.#run(taskDirectory, taskController).finally(() => {
       this.#running.delete(taskDirectory)
       this.#runningTaskIds.delete(taskDirectory)
-      this.#slotWaits.delete(taskDirectory)
       if (this.#taskControllers.get(taskDirectory) === taskController) this.#taskControllers.delete(taskDirectory)
     })
     this.#running.set(taskDirectory, running)
@@ -331,14 +332,8 @@ export class TaskPipeline {
   isRunning(taskDirectory: string): boolean { return this.#running.has(taskDirectory) }
   get activeStageCount(): number { return this.#activeWorkerCount }
 
-  taskSchedule(taskDirectory: string): { schedule: TaskSchedule; waitingStage?: StageId } {
-    if (!this.#running.has(taskDirectory)) return { schedule: 'idle' }
-    const waitingStage = this.#slotWaits.get(taskDirectory)
-    return waitingStage ? { schedule: 'waiting', waitingStage } : { schedule: 'active' }
-  }
-
-  activity(): PipelineActivity {
-    return { limit: this.settings.stageConcurrency, pools: this.#pools.occupancy() }
+  taskSchedule(taskDirectory: string): { schedule: TaskSchedule } {
+    return { schedule: this.#running.has(taskDirectory) ? 'active' : 'idle' }
   }
 
   setQueuePaused(paused: boolean): void {
@@ -388,7 +383,6 @@ export class TaskPipeline {
   async resume(taskDirectory: string): Promise<void> {
     if (!this.#mayAcquire()) throw new Error('队列已暂停，解除暂停后才能开始新阶段')
     const manifest = await this.store.load(taskDirectory)
-    this.#assertSlotAvailable(manifest)
     this.#stopRequestedTaskIds.delete(manifest.taskId)
     if (manifest.runtime.userPaused) {
       const resumed = await this.store.resumePaused(taskDirectory)
@@ -515,33 +509,22 @@ export class TaskPipeline {
         this.#publishManifest(taskDirectory, manifest)
       }
       const signal = AbortSignal.any([taskController.signal, this.#acquisitionController.signal])
-      this.#slotWaits.set(taskDirectory, stage)
       try {
-        if (!await this.#pools.runStage(
-          stage,
-          this.settings.stageConcurrency,
-          async () => {
-            this.#slotWaits.delete(taskDirectory)
-            this.#setActiveWorkerCount(this.#activeWorkerCount + 1)
-            try {
-              return await this.#executeStage(taskDirectory, stage, signal)
-            } finally {
-              this.#setActiveWorkerCount(this.#activeWorkerCount - 1)
-            }
-          },
-          signal
-        )) return
+        this.#setActiveWorkerCount(this.#activeWorkerCount + 1)
+        try {
+          if (!await this.#executeStage(taskDirectory, stage, signal)) return
+        } finally {
+          this.#setActiveWorkerCount(this.#activeWorkerCount - 1)
+        }
       } catch (error) {
-        if (error instanceof PoolCancelledError || signal.aborted) return
+        if (error instanceof StageCancelledError || signal.aborted) return
         throw error
-      } finally {
-        this.#slotWaits.delete(taskDirectory)
       }
     }
   }
 
   async #executeStage(taskDirectory: string, stage: StageId, signal: AbortSignal): Promise<boolean> {
-    if (signal.aborted || !this.#mayAcquire()) throw new PoolCancelledError()
+    if (signal.aborted || !this.#mayAcquire()) throw new StageCancelledError()
     const before = await this.store.load(taskDirectory)
     const activeGeneration = before.translation.sessionGenerations.find((generation) =>
       generation.id === before.translation.activeGenerationId && generation.status === 'active'
@@ -603,7 +586,7 @@ export class TaskPipeline {
         : null,
       artifacts: Object.fromEntries(artifactEntries.map(([key, value]) => [key, value.sha256]))
     })
-    if (signal.aborted || !this.#mayAcquire()) throw new PoolCancelledError()
+    if (signal.aborted || !this.#mayAcquire()) throw new StageCancelledError()
     const stageMessage = before.kind === 'document' ? DOCUMENT_STAGE_MESSAGES[stage] ?? STAGE_MESSAGES[stage] : STAGE_MESSAGES[stage]
     let lease = await this.store.acquireLease(taskDirectory, stage, inputFingerprint, stageMessage, before.revision)
     this.#publishManifest(taskDirectory, await this.store.load(taskDirectory))
@@ -854,7 +837,7 @@ export class TaskPipeline {
           if (block?.type === 'image') block.markdown = block.markdown.replace(entry.sourceUrl, mediaPath)
         }
       } catch {
-        if (signal.aborted) throw new PoolCancelledError()
+        if (signal.aborted) throw new StageCancelledError()
         localizedMedia.push({ ...entry, status: 'failed' })
       }
     }
@@ -4228,15 +4211,6 @@ export class TaskPipeline {
 
   #mayAcquire(): boolean {
     return !this.#acquisitionPaused && !this.#acquisitionFrozen
-  }
-
-  #assertSlotAvailable(manifest: TaskManifest): void {
-    const nextStage = STAGE_IDS.find((stage) => !['completed', 'skipped'].includes(manifest.pipeline.stages[stage]?.status))
-    const kind = nextStage ? POOL_BY_STAGE[nextStage] : undefined
-    if (!nextStage || !kind || this.#pools.hasFreeSlot(nextStage, this.settings.stageConcurrency)) return
-    const { active, waiting } = this.#pools.occupancy()[kind]
-    const queued = waiting ? `，另有 ${waiting} 个任务在排队` : ''
-    throw new Error(`${POOL_LABELS[kind]}并发已满（${active}/${this.settings.stageConcurrency} 运行中${queued}），请等其他任务释放槽位或先停止一个任务`)
   }
 
   #abortAcquisition(): void {

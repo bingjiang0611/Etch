@@ -4,7 +4,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, safeStorage, session, shell, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron'
-import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateCompanionSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, DocumentHtmlPageSchema, DocumentImageDataUrlSchema, DocumentImagePayloadSchema, DocumentPageSchema, ExportDocumentHtmlResultSchema, ExportDocumentResultSchema, ExportSummaryResultSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, IDLE_PIPELINE_ACTIVITY, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ResolveDocumentHtmlStyleSchema, ResolveDocumentTranslationCostSchema, ResolveIllustrationAgentSchema, ResolveIllustrationCoverSchema, ResolveResearchCheckpointSchema, ResolveVideoCheckpointSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, SetTaskCategoryPayloadSchema, StartDocumentHtmlSchema, SummaryImageDataUrlSchema, SummaryImagePayloadSchema, SummaryPageSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateDocumentTranslationSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
+import { AppSettingsSchema, BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationCoverSchema, BilibiliPublicationStartPayloadSchema, BilibiliQrSessionPayloadSchema, BilibiliQrStateSchema, BootstrapSchema, ChromeCookieAccessSchema, CompleteReviewSchema, CreateCompanionSchema, CreateUrlsSchema, DeleteGlossaryEntryResultSchema, DeleteGlossaryEntrySchema, DeleteTaskPayloadSchema, DocumentHtmlPageSchema, DocumentImageDataUrlSchema, DocumentImagePayloadSchema, DocumentPageSchema, ExportDocumentHtmlResultSchema, ExportDocumentResultSchema, ExportSummaryResultSchema, GlossaryApplyPayloadSchema, GlossaryApplyResultSchema, GlossaryCatalogPageSchema, GlossaryCatalogPayloadSchema, GlossaryImpactPreviewSchema, QueuePageSchema, RecoveryStateSchema, ResolveAuditSchema, ResolveDocumentHtmlStyleSchema, ResolveDocumentTranslationCostSchema, ResolveIllustrationAgentSchema, ResolveIllustrationCoverSchema, ResolveResearchCheckpointSchema, ResolveVideoCheckpointSchema, ReviewPagePayloadSchema, ReviewTimelineWindowPayloadSchema, ReviewTimelineWindowSchema, SetTaskCategoryPayloadSchema, StartDocumentHtmlSchema, SummaryImageDataUrlSchema, SummaryImagePayloadSchema, SummaryPageSchema, TaskDetailSchema, TaskIdPayloadSchema, TaskThumbnailDataUrlSchema, TaskThumbnailPayloadSchema, ToolHealthSnapshotSchema, ToolInstallPayloadSchema, ToolInstallResultSchema, UpdateCuesSchema, UpdateDocumentTranslationSchema, UpdateGlossarySchema, UpdateSubtitlePresetSchema, type RuntimeDiagnostics } from '../shared/ipc'
 import { ToolIdSchema, type ThemePreference, type ToolId } from '../shared/settings-schema'
 import { createTaskManifest, taskThumbnailArtifact, type ProviderId } from '../shared/task-schema'
 import { isSupportedMediaSourceUrl } from '../shared/media-source'
@@ -71,6 +71,7 @@ let activeAppRuns: AsyncRunScope | undefined
 let restartPendingTasks: (() => void) | undefined
 let activePowerManager: PipelinePowerManager | undefined
 let activeBilibiliAuth: BilibiliAuthService | undefined
+let activeBilibiliPublisher: BilibiliPublisher | undefined
 let runtimeDiagnostics: RuntimeDiagnostics = {
   discoveryErrors: [],
   identityConflicts: []
@@ -370,7 +371,8 @@ app.on('before-quit', (event) => {
     pipeline: activePipeline,
     runRegistry: activeRunRegistry,
     appRuns: activeAppRuns,
-    publicationActive: () => publisherActive,
+    publicationCount: () => activeBilibiliPublisher?.activeTaskCount ?? 0,
+    publications: activeBilibiliPublisher,
     chooseMode: async (activeWorkers): Promise<ShutdownMode> => {
       const options: MessageBoxOptions = {
         type: 'warning',
@@ -445,7 +447,7 @@ function queuePage(offset = 0, limit = 100): unknown {
     updatedAt,
     ...(activePipeline?.taskSchedule(location) ?? { schedule: 'idle' })
   }))
-  return QueuePageSchema.parse({ items, total: indexStore.count(), activity: activePipeline?.activity() ?? IDLE_PIPELINE_ACTIVITY })
+  return QueuePageSchema.parse({ items, total: indexStore.count() })
 }
 
 function assertRecoveryReleased(): void {
@@ -620,6 +622,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       syncPowerWorkers()
     }
   })
+  activeBilibiliPublisher = publisher
   await publisher.initialize(discovery.tasks.map((task) => task.location))
   void historicalGlossary.sync().catch((error) => console.error('initial global glossary sync failed', error))
   const startPendingTasks = (): void => {
@@ -833,7 +836,8 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
         registry,
         taskStore,
         isRunning: (taskDirectory: string) => pipeline.isRunning(taskDirectory),
-        hasActiveProviderRun: async (activeTaskId: string) => publisher!.hasTask(activeTaskId) || await runRegistry.hasActiveTask(activeTaskId),
+        hasActiveProviderRun: async (activeTaskId: string, taskDirectory: string) =>
+          publisher!.hasTask(activeTaskId) || publisher!.hasDirectory(taskDirectory) || await runRegistry.hasActiveTask(activeTaskId),
         onCleanupWarning: (warning: DeleteCleanupWarning) => console.warn('task deletion cleanup warning', {
           ...warning,
           error: warning.error instanceof Error ? warning.error.message : String(warning.error)

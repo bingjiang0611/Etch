@@ -23,11 +23,6 @@
   .switch.is-on::after { transform: translateX(16px); background: var(--blue); }
   .toggle-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 
-  /* 并发分段控件 */
-  .seg { display: inline-flex; padding: 2px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-sunken); }
-  .seg button { min-width: 40px; padding: 5px 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font: 12px/1 var(--font-mono); }
-  .seg button.is-active { background: var(--blue-strong); color: #fff; }
-
   /* 字幕预设 */
   .preset-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
   .preset-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-sunken); }
@@ -80,9 +75,6 @@
       <div class="panel settings-card">
         <h2>执行与存储</h2>
         <div class="setting-row"><span class="label"><strong>工作区</strong><small>所有任务目录、中间产物与成片的根路径</small></span><input class="field-input" value="~/Movies/Bilingual Subs" /></div>
-        <div class="setting-row"><span class="label"><strong>统一并发数</strong><small>每个阶段池同时运行的任务上限</small></span>
-          <span class="seg"><button type="button">1</button><button type="button">2</button><button class="is-active" type="button">3</button></span>
-        </div>
         <div class="setting-row"><span class="label"><strong>默认 Provider</strong><small>新任务的默认翻译 CLI</small></span>
           <select class="field-select"><option>未设置</option><option>Claude Code</option><option selected>Codex</option><option>Qoder</option><option>OpenCode</option></select>
         </div>

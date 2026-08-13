@@ -21,7 +21,7 @@ export class BilibiliAuthService {
   readonly #sessions = new Map<string, QrSession>()
 
   constructor(
-    private readonly store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpired'>,
+    private readonly store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpiredIfCurrent'>,
     private readonly fetcher: Fetch = fetch,
     private readonly sleep: (milliseconds: number) => Promise<void> = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
   ) {}
@@ -87,7 +87,7 @@ export class BilibiliAuthService {
     const payload = await response.json() as Record<string, unknown>
     const code = Number(payload.code)
     if (code !== 0) {
-      if (code === -101) await this.store.markExpired('登录已失效，请重新扫码')
+      if (code === -101) await this.store.markExpiredIfCurrent(loginInfo, '登录已失效，请重新扫码')
       throw new Error(code === -101 ? 'B站登录已失效，请重新扫码' : `B站分区读取失败（code ${code}）`)
     }
     const data = payload.data && typeof payload.data === 'object' ? payload.data as Record<string, unknown> : {}

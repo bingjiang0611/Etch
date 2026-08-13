@@ -47,4 +47,68 @@ describe('BilibiliAccountStore', () => {
 
     expect(await store.account()).toEqual({ status: 'disconnected' })
   })
+
+  it('serializes concurrent account mutations without corrupting the encrypted record', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'etch-bili-account-'))
+    directories.push(directory)
+    const store = new BilibiliAccountStore(join(directory, 'account.json'), fakeSafeStorage)
+
+    await Promise.all(Array.from({ length: 4 }, (_, index) => store.save(
+      {
+        ...loginInfo,
+        token_info: { ...loginInfo.token_info, access_token: `access-${index}` }
+      },
+      { status: 'connected', mid: '123', name: `Etch Test ${index}` }
+    )))
+
+    expect(await store.loginInfo()).toMatchObject({ token_info: { access_token: 'access-3' } })
+    expect(await store.account()).toMatchObject({ status: 'connected', name: 'Etch Test 3' })
+  })
+
+  it('does not let a stale sidecar overwrite newer login credentials', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'etch-bili-account-'))
+    directories.push(directory)
+    const store = new BilibiliAccountStore(join(directory, 'account.json'), fakeSafeStorage)
+    await store.save(loginInfo, { status: 'connected', mid: '123', name: 'Etch Test' })
+    const firstRefresh = { ...loginInfo, token_info: { ...loginInfo.token_info, access_token: 'fresh-access' } }
+    const staleRefresh = { ...loginInfo, token_info: { ...loginInfo.token_info, access_token: 'stale-access' } }
+
+    await expect(store.saveRefreshedIfCurrent(loginInfo, firstRefresh)).resolves.toBe(true)
+    await expect(store.saveRefreshedIfCurrent(loginInfo, staleRefresh)).resolves.toBe(false)
+    expect(await store.loginInfo()).toMatchObject({ token_info: { access_token: 'fresh-access' } })
+
+    await store.markExpired('登录已失效')
+    await expect(store.saveRefreshedIfCurrent(loginInfo, staleRefresh)).resolves.toBe(false)
+    expect(await store.account()).toMatchObject({ status: 'expired', message: '登录已失效' })
+  })
+
+  it('does not let a stale authentication failure expire refreshed credentials', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'etch-bili-account-'))
+    directories.push(directory)
+    const store = new BilibiliAccountStore(join(directory, 'account.json'), fakeSafeStorage)
+    await store.save(loginInfo, { status: 'connected', mid: '123', name: 'Etch Test' })
+    const refreshed = { ...loginInfo, token_info: { ...loginInfo.token_info, access_token: 'fresh-access' } }
+
+    await store.saveRefreshedIfCurrent(loginInfo, refreshed)
+    await expect(store.markExpiredIfCurrent(loginInfo, '旧凭证失效')).resolves.toBeUndefined()
+    expect(await store.account()).toMatchObject({ status: 'connected' })
+    await expect(store.markExpiredIfCurrent(refreshed, '新凭证失效')).resolves.toMatchObject({ status: 'expired' })
+  })
+
+  it('lets a successful refresh recover when a concurrent stale failure expires the same credentials first', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'etch-bili-account-'))
+    directories.push(directory)
+    const store = new BilibiliAccountStore(join(directory, 'account.json'), fakeSafeStorage)
+    await store.save(loginInfo, { status: 'connected', mid: '123', name: 'Etch Test' })
+    const refreshed = { ...loginInfo, token_info: { ...loginInfo.token_info, access_token: 'fresh-access' } }
+
+    await expect(store.markExpiredIfCurrent(loginInfo, '旧凭证失效')).resolves.toMatchObject({ status: 'expired' })
+    await expect(store.saveRefreshedIfCurrent(loginInfo, loginInfo)).resolves.toBe(false)
+    expect(await store.account()).toMatchObject({ status: 'expired', message: '旧凭证失效' })
+    await expect(store.saveRefreshedIfCurrent(loginInfo, refreshed)).resolves.toBe(true)
+
+    expect(await store.account()).toMatchObject({ status: 'connected', name: 'Etch Test' })
+    expect(await store.account()).not.toHaveProperty('message')
+    expect(await store.loginInfo()).toEqual(refreshed)
+  })
 })

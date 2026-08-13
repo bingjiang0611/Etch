@@ -1,10 +1,9 @@
 /* Etch 官网 V2 原型 · 交互逻辑
  *
- * 所有阶段 id、阶段名、状态枚举、并发池、Provider 名、分数维度、
+ * 所有阶段 id、阶段名、状态枚举、Provider 名、分数维度、
  * 文档风格方向与按钮文案都取自 Etch 真实源码：
  *   src/shared/task-schema.ts     STAGE_IDS / StageStatus / SUMMARY_SCORE_LABELS / IllustrationPhase …
- *   src/shared/pipeline.ts        POOL_KINDS / POOL_LABELS / POOL_BY_STAGE
- *   src/renderer/ui.tsx           stageLabels / providerNames / taskKindLabel / poolStateLabel …
+ *   src/renderer/ui.tsx           stageLabels / providerNames / taskKindLabel …
  *   src/renderer/WorkbenchView.tsx 工作台骨架与按钮文案
  *   src/renderer/DocumentWorkbench.tsx 文档阶段名 / HTML_DIRECTIONS / 信息字段
  * 正文内容是标注过的示例数据，不代表任何真实任务或真实账号。
@@ -60,21 +59,6 @@
     codex: 'Codex',
     qoder: 'Qoder',
     opencode: 'OpenCode'
-  };
-
-  // src/shared/pipeline.ts POOL_KINDS 顺序 + POOL_BY_STAGE
-  var POOL_KINDS = ['download', 'whisper', 'agent', 'audit', 'ffmpeg', 'image'];
-  var POOL_BY_STAGE = {
-    source: 'download',
-    english: 'whisper',
-    cues: 'audit',
-    translate: 'agent',
-    audit: 'audit',
-    burn: 'ffmpeg',
-    digest: 'agent',
-    research: 'agent',
-    summary: 'agent',
-    illustrate: 'image'
   };
 
   // src/shared/task-schema.ts SHARED_STAGE_IDS
@@ -475,37 +459,12 @@
     if (!state.stage) return '';
     var stage = task.stages.find(function (item) { return item.id === state.stage; });
     if (!stage) return '';
-    var pool = POOL_BY_STAGE[stage.id];
     return '<dl class="stage-detail" role="status">'
       + '<dt>阶段 id</dt><dd>' + esc(stage.id) + '</dd>'
       + '<dt>阶段名</dt><dd>' + esc(stageLabel(task, stage.id)) + '</dd>'
       + '<dt>status</dt><dd>' + esc(stage.status) + ' · ' + esc(STAGE_STATUS_LABELS[stage.status]) + '</dd>'
-      + '<dt>并发池</dt><dd>' + esc(pool ? pool : '不占用并发池') + '</dd>'
       + (stage.sub ? '<dt>阶段摘要</dt><dd>' + esc(stage.sub) + '</dd>' : '')
       + '</dl>';
-  }
-
-  function renderPools(task) {
-    var used = POOL_KINDS.filter(function (pool) {
-      return task.stages.some(function (stage) { return POOL_BY_STAGE[stage.id] === pool; });
-    });
-    return '<div class="pipeline-pools">' + used.map(function (pool) {
-      var statuses = task.stages
-        .filter(function (stage) { return POOL_BY_STAGE[stage.id] === pool; })
-        .map(function (stage) { return stage.status; });
-      // src/renderer/ui.tsx poolState 的优先级顺序
-      var status = statuses.indexOf('failed') >= 0 ? 'failed'
-        : statuses.indexOf('running') >= 0 ? 'running'
-          : statuses.indexOf('checkpoint') >= 0 ? 'checkpoint'
-            : statuses.every(isDone) ? 'completed' : 'pending';
-      // src/renderer/ui.tsx poolStateLabel
-      var text = status === 'completed' ? '已释放'
-        : status === 'running' ? '运行中'
-          : status === 'failed' ? '失败'
-            : status === 'checkpoint' ? '待确认' : '空闲';
-      return '<span class="pool-tag"><span class="dot" data-status="' + status + '"></span>'
-        + '<b>' + pool + '</b>' + text + '</span>';
-    }).join('') + '</div>';
   }
 
   function renderPipeline(task) {
@@ -567,8 +526,7 @@
       + '<summary><span class="pipeline-chevron">' + ICONS.chevron + '</span>'
       + '<span class="pc-title">处理流水线</span>'
       + '<span class="pc-mini">' + mini + '</span></summary>'
-      + '<div class="pc-body">' + body + renderStageDetail(task)
-      + (task.kind === 'document' ? '' : renderPools(task)) + '</div>'
+      + '<div class="pc-body">' + body + renderStageDetail(task) + '</div>'
       + '</details>';
   }
 
@@ -796,7 +754,7 @@
       + '<button class="primary-button" type="button" data-demo-action="new-task">＋ 新建任务</button></header>'
       + renderNotice()
       + '<div class="queue-toolbar"><span class="is-active">全部任务 <b>3</b></span><span>未分类 <b>3</b></span>'
-      + '<em>每阶段并发 3 · 队列空闲</em></div>'
+      + '<em>队列空闲</em></div>'
       + '<div class="demo-task-grid">'
       + queueCard(TASKS.summary, '视频总结 · 等待配图', '7 / 8', '更新于刚刚 · 7 / 8 阶段')
       + queueCard(TASKS.subtitle, '双语字幕 · 人工校对', '6 / 10', '更新于刚刚 · 6 / 10 阶段')

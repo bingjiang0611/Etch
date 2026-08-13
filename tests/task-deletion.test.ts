@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { moveTaskToTrash, removeTaskRecord, revealTaskInFinder } from '../src/main/task-deletion'
 import { HiddenTaskStore } from '../src/main/storage/hidden-task-store'
 import type { IndexedTask } from '../src/main/storage/index-store'
@@ -102,19 +102,21 @@ describe('moveTaskToTrash', () => {
   it('refuses to trash a task while its durable Provider run is still active', async () => {
     const item = await fixture()
     let trashCalled = false
+    const hasActiveProviderRun = vi.fn(async () => true)
     await expect(moveTaskToTrash({
       taskId: item.taskId,
       indexStore: item.indexStore,
       registry: item.registry,
       taskStore: item.taskStore,
       isRunning: () => false,
-      hasActiveProviderRun: async () => true,
+      hasActiveProviderRun,
       trashItem: async () => { trashCalled = true },
       protectedPaths: [item.base]
     })).rejects.toThrow('仍有活动 Provider 进程登记的任务不能删除')
 
     expect(trashCalled).toBe(false)
     expect(item.indexStore.get(item.taskId)).toBeDefined()
+    expect(hasActiveProviderRun).toHaveBeenCalledWith(item.taskId, item.taskDirectory)
   })
 
   it('refuses to move a task directory that is itself protected', async () => {

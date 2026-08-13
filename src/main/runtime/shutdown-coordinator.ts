@@ -19,6 +19,13 @@ export interface ShutdownAsyncRuns {
   whenIdle(): Promise<void>
 }
 
+export interface ShutdownPublications {
+  freezeAcquisition(): void
+  thawAcquisition(): void
+  stopAllNow(): Promise<void>
+  whenIdle(): Promise<void>
+}
+
 export type ShutdownResult =
   | { state: 'cancelled' }
   | { state: 'clean' }
@@ -28,33 +35,37 @@ export async function coordinateShutdown(options: {
   pipeline: ShutdownPipeline
   runRegistry: ShutdownRunRegistry
   appRuns: ShutdownAsyncRuns
-  publicationActive(): boolean
+  publicationCount(): number
+  publications?: ShutdownPublications
   chooseMode(activeWorkers: number): Promise<ShutdownMode>
   markCleanExit(): Promise<void>
   stopTimeoutMs?: number
 }): Promise<ShutdownResult> {
   options.pipeline.freezeAcquisition()
+  options.publications?.freezeAcquisition()
   try {
     const taskRunCount = async (): Promise<number> =>
       (await options.runRegistry.activeCurrent()).filter((run) => run.stage !== ENVIRONMENT_RUN_STAGE).length
     const activeWorkers = Math.max(
-      options.pipeline.activeStageCount,
-      options.publicationActive() ? 1 : 0,
+      options.pipeline.activeStageCount + options.publicationCount(),
       await taskRunCount()
     )
     const mode = activeWorkers ? await options.chooseMode(activeWorkers) : 'drain-current-stage'
     if (mode === 'cancel') {
       options.pipeline.thawAcquisition()
+      options.publications?.thawAcquisition()
       return { state: 'cancelled' }
     }
 
     if (mode === 'stop-now') {
       await withTimeout(Promise.all([
         options.pipeline.stopAllNow(),
-        options.appRuns.whenIdle()
+        options.publications?.stopAllNow(),
+        options.appRuns.whenIdle(),
+        options.publications?.whenIdle()
       ]).then(() => undefined), options.stopTimeoutMs ?? 15_000)
     } else if (activeWorkers) {
-      await Promise.all([options.pipeline.whenIdle(), options.appRuns.whenIdle()])
+      await Promise.all([options.pipeline.whenIdle(), options.appRuns.whenIdle(), options.publications?.whenIdle()])
     } else {
       await withTimeout(
         Promise.all([options.pipeline.whenIdle(), options.appRuns.whenIdle()]).then(() => undefined),
@@ -65,13 +76,14 @@ export async function coordinateShutdown(options: {
     if ((await options.runRegistry.activeCurrent()).length) await options.runRegistry.stopCurrent()
 
     const remainingTaskRuns = await taskRunCount()
-    if (options.pipeline.activeStageCount !== 0 || options.publicationActive() || remainingTaskRuns !== 0) {
-      throw new Error(`退出收敛失败：仍有 ${options.pipeline.activeStageCount} 个执行中阶段、${options.publicationActive() ? 1 : 0} 个投稿任务、${remainingTaskRuns} 个任务外部进程`)
+    if (options.pipeline.activeStageCount !== 0 || options.publicationCount() !== 0 || remainingTaskRuns !== 0) {
+      throw new Error(`退出收敛失败：仍有 ${options.pipeline.activeStageCount} 个执行中阶段、${options.publicationCount()} 个投稿任务、${remainingTaskRuns} 个任务外部进程`)
     }
     await options.markCleanExit()
     return { state: 'clean' }
   } catch (error) {
     options.pipeline.thawAcquisition()
+    options.publications?.thawAcquisition()
     return { state: 'unclean', error }
   }
 }

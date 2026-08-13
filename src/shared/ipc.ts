@@ -1,9 +1,8 @@
 import { z } from 'zod'
 import { BilibiliAccountSchema, BilibiliPartitionSchema, BilibiliPublicationDraftSchema, BilibiliQrStateSchema, type BilibiliAccount, type BilibiliPartition, type BilibiliPublicationDraft, type BilibiliQrState } from './bilibili'
-import { DocumentProcessingModeSchema, DocumentTranslationModeSchema, ModelSelectionSchema, ProviderIdSchema, StageIdSchema, StageStatusSchema, SubtitlePresetSchema, SummaryDraftRecordSchema, SummaryImagePlanEntrySchema, TaskKindSchema, TaskManifestSchema } from './task-schema'
+import { DocumentProcessingModeSchema, DocumentTranslationModeSchema, ModelSelectionSchema, ProviderIdSchema, StageStatusSchema, SubtitlePresetSchema, SummaryDraftRecordSchema, SummaryImagePlanEntrySchema, TaskKindSchema, TaskManifestSchema } from './task-schema'
 import { AppSettingsSchema, ToolIdSchema, type AppSettings } from './settings-schema'
 import { SelectedModelSchema, type ProviderModelCatalog } from './model-catalog'
-import { POOL_KINDS } from './pipeline'
 
 export const ChromeCookieAccessSchema = z.enum(['granted', 'denied', 'missing'])
 export type ChromeCookieAccess = z.infer<typeof ChromeCookieAccessSchema>
@@ -28,7 +27,7 @@ export const BootstrapSchema = z.object({
 export type Bootstrap = z.infer<typeof BootstrapSchema>
 export type RuntimeDiagnostics = Bootstrap['startupDiagnostics']
 
-export const TaskScheduleSchema = z.enum(['idle', 'waiting', 'active'])
+export const TaskScheduleSchema = z.enum(['idle', 'active'])
 export type TaskSchedule = z.infer<typeof TaskScheduleSchema>
 
 export const TaskSummarySchema = z.object({
@@ -41,28 +40,12 @@ export const TaskSummarySchema = z.object({
   status: StageStatusSchema,
   revision: z.number().int().nonnegative(),
   updatedAt: z.string().datetime({ offset: true }),
-  schedule: TaskScheduleSchema.default('idle'),
-  waitingStage: StageIdSchema.optional()
+  schedule: TaskScheduleSchema.default('idle')
 })
-
-export const PipelineActivitySchema = z.object({
-  limit: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-  pools: z.record(z.enum(POOL_KINDS), z.object({
-    active: z.number().int().nonnegative(),
-    waiting: z.number().int().nonnegative()
-  }))
-})
-export type PipelineActivity = z.infer<typeof PipelineActivitySchema>
-
-export const IDLE_PIPELINE_ACTIVITY: PipelineActivity = {
-  limit: 3,
-  pools: Object.fromEntries(POOL_KINDS.map((kind) => [kind, { active: 0, waiting: 0 }])) as PipelineActivity['pools']
-}
 
 export const QueuePageSchema = z.object({
   items: z.array(TaskSummarySchema),
-  total: z.number().int().nonnegative(),
-  activity: PipelineActivitySchema
+  total: z.number().int().nonnegative()
 })
 export type QueuePage = z.infer<typeof QueuePageSchema>
 

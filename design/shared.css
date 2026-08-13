@@ -219,10 +219,6 @@ nav { display: grid; gap: 3px; }
 .rail-progress i { display: block; height: 100%; background: var(--run); border-radius: 2px; }
 .rail-attempt { position: absolute; top: 0; right: 26%; z-index: 2; padding: 0 4px; border-radius: 6px; background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn); font: 8px/1.5 var(--font-mono); }
 
-.pipeline-pools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
-.pool-tag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font: 10px/1.4 var(--font-mono); }
-.pool-tag b { color: var(--fg-soft); font-weight: 500; }
-.pool-tag .dot { width: 6px; height: 6px; border-radius: 2px; }
 
 /* ============================ 媒体缩略/来源 ============================ */
 .thumb { position: relative; flex: none; width: 68px; height: 40px; border-radius: 5px; overflow: hidden; background: linear-gradient(150deg, #1a2230, #10151c); border: 1px solid var(--line); display: grid; place-items: center; }

@@ -47,7 +47,7 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 
 ## 3. 真实字段映射
 
-原型里每一个枚举值、阶段名、状态名、并发池、评分维度、风格方向都能指回源码。
+原型里每一个枚举值、阶段名、状态名、评分维度、风格方向都能指回源码。
 `prototype.js` 顶部按来源分块注释，下表是完整对照。
 
 ### 3.1 任务类型
@@ -91,20 +91,12 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 - 视频两类：`ui.tsx stageSubLabel` 回落到**原始英文 status**（所以完成态显示 `completed`）。
 - 文档：`DocumentWorkbench.tsx` 回落到**中文 `STAGE_STATUS_LABELS`**（显示 `已完成`）。
 
-### 3.5 并发池
-
-`src/shared/pipeline.ts`：`POOL_KINDS = download whisper agent audit ffmpeg image`，
-`POOL_BY_STAGE` = `source→download, english→whisper, cues→audit, translate→agent, audit→audit, burn→ffmpeg, digest→agent, research→agent, summary→agent, illustrate→image`（`inspect / review / srt / verify` 不占池）。
-
-原型据此算出每类任务实际用到的池，并用 `ui.tsx poolState` 的优先级（failed → running → checkpoint → 全完成）与 `poolStateLabel`（`已释放 / 运行中 / 失败 / 待确认 / 空闲`）渲染。
-字幕任务看不到 `image` 池、总结任务看不到 `ffmpeg` 池——这正是 `WorkbenchView.tsx` 里 `taskPools` 的过滤行为。
-
-### 3.6 Provider 与模型
+### 3.5 Provider 与模型
 
 `ProviderIdSchema` = `claude codex qoder opencode`；`ui.tsx providerNames` = `Claude Code / Codex / Qoder / OpenCode`。
 模型显示 `cli-default`，对应 `ModelSelectionSchema` 的 `{ source: 'cli-default' }`。
 
-### 3.7 视频总结的三稿记录
+### 3.6 视频总结的三稿记录
 
 - 三稿 id：`SUMMARY_DRAFT_IDS = ['A','B','C']`，`SummaryDraftRecordSchema.drafts` 强制 `.length(3)`。
 - 六项评分维度用 `SUMMARY_SCORE_LABELS`：`事实保真 / 信息完整 / 叙事结构 / 中文可读性 / 对话感 / 最后评论`，取值 0–10（`z.number().min(0).max(10)`），所以满分 60。
@@ -112,7 +104,7 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 - 长文预览保留「最后」评论区段与 `images/03-attention-heads.png` 占位，符合 `CLAUDE.md`「终稿必须保留『最后』评论区和 8-12 处 `images/NN-slug.png` 配图占位」，文件名也满足 `SUMMARY_IMAGE_FILENAME` 正则 `^\d{2}-[a-z0-9][a-z0-9-]*\.png$`。
 - 配图 checkpoint 文案对应 `IllustrationPhaseSchema` 的 `agent-pending`，以及「封面未验收前不得生成其余配图」「图像能力白名单只能来自实测」两条真实约束。
 
-### 3.8 网页翻译
+### 3.7 网页翻译
 
 - 内容类型 `普通网页`：`DocumentSourceSchema = web | x-post | x-article`，标签取 `DocumentWorkbench.tsx SOURCE_KIND_LABELS`。
 - 处理方式 `自动判断`：`DocumentProcessingModeSchema = auto | convert | translate`，标签取 `PROCESSING_MODE_LABELS`。
@@ -122,7 +114,7 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
   `A 杂志长文 article-magazine [72,55,42]` · `B 极简阅读 minimal [38,28,18]` · `C 大胆编辑 editorial [84,63,78]` · `D 冷静工业 dark-industrial [12,74,92]`；
   dial 名称取 `HTML_DIAL_LABELS = 衬线 / 密度 / 对比`。状态文案 `等待选择风格` 对应 `htmlPublication.status = 'checkpoint'`。
 
-### 3.9 工作台骨架与文案
+### 3.8 工作台骨架与文案
 
 | 原型元素 | 真实来源 |
 |---|---|
@@ -139,7 +131,7 @@ V2 校准方式：2026-08-11 实际打开 `/Applications/Etch.app` v0.2.18，逐
 | 样式页 `compact 紧凑 / standard 标准 / large 大字` | `SubtitlePresetSchema` + `PresetDemo` |
 | B站状态 `未投稿` | `bilibiliPublicationText` 的 `idle` |
 
-### 3.10 视觉 token
+### 3.9 视觉 token
 
 颜色**逐字**取自 `src/renderer/styles/app.css` 的深色侧取值（`light-dark()` 的第二个参数）：
 `--bg #0b0d10 · --surface #111419 · --line #252b33 · --fg #e8eaed · --muted #88919d · --accent/--blue-strong #438cf5 · --blue #6ba6ff · --focus #94bdff · --ok #6cc79a · --run #7fb2ff · --warn #e0b872 · --danger #e49a9a` 等。
@@ -166,7 +158,7 @@ V2 额外按实机锁定的壳层：
 | 2 | 字幕 / 总结 / 网页任务卡 | 真实队列卡片结构 | 进入对应工作台 | 主 |
 | 3 | 左侧 `统一术语表` | Etch 主导航 | 展示跨任务术语表 | 主 |
 | 4 | 流水线折叠/展开 | 原生 `<details>` | 收起阶段详情，保留摘要进度 | 二级 |
-| 5 | 点任意阶段节点 | 阶段轨 | 展开该阶段的 id / status / 并发池详情，再点收起 | 二级 |
+| 5 | 点任意阶段节点 | 阶段轨 | 展开该阶段的 id / status / 阶段摘要，再点收起 | 二级 |
 | 6 | `追加视频总结 / 追加双语硬字幕` | 流水线成果区 | 复用共享底稿并切换到另一成果工作台 | 二级 |
 | 7 | 视频播放 / 前后 5 秒 / 倍速 / 预览模式 | 字幕与总结视频区 | 更新播放反馈，不读取真实媒体 | 二级 |
 | 8 | 工作台标签页 | `tp-tabs` | 字幕 4 页 / 总结 3 页 / 文档 3 页 | 二级 |

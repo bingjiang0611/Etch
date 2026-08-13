@@ -4,7 +4,7 @@
 
 - Etch 是独立 Electron + React + TypeScript macOS App；原 `youtube-bilingual-subs` skill 只作只读行为参考，不是运行时依赖。
 - `task.json` 是任务状态权威；队列索引只在内存中维护，并在启动时从任务目录重建。任何 worker 提交必须经过 step lease + revision/fingerprint CAS。
-- 任务分三类：`kind: 'subtitle'` 跑硬字幕，`kind: 'summary'` 跑中文长文总结，`kind: 'document'` 把普通网页、X 单条帖子或 X Article 转成结构保真的 Markdown 并按模式翻译。三类共用同一条阶段序列，不属于本类型的阶段在创建时就写成 `skipped`；文档任务复用 `source → inspect → translate → review → verify` 的调度槽位，但必须在进入任何视频逻辑前分流。新增阶段必须同时补齐 manifest 迁移里的缺阶段填充，否则旧任务会把新阶段当成待执行。
+- 任务分三类：`kind: 'subtitle'` 跑硬字幕，`kind: 'summary'` 跑中文长文总结，`kind: 'document'` 把普通网页、X 单条帖子或 X Article 转成结构保真的 Markdown 并按模式翻译。三类共用同一条阶段序列，不属于本类型的阶段在创建时就写成 `skipped`；文档任务复用 `source → inspect → translate → review → verify` 的阶段位置，但必须在进入任何视频逻辑前分流。新增阶段必须同时补齐 manifest 迁移里的缺阶段填充，否则旧任务会把新阶段当成待执行。
 - 总结任务的三稿硬门禁：必须真实生成 A/B/C 三份完整候选稿、六项数值评分、遗漏清单与终稿自检，记录不齐就让阶段 `failed`，不得产出半成品。终稿必须保留「最后」评论区和 8-12 处 `images/NN-slug.png` 配图占位。
 - 模型输出不稳定是常态输入，不是异常：需要模型产出结构化 JSON 的提示词必须由 zod schema 渲染契约（`jsonContract`），不得手抄字段上限与枚举；修复轮喂回的失败详情必须经 `describeValidationFailure` 压成逐条中文，并统一用 `VALIDATION_FAILURE_PROMPT_LIMIT` 截断，不得把枚举可选值或字段路径切掉。
 - 门禁必须分三级，不得一律 `failed`：①归一化——纯装饰性字段（分类提示类枚举）取值超出范围时归到兜底值，不丢数据也不失败；②降级到运行时——前置探测结果不确定（超时、输出无法解析）时标记「未确认」并放行，由真实调用暴露问题，或按 `checkpoint` 交给用户决定；③硬拦——影响交付正确性的质量门禁（三稿记录、digest 引用真实性、终稿结构、产物哈希）与明确的坏状态（明确未登录、CLI 执行失败）才让阶段 `failed`。

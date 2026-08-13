@@ -1,4 +1,5 @@
 import { readFile, rm } from 'node:fs/promises'
+import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { BilibiliAccountSchema, type BilibiliAccount } from '../../shared/bilibili'
 import { writeJsonAtomic } from './atomic-json'
@@ -38,6 +39,8 @@ export interface BilibiliSafeStorage {
 }
 
 export class BilibiliAccountStore {
+  #mutationQueue: Promise<void> = Promise.resolve()
+
   constructor(readonly path: string, private readonly safeStorage: BilibiliSafeStorage) {}
 
   async account(): Promise<BilibiliAccount> {
@@ -60,26 +63,70 @@ export class BilibiliAccountStore {
   }
 
   async save(loginInfo: BiliupLoginInfo, account: BilibiliAccount): Promise<void> {
-    if (!this.safeStorage.isEncryptionAvailable()) throw new Error('macOS 安全存储当前不可用，无法保存 B站登录信息')
-    const validated = BiliupLoginInfoSchema.parse(loginInfo)
-    const connected = BilibiliAccountSchema.parse({ ...account, status: 'connected' })
-    const encryptedLoginInfo = this.safeStorage.encryptString(JSON.stringify(validated)).toString('base64')
-    await writeJsonAtomic(this.path, { schemaVersion: 1, encryptedLoginInfo, account: connected })
+    await this.#mutate(async () => {
+      if (!this.safeStorage.isEncryptionAvailable()) throw new Error('macOS 安全存储当前不可用，无法保存 B站登录信息')
+      const validated = BiliupLoginInfoSchema.parse(loginInfo)
+      const connected = BilibiliAccountSchema.parse({ ...account, status: 'connected' })
+      const encryptedLoginInfo = this.safeStorage.encryptString(JSON.stringify(validated)).toString('base64')
+      await writeJsonAtomic(this.path, { schemaVersion: 1, encryptedLoginInfo, account: connected })
+    })
+  }
+
+  async saveRefreshedIfCurrent(expected: BiliupLoginInfo, refreshed: BiliupLoginInfo): Promise<boolean> {
+    return this.#mutate(async () => {
+      if (!this.safeStorage.isEncryptionAvailable()) throw new Error('macOS 安全存储当前不可用，无法保存 B站登录信息')
+      const stored = await this.#load()
+      if (stored.account.status === 'disconnected') return false
+      const current = BiliupLoginInfoSchema.parse(JSON.parse(this.safeStorage.decryptString(Buffer.from(stored.encryptedLoginInfo, 'base64'))))
+      const validatedExpected = BiliupLoginInfoSchema.parse(expected)
+      const validatedRefreshed = BiliupLoginInfoSchema.parse(refreshed)
+      if (!isDeepStrictEqual(current, validatedExpected)) return false
+      if (stored.account.status === 'expired' && isDeepStrictEqual(validatedRefreshed, validatedExpected)) return false
+      const encryptedLoginInfo = this.safeStorage.encryptString(JSON.stringify(validatedRefreshed)).toString('base64')
+      const account = { ...stored.account }
+      delete account.message
+      await writeJsonAtomic(this.path, {
+        ...stored,
+        encryptedLoginInfo,
+        account: BilibiliAccountSchema.parse({ ...account, status: 'connected' })
+      })
+      return true
+    })
   }
 
   async markExpired(message: string): Promise<BilibiliAccount> {
-    const stored = await this.#load()
-    const account = BilibiliAccountSchema.parse({ ...stored.account, status: 'expired', message: message.slice(0, 300) })
-    await writeJsonAtomic(this.path, { ...stored, account })
-    return account
+    return this.#mutate(async () => {
+      const stored = await this.#load()
+      const account = BilibiliAccountSchema.parse({ ...stored.account, status: 'expired', message: message.slice(0, 300) })
+      await writeJsonAtomic(this.path, { ...stored, account })
+      return account
+    })
+  }
+
+  async markExpiredIfCurrent(expected: BiliupLoginInfo, message: string): Promise<BilibiliAccount | undefined> {
+    return this.#mutate(async () => {
+      const stored = await this.#load()
+      if (stored.account.status !== 'connected') return undefined
+      const current = BiliupLoginInfoSchema.parse(JSON.parse(this.safeStorage.decryptString(Buffer.from(stored.encryptedLoginInfo, 'base64'))))
+      if (!isDeepStrictEqual(current, BiliupLoginInfoSchema.parse(expected))) return undefined
+      const account = BilibiliAccountSchema.parse({ ...stored.account, status: 'expired', message: message.slice(0, 300) })
+      await writeJsonAtomic(this.path, { ...stored, account })
+      return account
+    })
   }
 
   async clear(): Promise<void> {
-    await rm(this.path, { force: true })
+    await this.#mutate(() => rm(this.path, { force: true }))
   }
 
   async #load(): Promise<z.infer<typeof StoredAccountSchema>> {
     return StoredAccountSchema.parse(JSON.parse(await readFile(this.path, 'utf8')))
+  }
+
+  async #mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const current = this.#mutationQueue.then(operation, operation)
+    this.#mutationQueue = current.then(() => undefined, () => undefined)
+    return current
   }
 }
 

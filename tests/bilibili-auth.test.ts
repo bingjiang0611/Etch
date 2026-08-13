@@ -16,12 +16,12 @@ function json(value: unknown): Response {
 describe('BilibiliAuthService', () => {
   it('completes QR login and stores the native biliup credential without exposing it in state', async () => {
     let saved: BiliupLoginInfo | undefined
-    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpired'> = {
+    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpiredIfCurrent'> = {
       account: async () => ({ status: 'disconnected' }),
       save: async (info) => { saved = info },
       clear: async () => undefined,
       loginInfo: async () => loginInfo,
-      markExpired: async (message) => ({ status: 'expired', message })
+      markExpiredIfCurrent: async (_expected, message) => ({ status: 'expired', message })
     }
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
@@ -47,12 +47,12 @@ describe('BilibiliAuthService', () => {
   })
 
   it('flattens the authenticated archive partition tree', async () => {
-    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpired'> = {
+    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpiredIfCurrent'> = {
       account: async () => ({ status: 'connected', mid: '123', name: 'Etch Test' }),
       save: async () => undefined,
       clear: async () => undefined,
       loginInfo: async () => loginInfo,
-      markExpired: async (message) => ({ status: 'expired', message })
+      markExpiredIfCurrent: async (_expected, message) => ({ status: 'expired', message })
     }
     const service = new BilibiliAuthService(store, vi.fn<typeof fetch>(async () => json({
       code: 0,
@@ -67,12 +67,12 @@ describe('BilibiliAuthService', () => {
 
   it('retries transient QR connection failures before returning the login state', async () => {
     let attempts = 0
-    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpired'> = {
+    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpiredIfCurrent'> = {
       account: async () => ({ status: 'disconnected' }),
       save: async () => undefined,
       clear: async () => undefined,
       loginInfo: async () => loginInfo,
-      markExpired: async (message) => ({ status: 'expired', message })
+      markExpiredIfCurrent: async (_expected, message) => ({ status: 'expired', message })
     }
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       if (!String(input).includes('auth_code')) return json({ code: 86039 })
@@ -88,12 +88,12 @@ describe('BilibiliAuthService', () => {
   })
 
   it('returns an actionable Chinese error after QR connection retries are exhausted', async () => {
-    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpired'> = {
+    const store: Pick<BilibiliAccountStore, 'account' | 'save' | 'clear' | 'loginInfo' | 'markExpiredIfCurrent'> = {
       account: async () => ({ status: 'disconnected' }),
       save: async () => undefined,
       clear: async () => undefined,
       loginInfo: async () => loginInfo,
-      markExpired: async (message) => ({ status: 'expired', message })
+      markExpiredIfCurrent: async (_expected, message) => ({ status: 'expired', message })
     }
     const fetcher = vi.fn<typeof fetch>(async () => { throw new TypeError('fetch failed') })
     const service = new BilibiliAuthService(store, fetcher, async () => undefined)

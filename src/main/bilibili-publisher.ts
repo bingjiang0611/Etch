@@ -12,7 +12,7 @@ import type { AppSettings } from '../shared/settings-schema'
 import type { TaskManifest } from '../shared/task-schema'
 import { sha256ContainedFile } from './storage/safe-artifact'
 import type { TaskStore } from './storage/task-store'
-import { BiliupLoginInfoSchema, type BilibiliAccountStore } from './storage/bilibili-account-store'
+import { BiliupLoginInfoSchema, type BiliupLoginInfo, type BilibiliAccountStore } from './storage/bilibili-account-store'
 import type { AsyncRunScope } from './runtime/async-run-scope'
 import { runProcess, type ProcessResult, type ProcessSpec } from './runtime/process-runner'
 import type { RunRegistry } from './runtime/run-registry'
@@ -26,11 +26,18 @@ interface PublicationJob {
   taskId: string
   draft: BilibiliPublicationDraft
   stopped: boolean
+  completion?: Promise<void>
+}
+
+interface SidecarResult {
+  result: ProcessResult
+  loginInfo: BiliupLoginInfo
+  refreshedLoginInfo?: BiliupLoginInfo
 }
 
 interface PublisherOptions {
   store: TaskStore
-  accountStore: Pick<BilibiliAccountStore, 'account' | 'loginInfo' | 'markExpired' | 'save'>
+  accountStore: Pick<BilibiliAccountStore, 'account' | 'loginInfo' | 'markExpiredIfCurrent' | 'saveRefreshedIfCurrent'>
   settings: () => AppSettings
   sidecarPath: string
   sidecarSha256?: string
@@ -88,9 +95,12 @@ export function sanitizeBiliupDiagnostic(output: string): string {
 }
 
 export class BilibiliPublisher {
-  readonly #queue: PublicationJob[] = []
+  readonly #active = new Map<string, PublicationJob>()
+  readonly #startingDirectories = new Map<string, string | undefined>()
+  readonly #startingTaskIds = new Set<string>()
+  readonly #stopRequestedTaskIds = new Set<string>()
   readonly #sleep: (milliseconds: number) => Promise<void>
-  #active?: PublicationJob
+  #accepting = true
   #sidecarVerified = false
 
   constructor(private readonly options: PublisherOptions) {
@@ -103,57 +113,147 @@ export class BilibiliPublisher {
     for (const taskDirectory of taskDirectories) {
       const manifest = await this.options.store.load(taskDirectory)
       if (!['queued', 'uploading', 'submitting'].includes(manifest.publication.status)) continue
-      const paused = await this.options.store.mutate(taskDirectory, (draft) => {
-        draft.publication.status = 'paused'
-        draft.publication.phaseMessage = '上次投稿被应用退出中断，可继续投稿'
-        draft.publication.updatedAt = new Date().toISOString()
-      })
-      this.options.publishManifest(taskDirectory, paused)
+      await this.#markPausedAfterStop(taskDirectory, '上次投稿被应用退出中断，可继续投稿')
     }
   }
 
   hasTask(taskId: string): boolean {
-    return this.#active?.taskId === taskId || this.#queue.some((job) => job.taskId === taskId)
+    return this.#startingTaskIds.has(taskId) || this.#active.has(taskId)
+  }
+
+  hasDirectory(taskDirectory: string): boolean {
+    const directoryKey = resolve(taskDirectory)
+    return this.#startingDirectories.has(directoryKey) || [...this.#active.values()].some((job) => resolve(job.taskDirectory) === directoryKey)
+  }
+
+  get activeTaskCount(): number {
+    const knownTaskIds = new Set([
+      ...this.#startingTaskIds,
+      ...this.#active.keys(),
+      ...[...this.#startingDirectories.values()].filter((taskId): taskId is string => taskId !== undefined)
+    ])
+    const unresolvedDirectories = [...this.#startingDirectories.values()].filter((taskId) => taskId === undefined).length
+    return knownTaskIds.size + unresolvedDirectories
+  }
+
+  freezeAcquisition(): void {
+    this.#accepting = false
+  }
+
+  thawAcquisition(): void {
+    this.#accepting = true
+  }
+
+  async stopAllNow(): Promise<void> {
+    this.freezeAcquisition()
+    const jobs = [...this.#active.values()]
+    const taskIds = new Set([...this.#startingTaskIds, ...this.#active.keys()])
+    for (const taskId of taskIds) this.#stopRequestedTaskIds.add(taskId)
+    for (const job of jobs) job.stopped = true
+    await Promise.all([...taskIds].map((taskId) => this.options.runRegistry.stopTask(taskId)))
+    await Promise.allSettled(jobs.flatMap((job) => job.completion ? [job.completion] : []))
+    await Promise.all(jobs.map((job) => this.#markPausedAfterStop(job.taskDirectory)))
+  }
+
+  async whenIdle(): Promise<void> {
+    while (this.activeTaskCount) await new Promise((resolve) => setTimeout(resolve, 10))
   }
 
   async start(taskDirectory: string, draftInput: BilibiliPublicationDraft): Promise<TaskManifest> {
     const draft = BilibiliPublicationDraftSchema.parse(draftInput)
-    const manifest = await this.options.store.load(taskDirectory)
-    if (this.hasTask(manifest.taskId)) throw new Error('这个任务已经在投稿队列中')
-    if (manifest.publication.status === 'submitted') throw new Error('这个任务已经确认投稿成功，不能重复投稿')
-    if (manifest.publication.status === 'unknown') throw new Error('提交结果未知，请先在 B站创作中心确认，避免重复投稿')
-    if ((await this.options.accountStore.account()).status !== 'connected') throw new Error('请先重新扫码连接 B站账号')
-    await this.#preflight(taskDirectory, manifest, draft)
-    const queued = await this.options.store.mutate(taskDirectory, (next) => {
-      next.publication.draft = draft
-      next.publication.status = 'queued'
-      next.publication.phaseMessage = '等待本地投稿队列'
-      next.publication.updatedAt = new Date().toISOString()
-      delete next.publication.lastError
-    })
-    this.options.publishManifest(taskDirectory, queued)
-    this.#queue.push({ taskDirectory, taskId: manifest.taskId, draft, stopped: false })
-    this.#pump()
-    return queued
+    const directoryKey = this.#reserveStartingDirectory(taskDirectory)
+    return this.#startReserved(taskDirectory, directoryKey, draft)
   }
 
   async continue(taskDirectory: string): Promise<TaskManifest> {
-    const manifest = await this.options.store.load(taskDirectory)
-    if (!manifest.publication.draft) throw new Error('没有可继续的投稿草稿，请重新打开投稿弹窗')
-    return this.start(taskDirectory, manifest.publication.draft)
+    const directoryKey = this.#reserveStartingDirectory(taskDirectory)
+    return this.#startReserved(taskDirectory, directoryKey)
+  }
+
+  async #startReserved(
+    taskDirectory: string,
+    directoryKey: string,
+    draftInput?: BilibiliPublicationDraft
+  ): Promise<TaskManifest> {
+    let reservedTaskId: string | undefined
+    let started = false
+    try {
+      const manifest = await this.options.store.load(taskDirectory)
+      this.#startingDirectories.set(directoryKey, manifest.taskId)
+      if (!this.#accepting) throw new Error('Etch 正在退出，拒绝启动新的投稿')
+      if (this.hasTask(manifest.taskId)) throw new Error('这个任务已经在投稿队列中')
+      this.#startingTaskIds.add(manifest.taskId)
+      reservedTaskId = manifest.taskId
+      this.#assertNotStopped(manifest.taskId)
+      const draft = draftInput ?? manifest.publication.draft
+      if (!draft) throw new Error('没有可继续的投稿草稿，请重新打开投稿弹窗')
+      if (manifest.publication.status === 'submitted') throw new Error('这个任务已经确认投稿成功，不能重复投稿')
+      if (manifest.publication.status === 'unknown') throw new Error('提交结果未知，请先在 B站创作中心确认，避免重复投稿')
+      if ((await this.options.accountStore.account()).status !== 'connected') throw new Error('请先重新扫码连接 B站账号')
+      await this.#preflight(taskDirectory, manifest, draft)
+      this.#assertNotStopped(manifest.taskId)
+      const queued = await this.options.store.mutate(taskDirectory, (next) => {
+        next.publication.draft = draft
+        next.publication.status = 'queued'
+        next.publication.phaseMessage = '正在启动投稿'
+        next.publication.updatedAt = new Date().toISOString()
+        delete next.publication.lastError
+      })
+      this.#assertNotStopped(manifest.taskId)
+      this.options.publishManifest(taskDirectory, queued)
+      const job: PublicationJob = { taskDirectory, taskId: manifest.taskId, draft, stopped: false }
+      this.#active.set(job.taskId, job)
+      this.options.onActiveChange?.(true)
+      const run = this.#runJob(job)
+        .catch((error) => console.error('B站投稿任务失败', { taskId: job.taskId, error }))
+        .finally(() => {
+          if (this.#active.get(job.taskId) === job) {
+            this.#active.delete(job.taskId)
+            this.#stopRequestedTaskIds.delete(job.taskId)
+            this.options.onActiveChange?.(this.#active.size > 0)
+          }
+        })
+      job.completion = run
+      this.options.appRuns.track(run)
+      started = true
+      return queued
+    } finally {
+      if (reservedTaskId) {
+        this.#startingTaskIds.delete(reservedTaskId)
+        if (!started && !this.#active.has(reservedTaskId) && this.#stopRequestedTaskIds.has(reservedTaskId)) {
+          await this.#markPausedAfterStop(taskDirectory)
+          this.#stopRequestedTaskIds.delete(reservedTaskId)
+        }
+      }
+      this.#startingDirectories.delete(directoryKey)
+    }
   }
 
   async stop(taskDirectory: string): Promise<TaskManifest> {
+    const directoryKey = resolve(taskDirectory)
     const manifest = await this.options.store.load(taskDirectory)
-    const queuedIndex = this.#queue.findIndex((job) => job.taskId === manifest.taskId)
-    if (queuedIndex >= 0) {
-      this.#queue[queuedIndex].stopped = true
-      this.#queue.splice(queuedIndex, 1)
-    }
-    if (this.#active?.taskId === manifest.taskId) {
-      this.#active.stopped = true
+    this.#stopRequestedTaskIds.add(manifest.taskId)
+    const active = this.#active.get(manifest.taskId)
+    if (active) {
+      active.stopped = true
       await this.options.runRegistry.stopTask(manifest.taskId)
     }
+    const paused = await this.#markPausedAfterStop(taskDirectory)
+    if (!this.hasTask(manifest.taskId) && !this.#startingDirectories.has(directoryKey)) {
+      this.#stopRequestedTaskIds.delete(manifest.taskId)
+    }
+    return paused
+  }
+
+  #reserveStartingDirectory(taskDirectory: string): string {
+    if (!this.#accepting) throw new Error('Etch 正在退出，拒绝启动新的投稿')
+    const directoryKey = resolve(taskDirectory)
+    if (this.#startingDirectories.has(directoryKey)) throw new Error('这个任务已经在投稿队列中')
+    this.#startingDirectories.set(directoryKey, undefined)
+    return directoryKey
+  }
+
+  async #markPausedAfterStop(taskDirectory: string, pausedMessage = '已停止，可继续投稿'): Promise<TaskManifest> {
     const paused = await this.options.store.mutate(taskDirectory, (draft) => {
       if (draft.publication.status === 'submitted') return
       if (draft.publication.status === 'submitting') {
@@ -166,7 +266,7 @@ export class BilibiliPublisher {
         }
       } else {
         draft.publication.status = 'paused'
-        draft.publication.phaseMessage = '已停止，可继续投稿'
+        draft.publication.phaseMessage = pausedMessage
       }
       draft.publication.updatedAt = new Date().toISOString()
     })
@@ -208,22 +308,6 @@ export class BilibiliPublisher {
     await this.start(taskDirectory, draft)
   }
 
-  #pump(): void {
-    if (this.#active) return
-    const job = this.#queue.shift()
-    if (!job) return
-    this.#active = job
-    this.options.onActiveChange?.(true)
-    const run = this.#runJob(job)
-      .catch((error) => console.error('B站投稿任务失败', { taskId: job.taskId, error }))
-      .finally(() => {
-        if (this.#active === job) this.#active = undefined
-        this.options.onActiveChange?.(false)
-        this.#pump()
-      })
-    this.options.appRuns.track(run)
-  }
-
   async #runJob(job: PublicationJob): Promise<void> {
     let submitting = false
     try {
@@ -258,7 +342,7 @@ export class BilibiliPublisher {
         })
         this.options.publishManifest(job.taskDirectory, running)
         submitting = false
-        const result = await this.#runSidecar(job, async () => {
+        const sidecar = await this.#runSidecar(job, async () => {
           if (submitting) return
           submitting = true
           const next = await this.options.store.mutate(job.taskDirectory, (draft) => {
@@ -268,10 +352,12 @@ export class BilibiliPublisher {
           })
           this.options.publishManifest(job.taskDirectory, next)
         })
+        const result = sidecar.result
         if (job.stopped) return
         const output = `${result.stdout}\n${result.stderr}`
         const receipt = parseBiliupReceipt(output)
         if (receipt) {
+          await this.#saveRefreshedLogin(sidecar)
           const submitted = await this.options.store.mutate(job.taskDirectory, (draft) => {
             draft.publication.status = 'submitted'
             draft.publication.receipt = receipt
@@ -284,6 +370,7 @@ export class BilibiliPublisher {
           return
         }
         if (submitting || (result.exitCode === 0 && !result.cancelled && !result.timedOut)) {
+          await this.#saveRefreshedLogin(sidecar)
           await this.#markUnknown(job.taskDirectory, 'biliup 已进入提交阶段，但 Etch 没有取得可验证回执')
           return
         }
@@ -299,7 +386,8 @@ export class BilibiliPublisher {
         const failure = result.timedOut
           ? { code: 'transient-timeout', message: '上传连接超时', retryable: true }
           : classifyBiliupFailure(output)
-        if (failure.code === 'auth-expired') await this.options.accountStore.markExpired(failure.message)
+        if (failure.code === 'auth-expired') await this.options.accountStore.markExpiredIfCurrent(sidecar.loginInfo, failure.message)
+        else await this.#saveRefreshedLogin(sidecar)
         if (!failure.retryable || retry === 2) {
           await this.#markFailed(job.taskDirectory, failure)
           return
@@ -320,7 +408,7 @@ export class BilibiliPublisher {
     }
   }
 
-  async #runSidecar(job: PublicationJob, onUploaded: () => Promise<void>): Promise<ProcessResult> {
+  async #runSidecar(job: PublicationJob, onUploaded: () => Promise<void>): Promise<SidecarResult> {
     const runDirectory = await mkdtemp(join(this.options.temporaryRoot, 'biliup-'))
     const cookiePath = join(runDirectory, 'cookies.json')
     const loginInfo = await this.options.accountStore.loginInfo()
@@ -364,31 +452,43 @@ export class BilibiliPublisher {
         onStdout: observe,
         onStderr: observe
       }
+      this.#assertNotStopped(job.taskId)
       const result = this.options.runExternal
         ? await this.options.runExternal(spec)
         : await runProcess(spec, {
-        started: async (pid, executable) => this.options.runRegistry.register({
-          runId,
-          appInstanceToken,
-          pid,
-          pgid: pid,
-          executable,
-          taskId: job.taskId,
-          stage: 'publish:bilibili'
-        }).then(() => undefined),
+        started: async (pid, executable) => {
+          await this.options.runRegistry.register({
+            runId,
+            appInstanceToken,
+            pid,
+            pgid: pid,
+            executable,
+            taskId: job.taskId,
+            stage: 'publish:bilibili'
+          })
+          if (job.stopped || this.#stopRequestedTaskIds.has(job.taskId)) await this.options.runRegistry.stopTask(job.taskId)
+        },
         finished: () => this.options.runRegistry.finish(runId)
       }, { runId, appInstanceToken })
       await phaseTransition
+      let refreshedLoginInfo: BiliupLoginInfo | undefined
       try {
-        const refreshed = BiliupLoginInfoSchema.parse(JSON.parse(await readFile(cookiePath, 'utf8')))
-        const account = await this.options.accountStore.account()
-        if (account.status === 'connected') await this.options.accountStore.save(refreshed, account)
+        refreshedLoginInfo = BiliupLoginInfoSchema.parse(JSON.parse(await readFile(cookiePath, 'utf8')))
       } catch {
         // biliup may leave the input credential unchanged or terminate before writing it.
       }
-      return result
+      return { result, loginInfo, refreshedLoginInfo }
     } finally {
       await rm(runDirectory, { recursive: true, force: true })
+    }
+  }
+
+  async #saveRefreshedLogin(sidecar: SidecarResult): Promise<void> {
+    if (!sidecar.refreshedLoginInfo) return
+    try {
+      await this.options.accountStore.saveRefreshedIfCurrent(sidecar.loginInfo, sidecar.refreshedLoginInfo)
+    } catch {
+      // A verified submission must not become retryable merely because credential refresh persistence failed.
     }
   }
 
@@ -412,6 +512,10 @@ export class BilibiliPublisher {
     const hash = createHash('sha256').update(await readFile(this.options.sidecarPath)).digest('hex')
     if (hash !== (this.options.sidecarSha256 ?? BILIUP_BINARY_SHA256)) throw new Error('内置 biliup sidecar 完整性校验失败')
     this.#sidecarVerified = true
+  }
+
+  #assertNotStopped(taskId: string): void {
+    if (this.#stopRequestedTaskIds.has(taskId)) throw new Error('投稿已停止')
   }
 
   async #markFailed(taskDirectory: string, failure: { code: string; message: string; retryable: boolean }): Promise<void> {

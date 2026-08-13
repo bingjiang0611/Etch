@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { publicationTemplateReady, type BilibiliAccount } from '../shared/bilibili'
 import type { Bootstrap, ChromeCookieAccess, DeleteTaskMode, DocumentPage, GlossaryApplyResult, GlossaryCatalogPage, GlossaryImpactPreview, InstallableTool, QueuePage, RecoveryState, TaskDetail, TaskReviewPage, ToolHealthSnapshot } from '../shared/ipc'
-import { IDLE_PIPELINE_ACTIVITY, InstallableToolSchema } from '../shared/ipc'
+import { InstallableToolSchema } from '../shared/ipc'
 import { STAGE_ORDER } from '../shared/pipeline'
 import { defaultSettings, type AppSettings, type TaskCategory, type ThemePreference, type ToolId } from '../shared/settings-schema'
 import { lastStageForKind, taskThumbnailArtifact, type DocumentProcessingMode, type ModelSelection, type ProviderId, type StageId, type TaskKind } from '../shared/task-schema'
@@ -26,7 +26,7 @@ import { BilibiliPublishDialog } from './BilibiliPublishDialog'
 import { BilibiliSettingsCard } from './BilibiliSettingsCard'
 import { readableRemoteError } from './readable-error'
 import { permissionGuideCopy } from './permission-guide'
-import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, stageLabelForKind, subtitleKindLabel, taskKindLabel, taskStages, taskStatusText, type SubtitlePreset } from './ui'
+import { Icon, PresetDemo, SwitchControl, bilibiliPublicationText, completedStageCount, durationLabel, getStage, providerNames, subtitleKindLabel, taskKindLabel, taskStages, taskStatusText, type SubtitlePreset } from './ui'
 
 const tools: ToolId[] = ['yt-dlp', 'ffmpeg', 'ffprobe', 'python', 'mlx_whisper', 'claude', 'codex', 'qoder', 'opencode']
 const INSTALLABLE_TOOLS = new Set<string>(InstallableToolSchema.options)
@@ -57,7 +57,7 @@ export function App(): React.JSX.Element {
   const [view, setView] = useState<View>('queue')
   const [bootstrap, setBootstrap] = useState<Bootstrap>()
   const [diagnosticsDismissed, setDiagnosticsDismissed] = useState(false)
-  const [queue, setQueue] = useState<QueuePage>({ items: [], total: 0, activity: IDLE_PIPELINE_ACTIVITY })
+  const [queue, setQueue] = useState<QueuePage>({ items: [], total: 0 })
   const [queueError, setQueueError] = useState('')
   const [queueDetails, setQueueDetails] = useState<Record<string, TaskDetail>>({})
   const [queueDetailFailures, setQueueDetailFailures] = useState<Record<string, true>>({})
@@ -1490,7 +1490,6 @@ export function App(): React.JSX.Element {
       ? `按需调用 · ${selectedProviderAvailability.summary ?? '运行时校验登录状态'}`
       : selectedProviderAvailability.summary ?? '使用本机 CLI；登录态在运行时校验'
   const selectedIsRunning = selected ? Object.values(selected.manifest.pipeline.stages).some((stage) => stage.status === 'running') : false
-  const selectedSummary = queue.items.find((item) => item.taskId === selected?.manifest.taskId)
   const relatedSummary = selected
     ? queue.items.find((item) => selected.manifest.kind !== 'document'
       && item.kind !== 'document'
@@ -1498,9 +1497,7 @@ export function App(): React.JSX.Element {
       && item.kind !== selected.manifest.kind)
     : undefined
   const relatedOutput = relatedSummary ? queueDetails[relatedSummary.taskId] : undefined
-  const selectedWaitingStage = selectedSummary?.schedule === 'waiting' ? selectedSummary.waitingStage : undefined
   const runningTaskCount = queue.items.filter((item) => item.status === 'running').length
-  const waitingSlotCount = queue.items.filter((item) => item.schedule === 'waiting').length
   const selectedIsPaused = Boolean(selected?.manifest.runtime.userPaused)
   const needsRebuild = selected?.manifest.kind === 'subtitle'
     ? (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(selected, id).status === 'stale')
@@ -1686,7 +1683,7 @@ export function App(): React.JSX.Element {
                   </button>
                 </div>
                 <p className="sub">
-                  每阶段并发 {settings.stageConcurrency} · {runningTaskCount ? `${runningTaskCount} 个运行中` : settings.queuePaused ? '队列已暂停' : '队列空闲'}{waitingSlotCount ? ` · ${waitingSlotCount} 个排队等槽位` : ''}
+                  {runningTaskCount ? `${runningTaskCount} 个运行中` : settings.queuePaused ? '队列已暂停' : '队列空闲'}
                 </p>
               </div>
               {queueError && (
@@ -1727,7 +1724,6 @@ export function App(): React.JSX.Element {
                     const sourceName = detail ? (detail.manifest.input.kind === 'url' ? detail.manifest.input.url : detail.manifest.input.sourcePath) : ''
                     const updatedAt = new Date(task.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
                     const taskIsStarting = task.taskId in startingTaskIds
-                    const taskIsWaitingSlot = task.schedule === 'waiting'
                     const taskIsRunning = task.status === 'running' || Boolean(detail && Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'running'))
                     const taskHasCheckpoint = status === 'checkpoint' || Boolean(detail && Object.values(detail.manifest.pipeline.stages).some((stage) => stage.status === 'checkpoint'))
                     const taskNeedsRebuild = Boolean(detail?.manifest.kind === 'subtitle' && (['srt', 'burn', 'verify'] as StageId[]).some((id) => getStage(detail, id).status === 'stale'))
@@ -1736,17 +1732,15 @@ export function App(): React.JSX.Element {
                       ? '处理中'
                       : taskIsStarting
                         ? '正在启动…'
-                        : taskIsWaitingSlot
-                          ? `排队等${task.waitingStage ? stageLabelForKind(task.waitingStage, task.kind) : ''}槽位`
-                          : taskHasCheckpoint
-                            ? '需要确认'
-                            : taskIsComplete
-                              ? '已完成'
-                              : detail?.manifest.runtime.userPaused
-                                ? '继续处理'
-                                : taskNeedsRebuild
-                                  ? '重新生成'
-                                  : '开始处理'
+                        : taskHasCheckpoint
+                          ? '需要确认'
+                          : taskIsComplete
+                            ? '已完成'
+                            : detail?.manifest.runtime.userPaused
+                              ? '继续处理'
+                              : taskNeedsRebuild
+                                ? '重新生成'
+                                : '开始处理'
                     return (
                       <article
                         className={`task-row row-hover ${selected?.manifest.taskId === task.taskId ? 'is-selected' : ''} ${openingTaskId === task.taskId ? 'is-opening' : ''} ${taskContextMenu?.taskIds.includes(task.taskId) ? 'is-context' : ''} ${pickedVisibleTaskIds.includes(task.taskId) ? 'is-picked' : ''}`}
@@ -1783,7 +1777,7 @@ export function App(): React.JSX.Element {
                               title: task.title,
                               x: Math.max(edge, Math.min(event.clientX, window.innerWidth - menuWidth - edge)),
                               y: Math.max(edge, Math.min(event.clientY, window.innerHeight - menuHeight - edge)),
-                              running: taskIsRunning || taskIsWaitingSlot,
+                              running: taskIsRunning,
                               taskIds: pickedVisibleTaskIds.length > 1 && pickedVisibleTaskIds.includes(task.taskId) ? [...pickedVisibleTaskIds] : [task.taskId]
                             })
                           }}
@@ -1798,7 +1792,7 @@ export function App(): React.JSX.Element {
                               title: task.title,
                               x: Math.min(bounds.left + 28, window.innerWidth - 278),
                               y: Math.min(bounds.top + 28, window.innerHeight - 188),
-                              running: taskIsRunning || taskIsWaitingSlot,
+                              running: taskIsRunning,
                               taskIds: pickedVisibleTaskIds.length > 1 && pickedVisibleTaskIds.includes(task.taskId) ? [...pickedVisibleTaskIds] : [task.taskId]
                             })
                           }}
@@ -1824,8 +1818,8 @@ export function App(): React.JSX.Element {
                               <small>{isDocument ? 'Markdown 文档' : '等待视频封面'}</small>
                             </span>
                           )}
-                          <span className="pill task-cover-status" data-status={taskIsWaitingSlot ? 'queued' : status}>
-                            {taskStatusText(detail, task.status, taskIsWaitingSlot)}
+                          <span className="pill task-cover-status" data-status={status}>
+                            {taskStatusText(detail, task.status)}
                           </span>
                           {!isDocument && <span className="dur mono">{durationLabel(detail?.manifest.runtime.durationSeconds)}</span>}
                         </span>
@@ -1893,7 +1887,7 @@ export function App(): React.JSX.Element {
                               className="task-start-button"
                               type="button"
                               aria-label={`${queueActionLabel}：${task.title}`}
-                              disabled={!detail || taskIsStarting || taskIsWaitingSlot || taskIsRunning || taskHasCheckpoint || taskIsComplete}
+                              disabled={!detail || taskIsStarting || taskIsRunning || taskHasCheckpoint || taskIsComplete}
                               onClick={() => {
                                 void startQueuedTask(task.taskId)
                               }}
@@ -1986,8 +1980,6 @@ export function App(): React.JSX.Element {
             savingPreset={savingPreset || savingSettings}
             glossaryBusy={glossaryBusy}
             selectedIsRunning={selectedIsRunning}
-            selectedWaitingStage={selectedWaitingStage}
-            activity={queue.activity}
             selectedIsPaused={selectedIsPaused}
             stoppingTask={stoppingTask}
             creatingCompanion={creatingCompanion}
@@ -2054,19 +2046,6 @@ export function App(): React.JSX.Element {
                   <small>所有任务目录、中间产物与成片的根路径</small>
                 </label>
                 <input id="settings-workspace-root" className="field-input" disabled={!settingsLoaded} value={settings.workspaceRoot} onChange={(event) => setSettings({ ...settings, workspaceRoot: event.target.value })} />
-              </div>
-              <div className="setting-row">
-                <span className="label">
-                  <strong>统一并发数</strong>
-                  <small>每个阶段池同时运行的任务上限</small>
-                </span>
-                <span className="seg" role="group" aria-label="统一并发数">
-                  {([1, 2, 3] as const).map((value) => (
-                    <button className={settings.stageConcurrency === value ? 'is-active' : ''} type="button" disabled={!settingsLoaded} aria-pressed={settings.stageConcurrency === value} onClick={() => setSettings({ ...settings, stageConcurrency: value })} key={value}>
-                      {value}
-                    </button>
-                  ))}
-                </span>
               </div>
               <div className="setting-row">
                 <label className="label" htmlFor="settings-default-provider">

@@ -261,7 +261,6 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
     await expect(window.getByRole('switch', { name: '成片完成' })).toBeVisible()
     await expect(window.getByRole('switch', { name: '任务失败' })).toBeVisible()
     await expect(window.getByRole('switch', { name: '审计 checkpoint 待确认' })).toBeVisible()
-    await window.getByRole('button', { name: '2', exact: true }).click()
     await window.getByRole('switch', { name: '允许队列领取新阶段' }).click()
     await window.getByRole('switch', { name: '处理时阻止休眠' }).click()
     await window.getByRole('switch', { name: '成片完成' }).click()
@@ -277,7 +276,6 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
       .poll(() =>
         window.evaluate(() =>
           window.etch.getSettings().then((settings) => ({
-            stageConcurrency: settings.stageConcurrency,
             queuePaused: settings.queuePaused,
             preventSleep: settings.preventSleep,
             completion: settings.notifications.completion,
@@ -288,7 +286,7 @@ test('creates a durable URL task through the real Electron IPC boundary', async 
           })),
         ),
       )
-      .toEqual({ stageConcurrency: 2, queuePaused: false, preventSleep: false, completion: false, failure: false, checkpoint: false, subtitlePreset: 'compact', defaultProvider: 'qoder' })
+      .toEqual({ queuePaused: false, preventSleep: false, completion: false, failure: false, checkpoint: false, subtitlePreset: 'compact', defaultProvider: 'qoder' })
     await window.locator('nav .nav-item').filter({ hasText: '任务队列' }).click()
     newTaskDialog = await openNewTaskDialog(window)
     await expect(newTaskDialog.locator('#provider')).toHaveValue('claude')
@@ -439,7 +437,6 @@ test('starts a paused backlog when queue auto-run is enabled', async () => {
   await writeHermeticSettings(userData, {
     ...defaultSettings(userData),
     workspaceRoot,
-    stageConcurrency: 3,
     queuePaused: true,
     toolOverrides: { 'yt-dlp': fakeYtDlp },
   })
@@ -732,8 +729,6 @@ test('renders manifest-backed queue metadata and pipeline diagnostics without in
     await expect(translateNode).toHaveAttribute('data-status', 'running')
     await expect(translateNode.locator('.rail-progress i')).toHaveAttribute('style', /width:\s*42%/)
     await expect(translateNode.locator('.rail-attempt')).toHaveText('×3')
-    await expect(window.locator('.pipeline-pools .pool-tag')).toHaveCount(5)
-    await expect(window.locator('.pool-tag').filter({ hasText: 'agent' })).toContainText('运行中')
     await expect(window.getByRole('progressbar', { name: '流水线总体进度' })).toHaveAttribute('aria-valuenow', '44')
     await window.getByRole('tab', { name: '任务信息' }).click()
     await expect(window.getByText('1 / 2 已验证', { exact: true })).toBeVisible()
@@ -1760,7 +1755,6 @@ test('creates a summary task from the dialog and gates illustration on a user-ch
     await expect(outputRail).toContainText('配图')
     await expect(window.locator('.pipeline')).not.toContainText('压制')
     await expect(window.locator('.pipeline')).not.toContainText('人工校对')
-    await expect(window.locator('.pipeline-pools .pool-tag')).toHaveCount(5)
     await expect(window.getByRole('tab', { name: '总结' })).toBeVisible()
     await expect(window.getByRole('tab', { name: '三稿记录' })).toBeVisible()
     await expect(window.getByRole('tab', { name: '校对' })).toHaveCount(0)

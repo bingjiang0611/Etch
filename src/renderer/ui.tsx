@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { QueuePage, ReviewTimelineWindow, TaskDetail, TaskReviewPage } from '../shared/ipc'
-import { POOL_BY_STAGE, STAGE_ORDER } from '../shared/pipeline'
+import { STAGE_ORDER } from '../shared/pipeline'
 import type { AppSettings } from '../shared/settings-schema'
 import { lastStageForKind, stageBelongsToKind, type ProviderId, type StageId, type TaskKind } from '../shared/task-schema'
 import { clearPlaybackPosition, loadPlaybackPosition, savePlaybackPosition } from './playback-position'
@@ -11,8 +11,6 @@ import {
   seekTarget
 } from './playback-controls'
 import { TimelineWindowCoordinator, type TimelineRequestIdentity } from './timeline-window-coordinator'
-
-export const pools = ['download', 'whisper', 'agent', 'audit', 'ffmpeg', 'image'] as const
 
 export type SubtitlePreset = AppSettings['subtitlePreset']
 type StageState = TaskDetail['manifest']['pipeline']['stages'][string]
@@ -265,7 +263,7 @@ export function isStageDone(stage: StageState): boolean {
   return stage.status === 'completed' || stage.status === 'skipped'
 }
 
-// 三类任务共用调度槽位，但进度与流水线只展示属于本类型的阶段。
+// 三类任务共用阶段序列，但进度与流水线只展示属于本类型的阶段。
 export function taskStages(detail: TaskDetail): StageId[] {
   return STAGE_ORDER.filter((id) => stageBelongsToKind(id, detail.manifest.kind))
 }
@@ -278,7 +276,7 @@ export function activeStageId(detail: TaskDetail): StageId | undefined {
   return taskStages(detail).find((id) => ['running', 'checkpoint', 'failed', 'paused', 'stale'].includes(getStage(detail, id).status))
 }
 
-export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePage['items'][number]['status'], waitingSlot = false): string {
+export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePage['items'][number]['status']): string {
   const fallbackLabels: Record<QueuePage['items'][number]['status'], string> = {
     pending: '等待中',
     ready: '可处理',
@@ -290,9 +288,8 @@ export function taskStatusText(detail: TaskDetail | undefined, fallback: QueuePa
     skipped: '已跳过',
     stale: '待重建',
   }
-  if (!detail) return waitingSlot ? '排队中' : fallbackLabels[fallback]
+  if (!detail) return fallbackLabels[fallback]
   if (detail.manifest.translation.auditCheckpoint) return '待裁决'
-  if (waitingSlot) return '排队中'
   const active = activeStageId(detail)
   if (active) return stageLabelForKind(active, detail.manifest.kind)
   return getStage(detail, lastStageForKind(detail.manifest.kind)).status === 'completed' ? '已完成' : fallbackLabels[fallback]
@@ -302,7 +299,7 @@ export function bilibiliPublicationText(detail: TaskDetail): string {
   const labels: Record<TaskDetail['manifest']['publication']['status'], string> = {
     idle: '未投稿',
     waiting_config: '投稿待配置',
-    queued: 'B站排队中',
+    queued: 'B站投稿启动中',
     uploading: 'B站上传中',
     submitting: 'B站提交中',
     submitted: '已提交 B站',
@@ -326,21 +323,6 @@ export function stageSubLabel(detail: TaskDetail, id: StageId, stage: StageState
     return `${verified}/${detail.manifest.translation.batches.length} 批`
   }
   return stage.status === 'pending' ? '' : stage.status
-}
-
-export function poolState(detail: TaskDetail, pool: (typeof pools)[number]): StageState['status'] {
-  const states = STAGE_ORDER.filter((id) => POOL_BY_STAGE[id] === pool).map((id) => getStage(detail, id).status)
-  return states.find((status) => status === 'failed') ?? states.find((status) => status === 'running') ?? states.find((status) => status === 'checkpoint') ?? states.find((status) => status === 'paused') ?? states.find((status) => status === 'stale') ?? (states.every((status) => status === 'completed' || status === 'skipped') ? 'completed' : 'pending')
-}
-
-export function poolStateLabel(status: StageState['status']): string {
-  if (status === 'completed' || status === 'skipped') return '已释放'
-  if (status === 'running') return '运行中'
-  if (status === 'failed') return '失败'
-  if (status === 'checkpoint') return '待确认'
-  if (status === 'paused') return '已暂停'
-  if (status === 'stale') return '待重建'
-  return '空闲'
 }
 
 export function SwitchControl({ checked, label, disabled, onChange }: { checked: boolean; label: string; disabled?: boolean; onChange: (checked: boolean) => void }): React.JSX.Element {

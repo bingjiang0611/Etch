@@ -1392,52 +1392,6 @@ button.rail-node:active .rail-dot {
   overflow-wrap: anywhere;
 }
 
-/* 并发池 */
-.pipeline-pools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--line);
-}
-
-.pool-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--muted);
-  font: 11px/1.4 var(--font-app);
-}
-
-.pool-tag .dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--idle);
-}
-
-.pool-tag .dot[data-status="completed"] {
-  background: var(--ok);
-}
-
-.pool-tag .dot[data-status="running"] {
-  background: var(--run);
-}
-
-.pool-tag .dot[data-status="checkpoint"] {
-  background: var(--warn);
-}
-
-.pool-tag b {
-  color: var(--fg-soft);
-  font-weight: 600;
-}
-
 /* 工作区 */
 .transcript-panel {
   display: grid;
@@ -2966,8 +2920,7 @@ footer {
 
 .etch-main .pipeline-collapse > summary,
 .etch-main .rail-label,
-.etch-main .rail-sub,
-.etch-main .pool-tag {
+.etch-main .rail-sub {
   font-size: 9px;
 }
 

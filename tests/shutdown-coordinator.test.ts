@@ -18,6 +18,15 @@ function idleAppRuns() {
   return { whenIdle: vi.fn(async () => undefined) }
 }
 
+function publications() {
+  return {
+    freezeAcquisition: vi.fn(),
+    thawAcquisition: vi.fn(),
+    stopAllNow: vi.fn(async () => undefined),
+    whenIdle: vi.fn(async () => undefined)
+  }
+}
+
 function registry(stages: string[] = []) {
   let rows = stages.map((stage) => ({ stage }))
   return {
@@ -39,7 +48,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: registry(['translate']),
       appRuns: idleAppRuns(),
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode: async (): Promise<ShutdownMode> => 'cancel',
       markCleanExit
     })
@@ -61,7 +70,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: runs,
       appRuns: idleAppRuns(),
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode: async () => {
         runs.setStages([])
         return mode
@@ -74,6 +83,27 @@ describe('coordinateShutdown', () => {
     expect(markCleanExit).toHaveBeenCalledOnce()
   })
 
+  it('freezes publication admission and stops publications immediately in stop-now mode', async () => {
+    const work = pipeline()
+    const publishing = publications()
+    let publishingCount = 1
+    publishing.stopAllNow = vi.fn(async () => { publishingCount = 0 })
+    const result = await coordinateShutdown({
+      pipeline: work,
+      runRegistry: registry(['publish:bilibili']),
+      appRuns: idleAppRuns(),
+      publicationCount: () => publishingCount,
+      publications: publishing,
+      chooseMode: async () => 'stop-now',
+      markCleanExit: async () => undefined
+    })
+
+    expect(result).toEqual({ state: 'clean' })
+    expect(publishing.freezeAcquisition).toHaveBeenCalledOnce()
+    expect(publishing.stopAllNow).toHaveBeenCalledOnce()
+    expect(publishing.thawAcquisition).not.toHaveBeenCalled()
+  })
+
   it('leaves the launch unclean when a task process stays registered and cannot be stopped', async () => {
     const work = pipeline()
     const runs = registry(['translate'])
@@ -83,7 +113,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: runs,
       appRuns: idleAppRuns(),
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode: async () => 'drain-current-stage',
       markCleanExit
     })
@@ -104,7 +134,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: registry([]),
       appRuns: idleAppRuns(),
-      publicationActive: () => publishing,
+      publicationCount: () => (publishing ? 1 : 0),
       chooseMode,
       markCleanExit: async () => undefined
     })
@@ -124,7 +154,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: runs,
       appRuns: idleAppRuns(),
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode,
       markCleanExit: async () => undefined
     })
@@ -145,7 +175,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: runs,
       appRuns,
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode,
       markCleanExit
     })
@@ -157,7 +187,7 @@ describe('coordinateShutdown', () => {
     expect(markCleanExit).toHaveBeenCalledOnce()
   })
 
-  it('exits without prompting when tasks are only admitted or queued and no stage is executing', async () => {
+  it('exits without prompting when tasks are admitted but no stage is executing', async () => {
     const work = pipeline(0)
     const chooseMode = vi.fn(async (): Promise<ShutdownMode> => 'cancel')
     const markCleanExit = vi.fn(async () => undefined)
@@ -165,7 +195,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: registry([]),
       appRuns: idleAppRuns(),
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode,
       markCleanExit
     })
@@ -186,7 +216,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: registry([]),
       appRuns: idleAppRuns(),
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode,
       markCleanExit: async () => undefined,
       stopTimeoutMs: 20
@@ -218,7 +248,7 @@ describe('coordinateShutdown', () => {
       pipeline: work,
       runRegistry: registry([]),
       appRuns: idleAppRuns(),
-      publicationActive: () => false,
+      publicationCount: () => 0,
       chooseMode: async () => 'drain-current-stage',
       markCleanExit: async () => { throw new Error('app state unavailable') }
     })
