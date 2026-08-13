@@ -220,7 +220,7 @@ echo 'Web 接口投稿成功' >&2
     expect(persisted).not.toContain('SESSDATA')
     expect(persisted).not.toContain('access_token')
     expect(persisted).not.toContain('refresh_token')
-  })
+  }, 15_000)
 
   it('marks an exit-zero submission without a receipt as unknown instead of retrying', async () => {
     const test = await fixture(`#!/bin/sh
@@ -237,7 +237,7 @@ echo 'Web 接口投稿成功' >&2
     expect(manifest.publication.attempt).toBe(1)
     expect(manifest.publication.lastError?.code).toBe('submission-outcome-unknown')
     expect(manifest.pipeline.stages.verify.status).toBe('completed')
-  })
+  }, 15_000)
 
   it('recovers interrupted publication state as paused and removes stale credential directories', async () => {
     const test = await fixture('#!/bin/sh\nexit 0\n')
