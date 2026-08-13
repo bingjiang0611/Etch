@@ -308,7 +308,8 @@ export class TaskPipeline {
     readonly onToolHealth?: (health: ToolHealth) => void,
     readonly documentFetch?: DocumentFetch,
     readonly documentProxyResolver?: DocumentProxyResolver,
-    readonly decodeImage?: (bytes: Buffer) => boolean
+    readonly decodeImage?: (bytes: Buffer) => boolean,
+    readonly isTaskAcquisitionBlocked?: (taskDirectory: string) => boolean
   ) {
     this.#acquisitionPaused = settings.queuePaused
     if (this.#acquisitionPaused) this.#acquisitionController.abort()
@@ -317,6 +318,7 @@ export class TaskPipeline {
   start(taskDirectory: string): Promise<void> {
     const existing = this.#running.get(taskDirectory)
     if (existing) return existing
+    if (this.isTaskAcquisitionBlocked?.(taskDirectory)) return Promise.reject(new Error('任务正在删除'))
     if (!this.#mayAcquire()) return Promise.resolve()
     const taskController = new AbortController()
     this.#taskControllers.set(taskDirectory, taskController)
@@ -380,15 +382,41 @@ export class TaskPipeline {
     }
   }
 
-  async resume(taskDirectory: string): Promise<void> {
-    if (!this.#mayAcquire()) throw new Error('队列已暂停，解除暂停后才能开始新阶段')
-    const manifest = await this.store.load(taskDirectory)
-    this.#stopRequestedTaskIds.delete(manifest.taskId)
-    if (manifest.runtime.userPaused) {
-      const resumed = await this.store.resumePaused(taskDirectory)
-      this.#publishManifest(taskDirectory, resumed)
-    }
-    void this.start(taskDirectory).catch((error) => console.error('pipeline failed', error))
+  resume(taskDirectory: string): Promise<void> {
+    if (!this.#mayAcquire()) return Promise.reject(new Error('队列已暂停，解除暂停后才能开始新阶段'))
+    const existing = this.#running.get(taskDirectory)
+    if (existing) return existing
+    if (this.isTaskAcquisitionBlocked?.(taskDirectory)) return Promise.reject(new Error('任务正在删除'))
+    const taskController = new AbortController()
+    this.#taskControllers.set(taskDirectory, taskController)
+    let resolveResumed!: () => void
+    let rejectResumed!: (error: unknown) => void
+    const resumed = new Promise<void>((resolve, reject) => {
+      resolveResumed = resolve
+      rejectResumed = reject
+    })
+    const running = (async () => {
+      try {
+        const manifest = await this.store.load(taskDirectory)
+        this.#stopRequestedTaskIds.delete(manifest.taskId)
+        if (manifest.runtime.userPaused) {
+          const next = await this.store.resumePaused(taskDirectory)
+          this.#publishManifest(taskDirectory, next)
+        }
+        resolveResumed()
+        await this.#run(taskDirectory, taskController)
+      } catch (error) {
+        rejectResumed(error)
+        throw error
+      }
+    })().finally(() => {
+      this.#running.delete(taskDirectory)
+      this.#runningTaskIds.delete(taskDirectory)
+      if (this.#taskControllers.get(taskDirectory) === taskController) this.#taskControllers.delete(taskDirectory)
+    })
+    this.#running.set(taskDirectory, running)
+    void running.catch((error) => console.error('pipeline failed', error))
+    return resumed
   }
 
   async #run(taskDirectory: string, taskController: AbortController): Promise<void> {

@@ -26,6 +26,7 @@ interface PublicationJob {
   taskId: string
   draft: BilibiliPublicationDraft
   stopped: boolean
+  submissionObserved: boolean
   completion?: Promise<void>
 }
 
@@ -34,6 +35,8 @@ interface SidecarResult {
   loginInfo: BiliupLoginInfo
   refreshedLoginInfo?: BiliupLoginInfo
 }
+
+class PublicationCommitCancelled extends Error {}
 
 interface PublisherOptions {
   store: TaskStore
@@ -49,6 +52,7 @@ interface PublisherOptions {
   normalizeCover?(sourcePath: string, taskDirectory: string): Promise<string>
   onActiveChange?(active: boolean): void
   sleep?(milliseconds: number): Promise<void>
+  isTaskAcquisitionBlocked?(taskDirectory: string): boolean
 }
 
 export interface BilibiliReceipt {
@@ -99,6 +103,8 @@ export class BilibiliPublisher {
   readonly #startingDirectories = new Map<string, string | undefined>()
   readonly #startingTaskIds = new Set<string>()
   readonly #stopRequestedTaskIds = new Set<string>()
+  readonly #stoppingDirectories = new Set<string>()
+  readonly #stopOperationCounts = new Map<string, number>()
   readonly #sleep: (milliseconds: number) => Promise<void>
   #accepting = true
   #sidecarVerified = false
@@ -127,13 +133,12 @@ export class BilibiliPublisher {
   }
 
   get activeTaskCount(): number {
-    const knownTaskIds = new Set([
-      ...this.#startingTaskIds,
-      ...this.#active.keys(),
-      ...[...this.#startingDirectories.values()].filter((taskId): taskId is string => taskId !== undefined)
+    return new Set([
+      ...this.#startingDirectories.keys(),
+      ...[...this.#active.values()].map((job) => resolve(job.taskDirectory)),
+      ...this.#stopOperationCounts.keys()
     ])
-    const unresolvedDirectories = [...this.#startingDirectories.values()].filter((taskId) => taskId === undefined).length
-    return knownTaskIds.size + unresolvedDirectories
+      .size
   }
 
   freezeAcquisition(): void {
@@ -147,12 +152,32 @@ export class BilibiliPublisher {
   async stopAllNow(): Promise<void> {
     this.freezeAcquisition()
     const jobs = [...this.#active.values()]
+    const taskDirectories = new Set([
+      ...this.#startingDirectories.keys(),
+      ...jobs.map((job) => resolve(job.taskDirectory))
+    ])
     const taskIds = new Set([...this.#startingTaskIds, ...this.#active.keys()])
-    for (const taskId of taskIds) this.#stopRequestedTaskIds.add(taskId)
-    for (const job of jobs) job.stopped = true
-    await Promise.all([...taskIds].map((taskId) => this.options.runRegistry.stopTask(taskId)))
-    await Promise.allSettled(jobs.flatMap((job) => job.completion ? [job.completion] : []))
-    await Promise.all(jobs.map((job) => this.#markPausedAfterStop(job.taskDirectory)))
+    for (const taskDirectory of taskDirectories) this.#beginDirectoryStop(taskDirectory)
+    try {
+      for (const taskId of taskIds) this.#stopRequestedTaskIds.add(taskId)
+      for (const job of jobs) job.stopped = true
+      const stoppedTaskIds = [...taskIds]
+      const stopResults = await Promise.allSettled(stoppedTaskIds.map((taskId) => this.options.runRegistry.stopTask(taskId)))
+      const failedStops = new Set(stopResults.flatMap((result, index) => result.status === 'rejected' ? [stoppedTaskIds[index]!] : []))
+      const stateResults = await Promise.allSettled([...taskDirectories].map((taskDirectory) => {
+        const active = jobs.find((job) => resolve(job.taskDirectory) === taskDirectory)
+        return this.#markPausedAfterStop(
+          taskDirectory,
+          '已停止，可继续投稿',
+          Boolean(active && (active.submissionObserved || failedStops.has(active.taskId)))
+        )
+      }))
+      await Promise.allSettled(jobs.flatMap((job) => job.completion ? [job.completion] : []))
+      const failures = [...stopResults, ...stateResults].flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+      if (failures.length) throw new AggregateError(failures, 'B站投稿停止未完全收敛')
+    } finally {
+      for (const taskDirectory of taskDirectories) this.#endDirectoryStop(taskDirectory)
+    }
   }
 
   async whenIdle(): Promise<void> {
@@ -184,24 +209,25 @@ export class BilibiliPublisher {
       if (this.hasTask(manifest.taskId)) throw new Error('这个任务已经在投稿队列中')
       this.#startingTaskIds.add(manifest.taskId)
       reservedTaskId = manifest.taskId
-      this.#assertNotStopped(manifest.taskId)
+      this.#assertNotStopped(manifest.taskId, directoryKey)
       const draft = draftInput ?? manifest.publication.draft
       if (!draft) throw new Error('没有可继续的投稿草稿，请重新打开投稿弹窗')
       if (manifest.publication.status === 'submitted') throw new Error('这个任务已经确认投稿成功，不能重复投稿')
       if (manifest.publication.status === 'unknown') throw new Error('提交结果未知，请先在 B站创作中心确认，避免重复投稿')
       if ((await this.options.accountStore.account()).status !== 'connected') throw new Error('请先重新扫码连接 B站账号')
       await this.#preflight(taskDirectory, manifest, draft)
-      this.#assertNotStopped(manifest.taskId)
+      this.#assertNotStopped(manifest.taskId, directoryKey)
       const queued = await this.options.store.mutate(taskDirectory, (next) => {
+        this.#assertNotStopped(manifest.taskId, directoryKey)
         next.publication.draft = draft
         next.publication.status = 'queued'
         next.publication.phaseMessage = '正在启动投稿'
         next.publication.updatedAt = new Date().toISOString()
         delete next.publication.lastError
       })
-      this.#assertNotStopped(manifest.taskId)
+      this.#assertNotStopped(manifest.taskId, directoryKey)
       this.options.publishManifest(taskDirectory, queued)
-      const job: PublicationJob = { taskDirectory, taskId: manifest.taskId, draft, stopped: false }
+      const job: PublicationJob = { taskDirectory, taskId: manifest.taskId, draft, stopped: false, submissionObserved: false }
       this.#active.set(job.taskId, job)
       this.options.onActiveChange?.(true)
       const run = this.#runJob(job)
@@ -209,7 +235,7 @@ export class BilibiliPublisher {
         .finally(() => {
           if (this.#active.get(job.taskId) === job) {
             this.#active.delete(job.taskId)
-            this.#stopRequestedTaskIds.delete(job.taskId)
+            this.#maybeReleaseDirectoryStop(resolve(job.taskDirectory), job.taskId)
             this.options.onActiveChange?.(this.#active.size > 0)
           }
         })
@@ -220,48 +246,65 @@ export class BilibiliPublisher {
     } finally {
       if (reservedTaskId) {
         this.#startingTaskIds.delete(reservedTaskId)
-        if (!started && !this.#active.has(reservedTaskId) && this.#stopRequestedTaskIds.has(reservedTaskId)) {
-          await this.#markPausedAfterStop(taskDirectory)
-          this.#stopRequestedTaskIds.delete(reservedTaskId)
-        }
+        if (!started && !this.#active.has(reservedTaskId)) this.#stopRequestedTaskIds.delete(reservedTaskId)
       }
       this.#startingDirectories.delete(directoryKey)
+      this.#maybeReleaseDirectoryStop(directoryKey, reservedTaskId)
     }
   }
 
   async stop(taskDirectory: string): Promise<TaskManifest> {
     const directoryKey = resolve(taskDirectory)
-    const manifest = await this.options.store.load(taskDirectory)
-    this.#stopRequestedTaskIds.add(manifest.taskId)
-    const active = this.#active.get(manifest.taskId)
-    if (active) {
-      active.stopped = true
-      await this.options.runRegistry.stopTask(manifest.taskId)
+    this.#beginDirectoryStop(directoryKey)
+    let stoppedTaskId: string | undefined
+    try {
+      const manifest = await this.options.store.load(taskDirectory)
+      stoppedTaskId = manifest.taskId
+      this.#stopRequestedTaskIds.add(manifest.taskId)
+      const active = this.#active.get(manifest.taskId)
+      if (active) active.stopped = true
+      const [stopResult] = await Promise.allSettled([
+        active ? this.options.runRegistry.stopTask(manifest.taskId) : Promise.resolve()
+      ])
+      const [stateResult] = await Promise.allSettled([this.#markPausedAfterStop(
+        taskDirectory,
+        '已停止，可继续投稿',
+        Boolean(active && (active.submissionObserved || stopResult.status === 'rejected'))
+      )])
+      const failures = [stopResult, stateResult].flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+      if (failures.length) throw new AggregateError(failures, 'B站投稿停止未完全收敛')
+      if (stateResult.status === 'rejected') throw stateResult.reason
+      return stateResult.value
+    } finally {
+      this.#endDirectoryStop(directoryKey, stoppedTaskId)
     }
-    const paused = await this.#markPausedAfterStop(taskDirectory)
-    if (!this.hasTask(manifest.taskId) && !this.#startingDirectories.has(directoryKey)) {
-      this.#stopRequestedTaskIds.delete(manifest.taskId)
-    }
-    return paused
   }
 
   #reserveStartingDirectory(taskDirectory: string): string {
     if (!this.#accepting) throw new Error('Etch 正在退出，拒绝启动新的投稿')
     const directoryKey = resolve(taskDirectory)
+    if (this.options.isTaskAcquisitionBlocked?.(directoryKey)) throw new Error('任务正在删除')
+    if (this.#stoppingDirectories.has(directoryKey)) throw new Error('投稿已停止')
     if (this.#startingDirectories.has(directoryKey)) throw new Error('这个任务已经在投稿队列中')
     this.#startingDirectories.set(directoryKey, undefined)
     return directoryKey
   }
 
-  async #markPausedAfterStop(taskDirectory: string, pausedMessage = '已停止，可继续投稿'): Promise<TaskManifest> {
+  async #markPausedAfterStop(
+    taskDirectory: string,
+    pausedMessage = '已停止，可继续投稿',
+    outcomeUnknown = false
+  ): Promise<TaskManifest> {
     const paused = await this.options.store.mutate(taskDirectory, (draft) => {
-      if (draft.publication.status === 'submitted') return
-      if (draft.publication.status === 'submitting') {
+      if (draft.publication.status === 'submitted' || draft.publication.status === 'unknown') return
+      if (draft.publication.status === 'submitting' || outcomeUnknown) {
         draft.publication.status = 'unknown'
         draft.publication.phaseMessage = '提交阶段已停止，请先到 B站创作中心确认'
         draft.publication.lastError = {
           code: 'submission-outcome-unknown',
-          message: '投稿在提交阶段被停止，无法确认 B站是否已经受理',
+          message: outcomeUnknown
+            ? '无法确认投稿进程是否已经终止，请先到 B站创作中心确认'
+            : '投稿在提交阶段被停止，无法确认 B站是否已经受理',
           retryable: false
         }
       } else {
@@ -275,37 +318,64 @@ export class BilibiliPublisher {
   }
 
   async considerAuto(taskDirectory: string): Promise<void> {
-    const manifest = await this.options.store.load(taskDirectory)
-    if (manifest.kind !== 'subtitle') return
-    if (!manifest.publication.autoPublish || manifest.pipeline.stages.verify?.status !== 'completed') return
-    if (!['idle', 'waiting_config'].includes(manifest.publication.status) || this.hasTask(manifest.taskId)) return
-    const template = this.options.settings().bilibiliPublishTemplate
-    const account = await this.options.accountStore.account()
-    if (account.status !== 'connected' || !publicationTemplateReady(template)) {
-      if (manifest.publication.status === 'waiting_config') return
-      const waiting = await this.options.store.mutate(taskDirectory, (draft) => {
-        draft.publication.status = 'waiting_config'
-        draft.publication.phaseMessage = account.status !== 'connected' ? '等待连接 B站账号' : '等待补全自动投稿模板'
-        draft.publication.updatedAt = new Date().toISOString()
+    const directoryKey = this.#reserveStartingDirectory(taskDirectory)
+    return this.#considerAutoReserved(taskDirectory, directoryKey)
+  }
+
+  async #considerAutoReserved(taskDirectory: string, directoryKey: string): Promise<void> {
+    let handedOff = false
+    let observedTaskId: string | undefined
+    let completedNormally = false
+    try {
+      const manifest = await this.options.store.load(taskDirectory)
+      observedTaskId = manifest.taskId
+      this.#assertNotStopped(manifest.taskId, directoryKey)
+      if (manifest.kind !== 'subtitle') return
+      if (!manifest.publication.autoPublish || manifest.pipeline.stages.verify?.status !== 'completed') return
+      if (!['idle', 'waiting_config'].includes(manifest.publication.status) || this.hasTask(manifest.taskId)) return
+      const template = this.options.settings().bilibiliPublishTemplate
+      const account = await this.options.accountStore.account()
+      this.#assertNotStopped(manifest.taskId, directoryKey)
+      if (account.status !== 'connected' || !publicationTemplateReady(template)) {
+        if (manifest.publication.status === 'waiting_config') return
+        const waiting = await this.options.store.mutate(taskDirectory, (draft) => {
+          this.#assertNotStopped(manifest.taskId, directoryKey)
+          draft.publication.status = 'waiting_config'
+          draft.publication.phaseMessage = account.status !== 'connected' ? '等待连接 B站账号' : '等待补全自动投稿模板'
+          draft.publication.updatedAt = new Date().toISOString()
+        })
+        this.options.publishManifest(taskDirectory, waiting)
+        return
+      }
+      const final = manifest.artifacts.final
+      if (!final?.valid) return
+      this.#assertNotStopped(manifest.taskId, directoryKey)
+      const sourceUrl = manifest.input.kind === 'url' ? manifest.input.url : ''
+      const draft = BilibiliPublicationDraftSchema.parse({
+        title: truncateBilibiliTitle(manifest.title),
+        tid: template.tid,
+        partitionName: template.partitionName,
+        tags: template.tags,
+        description: renderBilibiliDescription(template.descriptionTemplate, manifest.title, sourceUrl),
+        copyright: manifest.input.kind === 'url' ? 'repost' : 'original',
+        source: sourceUrl,
+        coverRelativePath: manifest.artifacts.thumbnail?.valid ? manifest.artifacts.thumbnail.relativePath : undefined,
+        finalSha256: final.sha256
       })
-      this.options.publishManifest(taskDirectory, waiting)
-      return
+      handedOff = true
+      await this.#startReserved(taskDirectory, directoryKey, draft)
+      completedNormally = true
+    } finally {
+      if (!handedOff) {
+        try {
+          this.#startingDirectories.delete(directoryKey)
+        } finally {
+          this.#maybeReleaseDirectoryStop(directoryKey, observedTaskId)
+        }
+      } else if (!completedNormally) {
+        this.#maybeReleaseDirectoryStop(directoryKey, observedTaskId)
+      }
     }
-    const final = manifest.artifacts.final
-    if (!final?.valid) return
-    const sourceUrl = manifest.input.kind === 'url' ? manifest.input.url : ''
-    const draft = BilibiliPublicationDraftSchema.parse({
-      title: truncateBilibiliTitle(manifest.title),
-      tid: template.tid,
-      partitionName: template.partitionName,
-      tags: template.tags,
-      description: renderBilibiliDescription(template.descriptionTemplate, manifest.title, sourceUrl),
-      copyright: manifest.input.kind === 'url' ? 'repost' : 'original',
-      source: sourceUrl,
-      coverRelativePath: manifest.artifacts.thumbnail?.valid ? manifest.artifacts.thumbnail.relativePath : undefined,
-      finalSha256: final.sha256
-    })
-    await this.start(taskDirectory, draft)
   }
 
   async #runJob(job: PublicationJob): Promise<void> {
@@ -313,74 +383,68 @@ export class BilibiliPublisher {
     try {
       await this.#verifySidecar()
       if (job.draft.coverRelativePath && this.options.normalizeCover) {
-        const preparing = await this.options.store.mutate(job.taskDirectory, (draft) => {
+        if (!await this.#mutateActiveJob(job, (draft) => {
           draft.publication.phaseMessage = '正在准备投稿封面'
           draft.publication.updatedAt = new Date().toISOString()
-        })
-        this.options.publishManifest(job.taskDirectory, preparing)
+        })) return
         const sourcePath = this.#containedPath(job.taskDirectory, job.draft.coverRelativePath, '封面')
         job.draft = BilibiliPublicationDraftSchema.parse({
           ...job.draft,
           coverRelativePath: await this.options.normalizeCover(sourcePath, job.taskDirectory)
         })
-        const normalized = await this.options.store.mutate(job.taskDirectory, (draft) => {
+        if (!await this.#mutateActiveJob(job, (draft) => {
           draft.publication.draft = job.draft
           draft.publication.updatedAt = new Date().toISOString()
-        })
-        this.options.publishManifest(job.taskDirectory, normalized)
+        })) return
       }
       const current = await this.options.store.load(job.taskDirectory)
       await this.#preflight(job.taskDirectory, current, job.draft)
       for (let retry = 0; retry < 3; retry += 1) {
-        if (job.stopped) return
-        const running = await this.options.store.mutate(job.taskDirectory, (draft) => {
+        if (this.#jobStopped(job)) return
+        if (!await this.#mutateActiveJob(job, (draft) => {
           draft.publication.status = 'uploading'
           draft.publication.attempt += 1
           draft.publication.phaseMessage = retry ? `网络异常，正在进行第 ${retry + 1} 次尝试` : '正在上传成片'
           draft.publication.updatedAt = new Date().toISOString()
           delete draft.publication.lastError
-        })
-        this.options.publishManifest(job.taskDirectory, running)
+        })) return
         submitting = false
         const sidecar = await this.#runSidecar(job, async () => {
-          if (submitting) return
+          if (submitting || this.#jobStopped(job)) return
           submitting = true
-          const next = await this.options.store.mutate(job.taskDirectory, (draft) => {
+          await this.#mutateActiveJob(job, (draft) => {
             draft.publication.status = 'submitting'
             draft.publication.phaseMessage = '成片已上传，正在提交稿件'
             draft.publication.updatedAt = new Date().toISOString()
           })
-          this.options.publishManifest(job.taskDirectory, next)
         })
         const result = sidecar.result
-        if (job.stopped) return
+        if (this.#jobStopped(job)) return
         const output = `${result.stdout}\n${result.stderr}`
         const receipt = parseBiliupReceipt(output)
         if (receipt) {
           await this.#saveRefreshedLogin(sidecar)
-          const submitted = await this.options.store.mutate(job.taskDirectory, (draft) => {
+          if (!await this.#mutateActiveJob(job, (draft) => {
             draft.publication.status = 'submitted'
             draft.publication.receipt = receipt
             draft.publication.phaseMessage = '已提交，审核状态请在 B站创作中心查看'
             draft.publication.submittedAt = new Date().toISOString()
             draft.publication.updatedAt = draft.publication.submittedAt
             delete draft.publication.lastError
-          })
-          this.options.publishManifest(job.taskDirectory, submitted)
+          })) return
           return
         }
         if (submitting || (result.exitCode === 0 && !result.cancelled && !result.timedOut)) {
           await this.#saveRefreshedLogin(sidecar)
-          await this.#markUnknown(job.taskDirectory, 'biliup 已进入提交阶段，但 Etch 没有取得可验证回执')
+          await this.#markUnknown(job, 'biliup 已进入提交阶段，但 Etch 没有取得可验证回执')
           return
         }
         if (result.cancelled) {
-          const paused = await this.options.store.mutate(job.taskDirectory, (draft) => {
+          await this.#mutateActiveJob(job, (draft) => {
             draft.publication.status = 'paused'
             draft.publication.phaseMessage = '投稿进程已停止，可继续投稿'
             draft.publication.updatedAt = new Date().toISOString()
           })
-          this.options.publishManifest(job.taskDirectory, paused)
           return
         }
         const failure = result.timedOut
@@ -389,18 +453,18 @@ export class BilibiliPublisher {
         if (failure.code === 'auth-expired') await this.options.accountStore.markExpiredIfCurrent(sidecar.loginInfo, failure.message)
         else await this.#saveRefreshedLogin(sidecar)
         if (!failure.retryable || retry === 2) {
-          await this.#markFailed(job.taskDirectory, failure)
+          await this.#markFailed(job, failure)
           return
         }
         await this.#sleep(1_000 * (2 ** retry))
       }
     } catch (error) {
-      if (job.stopped) return
+      if (this.#jobStopped(job)) return
       if (submitting) {
-        await this.#markUnknown(job.taskDirectory, error instanceof Error ? error.message : '提交阶段异常中断')
+        await this.#markUnknown(job, error instanceof Error ? error.message : '提交阶段异常中断')
         return
       }
-      await this.#markFailed(job.taskDirectory, {
+      await this.#markFailed(job, {
         code: 'preflight-or-run-failed',
         message: error instanceof Error ? error.message : '投稿启动失败',
         retryable: false
@@ -436,6 +500,7 @@ export class BilibiliPublisher {
     const observe = (chunk: string): void => {
       if (observedUpload || !/Upload completed:/u.test(chunk)) return
       observedUpload = true
+      job.submissionObserved = true
       phaseTransition = onUploaded()
     }
     const runId = randomUUID()
@@ -452,7 +517,7 @@ export class BilibiliPublisher {
         onStdout: observe,
         onStderr: observe
       }
-      this.#assertNotStopped(job.taskId)
+      this.#assertNotStopped(job.taskId, resolve(job.taskDirectory))
       const result = this.options.runExternal
         ? await this.options.runExternal(spec)
         : await runProcess(spec, {
@@ -514,28 +579,68 @@ export class BilibiliPublisher {
     this.#sidecarVerified = true
   }
 
-  #assertNotStopped(taskId: string): void {
-    if (this.#stopRequestedTaskIds.has(taskId)) throw new Error('投稿已停止')
+  #assertNotStopped(taskId: string, directoryKey: string): void {
+    if (this.#stopRequestedTaskIds.has(taskId) || this.#stoppingDirectories.has(directoryKey)) throw new Error('投稿已停止')
   }
 
-  async #markFailed(taskDirectory: string, failure: { code: string; message: string; retryable: boolean }): Promise<void> {
-    const manifest = await this.options.store.mutate(taskDirectory, (draft) => {
+  #beginDirectoryStop(directoryKey: string): void {
+    this.#stoppingDirectories.add(directoryKey)
+    this.#stopOperationCounts.set(directoryKey, (this.#stopOperationCounts.get(directoryKey) ?? 0) + 1)
+  }
+
+  #endDirectoryStop(directoryKey: string, taskId?: string): void {
+    const remaining = (this.#stopOperationCounts.get(directoryKey) ?? 1) - 1
+    if (remaining > 0) this.#stopOperationCounts.set(directoryKey, remaining)
+    else this.#stopOperationCounts.delete(directoryKey)
+    this.#maybeReleaseDirectoryStop(directoryKey, taskId)
+  }
+
+  #maybeReleaseDirectoryStop(directoryKey: string, taskId?: string): void {
+    if ((this.#stopOperationCounts.get(directoryKey) ?? 0) > 0) return
+    if (this.#startingDirectories.has(directoryKey)) return
+    if ([...this.#active.values()].some((job) => resolve(job.taskDirectory) === directoryKey)) return
+    this.#stoppingDirectories.delete(directoryKey)
+    if (taskId && !this.hasTask(taskId)) this.#stopRequestedTaskIds.delete(taskId)
+  }
+
+  #jobStopped(job: PublicationJob): boolean {
+    return job.stopped
+      || this.#stopRequestedTaskIds.has(job.taskId)
+      || this.#stoppingDirectories.has(resolve(job.taskDirectory))
+      || this.#active.get(job.taskId) !== job
+  }
+
+  async #mutateActiveJob(job: PublicationJob, change: (manifest: TaskManifest) => void): Promise<TaskManifest | undefined> {
+    if (this.#jobStopped(job)) return undefined
+    try {
+      const manifest = await this.options.store.mutate(job.taskDirectory, (draft) => {
+        if (this.#jobStopped(job)) throw new PublicationCommitCancelled()
+        change(draft)
+      })
+      this.options.publishManifest(job.taskDirectory, manifest)
+      return manifest
+    } catch (error) {
+      if (error instanceof PublicationCommitCancelled) return undefined
+      throw error
+    }
+  }
+
+  async #markFailed(job: PublicationJob, failure: { code: string; message: string; retryable: boolean }): Promise<void> {
+    await this.#mutateActiveJob(job, (draft) => {
       draft.publication.status = 'failed'
       draft.publication.lastError = { ...failure, message: failure.message.slice(0, 500) }
       draft.publication.phaseMessage = '投稿失败，可继续投稿'
       draft.publication.updatedAt = new Date().toISOString()
     })
-    this.options.publishManifest(taskDirectory, manifest)
   }
 
-  async #markUnknown(taskDirectory: string, message: string): Promise<void> {
-    const manifest = await this.options.store.mutate(taskDirectory, (draft) => {
+  async #markUnknown(job: PublicationJob, message: string): Promise<void> {
+    await this.#mutateActiveJob(job, (draft) => {
       draft.publication.status = 'unknown'
       draft.publication.lastError = { code: 'submission-outcome-unknown', message: message.slice(0, 500), retryable: false }
       draft.publication.phaseMessage = '提交结果未知，请先到 B站创作中心确认'
       draft.publication.updatedAt = new Date().toISOString()
     })
-    this.options.publishManifest(taskDirectory, manifest)
   }
 
   #containedPath(taskDirectory: string, relativePath: string, label: string): string {

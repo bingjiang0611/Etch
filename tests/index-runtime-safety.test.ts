@@ -65,4 +65,28 @@ describe('main runtime safety wiring', () => {
     expect(source).toContain('await pipeline.stop(indexed.location)')
     expect(source).toContain('await pipeline.resume(indexed.location)')
   })
+
+  it('linearizes task deletion before every pipeline and publication acquisition path', () => {
+    const deletionHandler = source.slice(
+      source.indexOf("ipcMain.handle('task:delete'"),
+      source.indexOf("ipcMain.handle('task:set-category'")
+    )
+    const continueHandler = source.slice(
+      source.indexOf("ipcMain.handle('bilibili:continue'"),
+      source.indexOf("ipcMain.handle('bilibili:open-creator-center'")
+    )
+
+    expect(source).toContain('const taskAcquisitionGuard = new TaskAcquisitionGuard()')
+    expect(source).toContain('isTaskAcquisitionBlocked: taskAcquisitionBlocked')
+    expect(deletionHandler.indexOf('taskAcquisitionGuard.block(indexedBeforeDelete.location)')).toBeGreaterThan(-1)
+    expect(deletionHandler.indexOf('taskAcquisitionGuard.block(indexedBeforeDelete.location)'))
+      .toBeLessThan(deletionHandler.indexOf('await removeTaskRecord'))
+    expect(deletionHandler).toContain('let deleted = false')
+    expect(deletionHandler).toContain('deleted = true')
+    expect(deletionHandler).toContain('if (!deleted)')
+    expect(deletionHandler.indexOf('if (!deleted)'))
+      .toBeLessThan(deletionHandler.indexOf('taskAcquisitionGuard.unblock(indexedBeforeDelete.location)'))
+    expect(continueHandler).toContain("if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')")
+    expect(source).toContain("task.kind !== 'subtitle' || deletingTaskIds.has(task.taskId)")
+  })
 })

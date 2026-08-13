@@ -96,4 +96,49 @@ describe('TaskPipeline unbounded cross-task concurrency', () => {
     await Promise.all(runs)
     expect(pipeline.activeStageCount).toBe(0)
   })
+
+  it('blocks only a task owned by deletion without reducing other-task concurrency', async () => {
+    const store = new TaskStore()
+    const [blockedDirectory, ...allowedDirectories] = await Promise.all(
+      Array.from({ length: 5 }, () => createDownloadTask(store))
+    )
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const started = new Set<string>()
+    runProcessMock.mockImplementation(async (spec: { command: string; args: string[]; cwd: string }) => {
+      if (spec.args.at(-1) === 'source.normalized.mp4') {
+        await writeFile(join(spec.cwd, 'source.normalized.mp4'), 'normalized video')
+        return result()
+      }
+      if (spec.command !== '/mock/yt-dlp') return result('1.0')
+      if (!spec.cwd.includes('subtitle-fallback')) {
+        started.add(spec.cwd)
+        await gate
+      }
+      await writeFile(join(spec.cwd, 'source.mp4'), 'downloaded video')
+      await writeFile(join(spec.cwd, 'source.info.json'), JSON.stringify({ id: 'video', title: 'Video', duration: 60 }))
+      return result()
+    })
+    const pipeline = new TaskPipeline(
+      store,
+      defaultSettings('/Users/test'),
+      new HistoricalGlossaryService(store, () => []),
+      () => undefined,
+      { register: async () => undefined, finish: async () => undefined } as unknown as RunRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (directory) => directory === blockedDirectory
+    )
+
+    await expect(pipeline.start(blockedDirectory)).rejects.toThrow('任务正在删除')
+    await expect(pipeline.resume(blockedDirectory)).rejects.toThrow('任务正在删除')
+    const runs = allowedDirectories.map((directory) => pipeline.start(directory))
+    await waitFor(() => started.size === 4)
+    expect(pipeline.activeStageCount).toBe(4)
+    release()
+    await Promise.all(runs)
+  })
 })

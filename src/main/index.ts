@@ -47,6 +47,7 @@ import { BilibiliAuthService } from './bilibili-auth'
 import { BilibiliPublisher } from './bilibili-publisher'
 import { BilibiliAccountStore } from './storage/bilibili-account-store'
 import { writeAtomic } from './storage/atomic-write'
+import { TaskAcquisitionGuard } from './task-acquisition-guard'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
@@ -78,6 +79,7 @@ let runtimeDiagnostics: RuntimeDiagnostics = {
 }
 const taskStore = new TaskStore()
 const deletingTaskIds = new Set<string>()
+const taskAcquisitionGuard = new TaskAcquisitionGuard()
 const creatingCompanionRootIds = new Set<string>()
 const videoFullscreenWindowIds = new Set<number>()
 const taskThumbnails = new TaskThumbnailService()
@@ -583,13 +585,14 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   }
   let pipelineWorkerCount = 0
   const syncPowerWorkers = (): void => powerManager.setActiveWorkers(pipelineWorkerCount + (publisherActive ? 1 : 0))
+  const taskAcquisitionBlocked = (taskDirectory: string): boolean => taskAcquisitionGuard.isBlocked(taskDirectory)
   const pipeline = new TaskPipeline(taskStore, settings, historicalGlossary, publishManifest, runRegistry, (count) => {
     pipelineWorkerCount = count
     syncPowerWorkers()
   }, (health) => {
     if (!mainWindow || mainWindow.isDestroyed()) return
     mainWindow.webContents.send('tools:health-changed', ToolHealthSnapshotSchema.parse(health))
-  }, undefined, (url) => session.defaultSession.resolveProxy(url), decodePng)
+  }, undefined, (url) => session.defaultSession.resolveProxy(url), decodePng, taskAcquisitionBlocked)
   activePipeline = pipeline
   const sidecarPath = app.isPackaged
     ? join(process.resourcesPath, 'biliup', 'biliup')
@@ -620,7 +623,8 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     onActiveChange: (active) => {
       publisherActive = active
       syncPowerWorkers()
-    }
+    },
+    isTaskAcquisitionBlocked: taskAcquisitionBlocked
   })
   activeBilibiliPublisher = publisher
   await publisher.initialize(discovery.tasks.map((task) => task.location))
@@ -637,7 +641,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   const startPendingPublications = (): void => {
     if (recoveryHold) return
     for (const task of indexStore!.all()) {
-      if (task.kind !== 'subtitle') continue
+      if (task.kind !== 'subtitle' || deletingTaskIds.has(task.taskId)) continue
       void publisher!.considerAuto(task.location).catch((error) => console.error('B站自动投稿排队失败', { taskId: task.taskId, error }))
     }
   }
@@ -828,7 +832,10 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
     const { taskId, mode } = DeleteTaskPayloadSchema.parse(raw)
     if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexedBeforeDelete = indexStore!.get(taskId)
+    if (!indexedBeforeDelete) throw new Error('任务不存在')
     deletingTaskIds.add(taskId)
+    taskAcquisitionGuard.block(indexedBeforeDelete.location)
+    let deleted = false
     try {
       const baseOptions = {
         taskId,
@@ -849,6 +856,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
         trashItem: (taskDirectory) => trashTaskDirectory(taskDirectory, support),
         protectedPaths: [app.getPath('home'), support]
       })
+      deleted = true
       taskThumbnails.forget(taskId)
       summaries.forget(taskId)
       taskNotifier.forget(taskId)
@@ -856,7 +864,10 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
       await historicalGlossary.sync().catch((error) => console.error('global glossary delete reconciliation failed', error))
       return queuePage()
     } finally {
-      deletingTaskIds.delete(taskId)
+      if (!deleted) {
+        deletingTaskIds.delete(taskId)
+        taskAcquisitionGuard.unblock(indexedBeforeDelete.location)
+      }
     }
   })
   ipcMain.handle('task:set-category', async (_event, raw) => {
@@ -1095,6 +1106,7 @@ if (hasSingleInstanceLock) void app.whenReady().then(async () => {
   ipcMain.handle('bilibili:continue', async (_event, raw) => {
     assertRecoveryReleased()
     const { taskId } = TaskIdPayloadSchema.parse(raw)
+    if (deletingTaskIds.has(taskId)) throw new Error('任务正在删除')
     const indexed = indexStore!.get(taskId)
     if (!indexed) throw new Error('任务不存在')
     if (indexed.kind !== 'subtitle') throw new Error('只有硬字幕视频可以投稿 B站')
