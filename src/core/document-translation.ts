@@ -418,7 +418,7 @@ function glossaryTargetAppears(value: string, target: string): boolean {
 export function auditDocumentTranslationDeterministically(
   sourceBlocks: readonly MarkdownBlock[],
   translatedBlocks: readonly MarkdownBlock[],
-  glossary: readonly Pick<DocumentGlossaryEntry, 'source' | 'target'>[] = []
+  glossary: readonly DocumentGlossaryEntry[] = []
 ): DocumentTranslationAuditIssue[] {
   const translatedById = new Map(translatedBlocks.map((block) => [block.id, block.markdown]))
   const issues: DocumentTranslationAuditIssue[] = []
@@ -429,6 +429,7 @@ export function auditDocumentTranslationDeterministically(
     const translatedInline = markdownInlineCodeRanges(translated).map((range) => range.value).sort()
     if (JSON.stringify(sourceInline) !== JSON.stringify(translatedInline)) issues.push({ blockId: source.id, code: 'inline-code', detail: '行内代码发生变化' })
     for (const entry of glossary) {
+      if (entry.authority !== 'global' && entry.authority !== 'task') continue
       if (termAppears(source.markdown, entry.source) && !glossaryTargetAppears(translated, entry.target)) {
         issues.push({ blockId: source.id, code: 'glossary', detail: `术语 ${entry.source} 未使用冻结译法 ${entry.target}` })
       }

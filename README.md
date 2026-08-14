@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.40/Etch-0.2.40-arm64.dmg"><strong>下载公开版 v0.2.40 DMG</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.41/Etch-0.2.41-arm64.dmg"><strong>下载公开版 v0.2.41 DMG</strong></a>
   ·
   <a href="#第一次使用">第一次使用</a>
   ·
@@ -21,7 +21,7 @@
 </p>
 
 > [!IMPORTANT]
-> 当前公开版 `v0.2.40` 包含双语硬字幕、视频总结和网页翻译三类任务。
+> 当前公开版 `v0.2.41` 包含双语硬字幕、视频总结和网页翻译三类任务。
 
 ## 先看真实工作台
 
@@ -44,7 +44,7 @@ Etch 不是一个只返回聊天文本的翻译入口。它把输入、Agent 调
 </p>
 
 <p align="center">
-  <sub>当前 v0.2.40 的真实新建任务界面；使用隔离的工具与 URL fixture，不访问外部网络。</sub>
+  <sub>当前 v0.2.41 的真实新建任务界面；使用隔离的工具与 URL fixture，不访问外部网络。</sub>
 </p>
 
 ## 三条工作流，一个恢复模型
@@ -90,7 +90,7 @@ X 首版支持单条帖子与 X Article 的正文、作者和静态图片；线�
 
 ### 1. 安装
 
-1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/tag/v0.2.40) 下载 `Etch-0.2.40-arm64.dmg`。
+1. 从 [GitHub Releases](https://github.com/bingjiang0611/Etch/releases/tag/v0.2.41) 下载 `Etch-0.2.41-arm64.dmg`。
 2. 打开 DMG，把 `Etch.app` 拖入 `Applications`。
 3. 首次启动若被 Gatekeeper 拦截，在 Finder 中右键 Etch 选择“打开”；仍被拦截时，到“系统设置 → 隐私与安全性”选择“仍要打开”。
 
@@ -130,7 +130,7 @@ Etch 启动后会检测可执行文件、版本、关键能力和登录状态。
   <sub>真实投稿确认界面，使用隔离测试数据；尚未用真实 B站账号完成 L3 投稿验证。</sub>
 </p>
 
-公开 `v0.2.40` 已包含 B站投稿。字幕成片验证完成后，可以在本机直接投稿；先在“设置 → B站投稿”扫码登录并填写默认分区、标签和简介模板，再选择自动投稿或在工作台手动确认。
+公开 `v0.2.41` 已包含 B站投稿。字幕成片验证完成后，可以在本机直接投稿；先在“设置 → B站投稿”扫码登录并填写默认分区、标签和简介模板，再选择自动投稿或在工作台手动确认。
 
 凭证通过 Electron `safeStorage` 加密；上传结果没有可验证回执时，Etch 会标记为“结果未知”，要求先到 B站创作中心确认，避免重复投稿。V1 支持单账号下的多任务并行投稿，不支持定时、多账号、审核轮询或稿件管理。
 
@@ -142,7 +142,7 @@ Etch 启动后会检测可执行文件、版本、关键能力和登录状态。
 | Implemented | 网页 / X 到 Markdown 与 HTML | 普通网页、单条 X status 与 X Article；静态图片本地化、normal/refined 可恢复翻译、双栏校对、结构验证、Markdown 导出与离线单文件 HTML。完整线程、引用帖、投票和 X 视频未展开。 |
 | Implemented | 可恢复任务与分类 | `task.json` 权威状态、durable run registry、lease + revision/fingerprint 提交；分类不改变任务执行状态。 |
 | Partial | 带证据的视频总结与配图 | research ledger、三稿评分融合、配图 checkpoint 和导出已有自动化覆盖；真实视频与真实 Provider 的完整 L3 尚未验证。 |
-| Implemented | B站直连投稿 | 当前源码已实现扫码登录、手动 / 自动投稿、多任务并行与回执状态；公开 `v0.2.40` 已包含该投稿流程，真实账号 L3 尚未验证。 |
+| Implemented | B站直连投稿 | 当前源码已实现扫码登录、手动 / 自动投稿、多任务并行与回执状态；公开 `v0.2.41` 已包含该投稿流程，真实账号 L3 尚未验证。 |
 | Partial | Provider、长媒体与公开发行 | 四端协议有自动化覆盖，但真实账号 / 服务端需当机验证；尚无全局磁盘预算、Developer ID、公证或自动更新。 |
 | Planned | 本地文件导入 | Schema 已预留；UI、APFS clone/copy、空间检查与恢复链路尚未实现。 |
 
@@ -175,7 +175,7 @@ npm run pack
 npm run dist:mac
 ```
 
-`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.2.40-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限与 SHA-256。
+`npm run pack` 构建并验证 `dist/mac-arm64/Etch.app`；`npm run dist:mac` 构建、挂载并验证 `dist/Etch-0.2.41-arm64.dmg`。DMG 验证覆盖卷内 allowlist、App 签名、entitlements、arm64 架构、版本、最低系统版本，以及固定版 `biliup` sidecar 的架构、版本、执行权限与 SHA-256。
 
 <details>
 <summary><strong>验证层级</strong></summary>

@@ -207,10 +207,21 @@ describe('文档 block 翻译', () => {
   it('确定性审计术语和 inline code，但不比较数字日期单位', () => {
     const source = createMarkdownBlocks([{ type: 'paragraph', markdown: 'Agent ran `npm test` on 2026-08-09 in 12ms.' }])
     const translated = createMarkdownBlocks([{ type: 'paragraph', markdown: '代理在 2026-08-10 用 13ms 运行了 `npm run test`。' }])
-    expect(auditDocumentTranslationDeterministically(source, translated, [{ source: 'Agent', target: '智能体' }]).map((issue) => issue.code)).toEqual([
+    expect(auditDocumentTranslationDeterministically(source, translated, [{ source: 'Agent', target: '智能体', authority: 'global' }]).map((issue) => issue.code)).toEqual([
       'inline-code',
       'glossary'
     ])
+  })
+
+  it('确定性审计只强制显式权威术语，不强制 analysis 建议', () => {
+    const source = createMarkdownBlocks([{ type: 'paragraph', markdown: 'in the old model' }])
+    const translated = createMarkdownBlocks([{ type: 'paragraph', markdown: '在旧模式中' }])
+    expect(auditDocumentTranslationDeterministically(source, translated, [
+      { source: 'model', target: '模型', authority: 'analysis' }
+    ])).toEqual([])
+    expect(auditDocumentTranslationDeterministically(source, translated, [
+      { source: 'model', target: '模型', authority: 'global' }
+    ]).map((issue) => issue.code)).toEqual(['glossary'])
   })
 
   it('数字、日期和单位变化不进入确定性审计', () => {
@@ -255,11 +266,11 @@ describe('文档 block 翻译', () => {
       { type: 'table', markdown: '<table><tbody><tr><td>缺少 &quot;Use when…&quot; 激活行（建议保留原文加注）</td><td><strong>95%</strong></td></tr></tbody></table>' }
     ])
     expect(auditDocumentTranslationDeterministically(source, translated, [
-      { source: 'description', target: 'description 字段（技能的描述/路由字段）' },
-      { source: 'skill', target: '技能（Agent Skills 规范中的可加载单元）' },
-      { source: 'SKILL.md', target: 'SKILL.md（技能入口文件，不翻译）' },
-      { source: 'tripwire', target: 'Tripwire（项目名，不翻译）' },
-      { source: 'Use when…', target: '"Use when…" 激活行（建议保留原文加注）' }
+      { source: 'description', target: 'description 字段（技能的描述/路由字段）', authority: 'global' },
+      { source: 'skill', target: '技能（Agent Skills 规范中的可加载单元）', authority: 'global' },
+      { source: 'SKILL.md', target: 'SKILL.md（技能入口文件，不翻译）', authority: 'global' },
+      { source: 'tripwire', target: 'Tripwire（项目名，不翻译）', authority: 'global' },
+      { source: 'Use when…', target: '"Use when…" 激活行（建议保留原文加注）', authority: 'global' }
     ])).toEqual([])
   })
 })

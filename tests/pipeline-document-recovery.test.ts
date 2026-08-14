@@ -96,7 +96,7 @@ function providerSessionFromArgs(args: readonly string[]): string {
 }
 
 describe('document translation recovery', () => {
-  async function translationTask(markdown: string) {
+  async function translationTask(markdown: string, globalGlossary: Record<string, string> = {}) {
     const directory = await mkdtemp(join(tmpdir(), 'etch-document-boundary-'))
     directories.push(directory)
     const store = new TaskStore()
@@ -134,12 +134,14 @@ describe('document translation recovery', () => {
     manifest.document.blockCount = 1
     manifest.artifacts.sourceDocument = await artifact(directory, 'source-document.json')
     await store.create(directory, manifest)
+    const settings = defaultSettings('/Users/test')
+    settings.globalGlossary = globalGlossary
     return {
       directory,
       store,
       pipeline: new TaskPipeline(
         store,
-        defaultSettings('/Users/test'),
+        settings,
         new HistoricalGlossaryService(store, () => []),
         () => undefined
       )
@@ -309,13 +311,12 @@ describe('document translation recovery', () => {
   })
 
   it('keeps residual deterministic audit issues as hard failures', async () => {
-    const task = await translationTask('Agent is stable.')
+    const task = await translationTask('Agent is stable.', { Agent: '智能体' })
     runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
       const sessionId = providerSessionFromArgs(spec.args)
       if (spec.stdin.includes('document-analysis-blocks')) {
         return providerResult(JSON.stringify({
-          contentType: 'article', tone: 'technical', audience: 'developers',
-          glossary: [{ source: 'Agent', target: '智能体' }], risks: []
+          contentType: 'article', tone: 'technical', audience: 'developers', glossary: [], risks: []
         }), sessionId)
       }
       const blocks = sectionData(spec.stdin, 'document-blocks')
@@ -331,6 +332,37 @@ describe('document translation recovery', () => {
     expect(completed.document.translationBatches).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'audit-repair:document-001', status: 'stale', attempt: 1 })
     ]))
+  })
+
+  it('keeps analysis glossary in the prompt without making it a hard audit rule', async () => {
+    const task = await translationTask('in the old model')
+    let sawAnalysisGlossary = false
+    runProcessMock.mockImplementation(async (spec: { args: string[]; stdin: string }) => {
+      const sessionId = providerSessionFromArgs(spec.args)
+      if (spec.stdin.includes('document-analysis-blocks')) {
+        return providerResult(JSON.stringify({
+          contentType: 'article', tone: 'technical', audience: 'developers',
+          glossary: [{ source: 'model', target: '模型' }], risks: []
+        }), sessionId)
+      }
+      sawAnalysisGlossary ||= spec.stdin.includes('document-glossary')
+        && spec.stdin.includes('"source":"model"')
+        && spec.stdin.includes('"target":"模型"')
+      const blocks = sectionData(spec.stdin, 'document-blocks')
+      return providerResult(JSON.stringify({
+        blocks: blocks.map((block) => ({ id: block.id, markdown: '在旧模式中' }))
+      }), sessionId)
+    })
+
+    await task.pipeline.start(task.directory)
+
+    const completed = await task.store.load(task.directory)
+    expect(sawAnalysisGlossary).toBe(true)
+    expect(completed.pipeline.stages.translate.status).toBe('completed')
+    expect(completed.pipeline.stages.review.status).toBe('checkpoint')
+    expect(completed.document.translationBatches).toEqual([
+      expect.objectContaining({ id: 'draft:document-001', status: 'verified', attempt: 1 })
+    ])
   })
 
   it('reuses a previously verified draft after a deterministic-only failure without another Provider call', async () => {
