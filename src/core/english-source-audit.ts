@@ -1,10 +1,9 @@
 import { z } from 'zod'
 import { guardedPrompt, untrustedJsonSection } from './prompt-boundary'
-import { VALIDATION_FAILURE_PROMPT_LIMIT } from './schema-contract'
+import { VALIDATION_FAILURE_PROMPT_LIMIT, extractJsonObject } from './schema-contract'
 
 export const ENGLISH_SOURCE_AUDIT_MAIN_CUE_COUNT = 220
 export const ENGLISH_SOURCE_AUDIT_CONTEXT_RADIUS = 2
-export const ENGLISH_SOURCE_AUDIT_MAX_PATCHES = 24
 
 export interface EnglishSourceAuditCue {
   id: number
@@ -37,12 +36,23 @@ export const EnglishSourceAuditPatchSchema = z.object({
   confidence: z.enum(['high', 'ambiguous'])
 }).strict()
 
+export const EnglishSourceAuditRejectionSchema = z.object({
+  index: z.number().int().nonnegative(),
+  cueId: z.number().int().optional(),
+  reason: z.string().min(1)
+}).strict()
+
 export const EnglishSourceAuditResultSchema = z.object({
-  patches: z.array(EnglishSourceAuditPatchSchema)
+  patches: z.array(EnglishSourceAuditPatchSchema),
+  rejections: z.array(EnglishSourceAuditRejectionSchema).optional()
+}).strict()
+
+const EnglishSourceAuditEnvelopeSchema = z.object({
+  patches: z.array(z.unknown())
 }).strict()
 
 export type EnglishSourceAuditResult = z.infer<typeof EnglishSourceAuditResultSchema>
-export type EnglishSourceAuditPatch = EnglishSourceAuditResult['patches'][number]
+export type EnglishSourceAuditPatch = z.infer<typeof EnglishSourceAuditPatchSchema>
 
 export function partitionEnglishSourceAuditCues(
   cues: readonly EnglishSourceAuditCue[],
@@ -114,57 +124,88 @@ export function englishSourceAuditRepairPrompt(
   )
 }
 
+function rejectionCueId(value: unknown): number | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const cueId = (value as Record<string, unknown>).cueId
+  return typeof cueId === 'number' && Number.isInteger(cueId) ? cueId : undefined
+}
+
 export function parseEnglishSourceAuditResult(batch: EnglishSourceAuditBatch, text: string): EnglishSourceAuditResult {
   let raw: unknown
   try {
-    raw = JSON.parse(text.trim())
+    raw = JSON.parse(extractJsonObject(
+      text,
+      `${batch.id} 英文源字幕审计中没有 JSON 对象`,
+      (parsed) => EnglishSourceAuditEnvelopeSchema.safeParse(parsed).success
+    ))
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`${batch.id} 英文源字幕审计 JSON 无效：${detail}`)
   }
 
-  let result: EnglishSourceAuditResult
+  let envelope: z.infer<typeof EnglishSourceAuditEnvelopeSchema>
   try {
-    result = EnglishSourceAuditResultSchema.parse(raw)
+    envelope = EnglishSourceAuditEnvelopeSchema.parse(raw)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`${batch.id} 英文源字幕审计结构无效：${detail}`)
   }
 
+  const parsed = envelope.patches.map((patch) => EnglishSourceAuditPatchSchema.safeParse(patch))
+  const cueIds = envelope.patches.map(rejectionCueId)
+  const duplicateCueIds = new Set(cueIds.filter((cueId, index): cueId is number =>
+    cueId !== undefined && cueIds.indexOf(cueId) !== index
+  ))
   const mainById = new Map(batch.mainCues.map((cue) => [cue.id, cue]))
   const batchCueIds = new Set(batch.cues.map((cue) => cue.id))
-  const patched = new Set<number>()
-  for (const patch of result.patches) {
-    if (patched.has(patch.cueId)) throw new Error(`${batch.id} cue ${patch.cueId} patch 重复`)
-    patched.add(patch.cueId)
+  const patches: EnglishSourceAuditPatch[] = []
+  const rejections: Array<z.infer<typeof EnglishSourceAuditRejectionSchema>> = []
 
-    const cue = mainById.get(patch.cueId)
-    if (!cue) {
-      const detail = batchCueIds.has(patch.cueId) ? '是只读上下文 cue' : '不存在于本批次'
-      throw new Error(`${batch.id} cue ${patch.cueId} 不可修改：${detail}`)
+  parsed.forEach((candidate, index) => {
+    const cueId = cueIds[index]
+    const reasons: string[] = []
+    if (!candidate.success) reasons.push('patch 结构无效：字段、类型或额外属性不符合约定')
+    if (cueId !== undefined && duplicateCueIds.has(cueId)) {
+      reasons.push('同一 cue 在当前批次出现重复 patch，所有重复项均已拒绝')
     }
-    if (patch.before !== cue.text) throw new Error(`${batch.id} cue ${patch.cueId} before 与完整原文不一致`)
-    if (!patch.after.trim()) throw new Error(`${batch.id} cue ${patch.cueId} after 为空`)
-    if (/[\t\r\n]/u.test(patch.after)) throw new Error(`${batch.id} cue ${patch.cueId} after 不能包含 Tab 或换行`)
-    if (patch.after !== patch.after.trim()) throw new Error(`${batch.id} cue ${patch.cueId} after 不能有首尾空白`)
-    if (patch.after === patch.before) throw new Error(`${batch.id} cue ${patch.cueId} before 与 after 相同`)
-  }
-  const sparseLimit = Math.min(
-    ENGLISH_SOURCE_AUDIT_MAX_PATCHES,
-    Math.max(1, Math.ceil(batch.mainCues.length * 0.1))
-  )
-  if (result.patches.length > sparseLimit) {
-    throw new Error(`${batch.id} patch 数 ${result.patches.length} 超过稀疏审计上限 ${sparseLimit}`)
-  }
-  return {
-    patches: result.patches.map((patch) => highConfidencePatchIsSafe(patch)
-      ? patch
-      : {
-          ...patch,
-          confidence: 'ambiguous' as const,
-          reason: `本地安全门仅允许自动应用不改变字符内容的大小写正规化；${patch.reason}`
-        })
-  }
+
+    if (candidate.success && reasons.length === 0) {
+      const patch = candidate.data
+      const cue = mainById.get(patch.cueId)
+      if (!cue) {
+        const detail = batchCueIds.has(patch.cueId) ? '是只读上下文 cue' : '不存在于本批次'
+        reasons.push(`cue 不可修改：${detail}`)
+      } else if (patch.before !== cue.text) {
+        reasons.push('before 与完整原文不一致')
+      } else if (!patch.after.trim()) {
+        reasons.push('after 为空')
+      } else if (/[\t\r\n]/u.test(patch.after)) {
+        reasons.push('after 不能包含 Tab 或换行')
+      } else if (patch.after !== patch.after.trim()) {
+        reasons.push('after 不能有首尾空白')
+      } else if (patch.after === patch.before) {
+        reasons.push('before 与 after 相同')
+      } else {
+        patches.push(highConfidencePatchIsSafe(patch)
+          ? patch
+          : {
+              ...patch,
+              confidence: 'ambiguous' as const,
+              reason: `本地安全门仅允许自动应用不改变字符内容的大小写正规化；${patch.reason}`
+            })
+      }
+    }
+
+    if (reasons.length > 0) {
+      rejections.push({
+        index,
+        ...(cueId === undefined ? {} : { cueId }),
+        reason: reasons.join('；')
+      })
+    }
+  })
+
+  return rejections.length > 0 ? { patches, rejections } : { patches }
 }
 
 function normalizedSurface(value: string): string {

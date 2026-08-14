@@ -199,17 +199,24 @@ function translationCueIds(prompt: string | undefined): number[] {
 }
 
 describe('TaskPipeline English source audit', () => {
-  it('runs all automatic-caption audit batches serially in one session and atomically applies high-confidence patches', async () => {
+  it('accepts 24 canonical patches while running all automatic-caption audit batches serially in one session', async () => {
     const task = await cuesTask('automatic', 221)
     const args: string[][] = []
     const commands: string[] = []
     let call = 0
+    const firstBatchPatches = Array.from({ length: 24 }, (_, index) => ({
+      cueId: index + 1,
+      before: index === 0 ? 'redis server' : `source cue ${index + 1}`,
+      after: index === 0 ? 'Redis server' : `Source cue ${index + 1}`,
+      reason: '大小写正规化',
+      confidence: 'high' as const
+    }))
     runProcessMock.mockImplementation(async (spec: { command: string; args: string[] }) => {
       commands.push(spec.command)
       args.push(spec.args)
       call += 1
       return providerResult(call === 1 ? {
-        patches: [{ cueId: 1, before: 'redis server', after: 'Redis server', reason: '大小写正规化', confidence: 'high' }]
+        patches: firstBatchPatches
       } : { patches: [] })
     })
 
@@ -230,6 +237,7 @@ describe('TaskPipeline English source audit', () => {
     expect(args[1]).toContain(codexSessionId('english-session'))
     expect(await readFile(join(task.directory, manifest.artifacts.english.relativePath), 'utf8')).toContain('redis server')
     expect(await readFile(join(task.directory, manifest.artifacts.englishClean.relativePath), 'utf8')).toContain('Redis server')
+    expect(await readFile(join(task.directory, manifest.artifacts.englishClean.relativePath), 'utf8')).toContain('Source cue 24')
     expect(await readFile(join(task.directory, 'english.clean.srt'), 'utf8'))
       .toBe(await readFile(join(task.directory, manifest.artifacts.englishClean.relativePath), 'utf8'))
     expect(await readFile(join(task.directory, 'en_cues.tsv'), 'utf8'))
@@ -237,6 +245,53 @@ describe('TaskPipeline English source audit', () => {
     expect(manifest.artifacts.englishClean.producer).toBe('english-source-audit-v1')
     expect(manifest.artifacts.englishCues.producer).toBe('english-source-audit-v1')
     expect(manifest.artifacts.englishSourceAudit.valid).toBe(true)
+    const audit = JSON.parse(
+      await readFile(join(task.directory, manifest.artifacts.englishSourceAudit.relativePath), 'utf8')
+    ) as { batches: Array<{ result: { patches: unknown[] } }> }
+    expect(audit.batches[0].result.patches).toHaveLength(24)
+  })
+
+  it('completes a sparse mixed audit response, applies only the valid patch and persists the rejection', async () => {
+    const task = await cuesTask('automatic', 20)
+    runProcessMock.mockResolvedValue(providerResult({ patches: [
+      { cueId: 1, before: 'redis server', after: 'Redis server', reason: '大小写正规化', confidence: 'high' },
+      { cueId: 2, before: 'cue 2', after: 'Source cue 2', reason: 'before 错位', confidence: 'high' }
+    ] }))
+
+    await task.pipeline.start(task.directory)
+
+    const manifest = await task.store.load(task.directory)
+    expect(manifest.pipeline.stages.cues.status).toBe('completed')
+    expect(runProcessMock).toHaveBeenCalledTimes(1)
+    const clean = await readFile(join(task.directory, manifest.artifacts.englishClean.relativePath), 'utf8')
+    expect(clean).toContain('Redis server')
+    expect(clean).toContain('source cue 2')
+    expect(clean).not.toContain('Source cue 2')
+
+    const audit = JSON.parse(
+      await readFile(join(task.directory, manifest.artifacts.englishSourceAudit.relativePath), 'utf8')
+    ) as {
+      batches: Array<{
+        batchId: string
+        result: {
+          patches: unknown[]
+          rejections?: Array<{ index: number; cueId?: number; reason: string }>
+        }
+      }>
+    }
+    expect(audit.batches).toEqual([{
+      batchId: 'english-audit-001',
+      result: {
+        patches: [{
+          cueId: 1,
+          before: 'redis server',
+          after: 'Redis server',
+          reason: '大小写正规化',
+          confidence: 'high'
+        }],
+        rejections: [{ index: 1, cueId: 2, reason: 'before 与完整原文不一致' }]
+      }
+    }])
   })
 
   it('durably resumes the first audit session after a later batch fails and the cues stage is retried', async () => {

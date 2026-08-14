@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { UNTRUSTED_PROMPT_DATA_GUARD } from '../src/core/prompt-boundary'
 import {
   ENGLISH_SOURCE_AUDIT_MAIN_CUE_COUNT,
-  ENGLISH_SOURCE_AUDIT_MAX_PATCHES,
   englishSourceAuditPrompt,
   englishSourceAuditRepairPrompt,
   parseEnglishSourceAuditResult,
@@ -32,51 +31,146 @@ describe('English source audit', () => {
     expect(() => partitionEnglishSourceAuditCues([{ id: 1, text: 'a' }, { id: 1, text: 'b' }])).toThrow('cue ID 重复')
   })
 
-  it('accepts a valid sparse patch and rejects duplicate, out-of-scope and mismatched patches', () => {
+  it('normalizes an explanatory envelope and preserves the current shape when every patch is valid', () => {
     const auditCues = cues.map((cue) => cue.id === 221 ? { ...cue, text: 'CUBA 12.1' } : cue)
     const batch = partitionEnglishSourceAuditCues(auditCues)[1]
-    const valid = { cueId: 221, before: 'CUBA 12.1', after: 'CUDA 12.1', reason: '技术标识被 ASR 错识', confidence: 'high' }
+    const patch = { cueId: 221, before: 'CUBA 12.1', after: 'CUDA 12.1', reason: '技术标识被 ASR 错识', confidence: 'high' }
 
-    expect(parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [valid] }))).toEqual({
-      patches: [{ ...valid, confidence: 'ambiguous', reason: expect.stringContaining('本地安全门') }]
+    expect(parseEnglishSourceAuditResult(
+      batch,
+      `审计结果如下：\n\`\`\`json\n${JSON.stringify({ patches: [patch] })}\n\`\`\`\n以上。`
+    )).toEqual({
+      patches: [{ ...patch, confidence: 'ambiguous', reason: expect.stringContaining('本地安全门') }]
     })
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [valid, valid] }))).toThrow('patch 重复')
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({
-      patches: [{ ...valid, cueId: 220, before: 'cue 220' }]
-    }))).toThrow('只读上下文 cue')
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({
-      patches: [{ ...valid, cueId: 999, before: 'missing' }]
-    }))).toThrow('不存在于本批次')
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({
-      patches: [{ ...valid, before: '221' }]
-    }))).toThrow('before 与完整原文不一致')
   })
 
-  it('rejects empty, multiline and unchanged replacements', () => {
-    const batch = partitionEnglishSourceAuditCues([{ id: 7, text: 'cube control' }])[0]
-    const patch = { cueId: 7, before: 'cube control', reason: '应为命令名', confidence: 'ambiguous' }
+  it('skips valid cue objects in Qoder reasoning and selects the final audit envelope', () => {
+    const batch = partitionEnglishSourceAuditCues(Array.from({ length: 20 }, (_, index) => ({
+      id: index + 1,
+      text: index === 0 ? 'redis server' : `cue ${index + 1}`
+    })))[0]
+    const patch = {
+      cueId: 1,
+      before: 'redis server',
+      after: 'Redis server',
+      reason: '产品名大小写',
+      confidence: 'high'
+    } as const
 
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [{ ...patch, after: '   ' }] }))).toThrow('after 为空')
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [{ ...patch, after: 'kubectl\napply' }] }))).toThrow('after 不能包含 Tab 或换行')
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [{ ...patch, after: 'kubectl\tapply' }] }))).toThrow('after 不能包含 Tab 或换行')
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [{ ...patch, after: ' kubectl apply ' }] }))).toThrow('after 不能有首尾空白')
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [{ ...patch, after: 'cube control' }] }))).toThrow('before 与 after 相同')
+    expect(parseEnglishSourceAuditResult(
+      batch,
+      `分析 {"id":417,"text":"provider cue"} ... ${JSON.stringify({ patches: [patch] })}`
+    )).toEqual({ patches: [patch] })
+    expect(() => parseEnglishSourceAuditResult(
+      batch,
+      '分析 {"id":417,"text":"provider cue"}'
+    )).toThrow('JSON 无效')
   })
 
-  it('enforces a deterministic sparse limit and downgrades unsafe rewrites', () => {
-    const batch = partitionEnglishSourceAuditCues(Array.from({ length: 100 }, (_, index) => ({
+  it('keeps valid patches while recording exact-before and unchanged siblings as rejections', () => {
+    const batch = partitionEnglishSourceAuditCues(Array.from({ length: 30 }, (_, index) => ({
+      id: index + 1,
+      text: index === 0
+        ? 'redis server'
+        : index === 1 ? 'Use Claude Code here.' : index === 2 ? 'Leave this unchanged.' : `cue ${index + 1}`
+    })))[0]
+    const result = parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [
+      { cueId: 1, before: 'redis server', after: 'Redis server', reason: '产品名大小写', confidence: 'high' },
+      { cueId: 2, before: 'Claude Code here.', after: 'Claude Code here!', reason: '缺少原文前缀', confidence: 'high' },
+      { cueId: 3, before: 'Leave this unchanged.', after: 'Leave this unchanged.', reason: '无需修改', confidence: 'ambiguous' }
+    ] }))
+
+    expect(result.patches).toEqual([
+      { cueId: 1, before: 'redis server', after: 'Redis server', reason: '产品名大小写', confidence: 'high' }
+    ])
+    expect(result.rejections).toEqual([
+      { index: 1, cueId: 2, reason: 'before 与完整原文不一致' },
+      { index: 2, cueId: 3, reason: 'before 与 after 相同' }
+    ])
+  })
+
+  it('rejects every patch for a duplicated cue', () => {
+    const batch = partitionEnglishSourceAuditCues(Array.from({ length: 20 }, (_, index) => ({
+      id: index + 1,
+      text: index === 0 ? 'redis server' : `cue ${index + 1}`
+    })))[0]
+    const result = parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [
+      { cueId: 1, before: 'redis server', after: 'Redis server', reason: 'first', confidence: 'high' },
+      { cueId: 1, before: 'redis server', after: 'REDIS server', reason: 'second', confidence: 'high' }
+    ] }))
+
+    expect(result.patches).toEqual([])
+    expect(result.rejections).toEqual([
+      { index: 0, cueId: 1, reason: expect.stringContaining('重复 patch') },
+      { index: 1, cueId: 1, reason: expect.stringContaining('重复 patch') }
+    ])
+  })
+
+  it('locally rejects patch schema, scope and replacement violations', () => {
+    const batch = partitionEnglishSourceAuditCues(Array.from({ length: 70 }, (_, index) => ({
+      id: index + 1,
+      text: index === 0 ? 'cube control' : `cue ${index + 1}`
+    })))[0]
+    const result = parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [
+      { cueId: 1, before: 'cube control', after: '   ', reason: '空替换', confidence: 'ambiguous' },
+      { cueId: 999, before: 'missing', after: 'fixed', reason: '越界项', confidence: 'ambiguous' },
+      { cueId: 3, before: 'cue 3', after: 'kubectl\napply', reason: '多行替换', confidence: 'ambiguous' },
+      { cueId: 4, before: 'cue 4', after: ' Cue 4 ', reason: '首尾空白', confidence: 'ambiguous' },
+      { cueId: 5, before: 'cue 5', after: 'cue 5', reason: '没有变化', confidence: 'ambiguous' },
+      { cueId: 6, before: 'cue 6', after: 'Cue 6', confidence: 'high' }
+    ] }))
+
+    expect(result.patches).toEqual([])
+    expect(result.rejections).toHaveLength(6)
+    expect(result.rejections?.map((rejection) => rejection.reason)).toEqual([
+      'after 为空',
+      'cue 不可修改：不存在于本批次',
+      'after 不能包含 Tab 或换行',
+      'after 不能有首尾空白',
+      'before 与 after 相同',
+      expect.stringContaining('patch 结构无效')
+    ])
+
+    expect(result.rejections?.at(-1)).toMatchObject({ index: 5, cueId: 6 })
+    const contextResult = parseEnglishSourceAuditResult(
+      partitionEnglishSourceAuditCues(cues)[1],
+      JSON.stringify({ patches: [{
+        cueId: 220,
+        before: 'cue 220',
+        after: 'Cue 220',
+        reason: '上下文项不可修改',
+        confidence: 'high'
+      }] })
+    )
+    expect(contextResult).toEqual({
+      patches: [],
+      rejections: [{ index: 0, cueId: 220, reason: 'cue 不可修改：是只读上下文 cue' }]
+    })
+  })
+
+  it('keeps invalid JSON and invalid top-level envelopes as hard failures', () => {
+    const batch = partitionEnglishSourceAuditCues(Array.from({ length: 20 }, (_, index) => ({
+      id: index + 1,
+      text: `cue ${index + 1}`
+    })))[0]
+
+    expect(() => parseEnglishSourceAuditResult(batch, 'not-json')).toThrow('JSON 无效')
+    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches: [], extra: true }))).toThrow('JSON 无效')
+  })
+
+  it('accepts 24 canonical patches for a 220-cue batch and downgrades unsafe rewrites', () => {
+    const batch = partitionEnglishSourceAuditCues(Array.from({ length: 220 }, (_, index) => ({
       id: index + 1,
       text: `technical cue ${index + 1}`
     })))[0]
-    const patches = Array.from({ length: 11 }, (_, index) => ({
+    const patches = Array.from({ length: 24 }, (_, index) => ({
       cueId: index + 1,
       before: `technical cue ${index + 1}`,
-      after: `corrected cue ${index + 1}`,
-      reason: 'technical ASR error',
-      confidence: 'high'
+      after: `Technical cue ${index + 1}`,
+      reason: '技术术语大小写',
+      confidence: 'high' as const
     }))
-    expect(ENGLISH_SOURCE_AUDIT_MAX_PATCHES).toBe(24)
-    expect(() => parseEnglishSourceAuditResult(batch, JSON.stringify({ patches }))).toThrow('超过稀疏审计上限 10')
+    expect(parseEnglishSourceAuditResult(batch, JSON.stringify({ patches }))).toEqual({ patches })
 
     const unsafe = parseEnglishSourceAuditResult(
       partitionEnglishSourceAuditCues([{ id: 1, text: 'This is a long English sentence about Redis caching.' }])[0],
@@ -239,6 +333,7 @@ describe('English source audit', () => {
     expect(prompt).toContain('role=context 仅用于理解相邻语境')
     expect(prompt).toContain('完整原文 before')
     expect(prompt).toContain(JSON.stringify(metadata))
+    expect(prompt).not.toContain('当前批次最多')
 
     const repair = englishSourceAuditRepairPrompt(batch, metadata, 'cue 1 before 错误')
     expect(repair.startsWith(UNTRUSTED_PROMPT_DATA_GUARD)).toBe(true)

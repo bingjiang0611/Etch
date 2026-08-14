@@ -103,6 +103,61 @@ describe('process runner safety', () => {
     expect(await waitForPidToDisappear(running.pid, 1_000)).toBe(true)
   })
 
+  it('finishes when the hosted child exits even if a descendant keeps the provider pipes open', async () => {
+    let hostPid = 0
+    let descendantPid = 0
+    let streamedStdout = ''
+    let deadline: NodeJS.Timeout | undefined
+    const startedAt = Date.now()
+    const payloadLength = 256 * 1024
+    const runPromise = runProcess({
+      command: process.execPath,
+      args: ['-e', [
+        "const { spawn } = require('node:child_process')",
+        "const { writeSync } = require('node:fs')",
+        "const descendant = spawn(process.execPath, ['-e', 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0)'], { stdio: 'inherit' })",
+        "writeSync(1, `direct-out:${descendant.pid}\\n`)",
+        `writeSync(1, Buffer.alloc(${payloadLength}, 'o'))`,
+        `writeSync(2, Buffer.alloc(${payloadLength}, 'e'))`,
+        'descendant.unref()',
+        'process.exit(23)'
+      ].join(';')],
+      cwd: process.cwd(),
+      timeoutMs: 10_000,
+      onStdout: (chunk) => {
+        streamedStdout += chunk
+        const match = /direct-out:(\d+)/u.exec(streamedStdout)
+        if (match) descendantPid = Number(match[1])
+      }
+    }, {
+      started: async (pid) => { hostPid = pid },
+      finished: async () => undefined
+    }, { runId: randomUUID(), appInstanceToken: randomUUID() })
+
+    try {
+      // This integration regression must bound real child-process completion; fake timers cannot drive OS pipe lifetime.
+      const result = await Promise.race([
+        runPromise,
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(() => reject(new Error('process host waited for descendant-owned pipes')), 2_000)
+        })
+      ])
+
+      expect(Date.now() - startedAt).toBeLessThan(2_000)
+      expect(result).toMatchObject({ exitCode: 23, signal: null, timedOut: false, cancelled: false })
+      expect(result.stdout).toBe(`direct-out:${descendantPid}\n${'o'.repeat(payloadLength)}`)
+      expect(result.stderr).toBe('e'.repeat(payloadLength))
+      expect(descendantPid).toBeGreaterThan(0)
+    } finally {
+      clearTimeout(deadline)
+      if (hostPid > 0) {
+        try { process.kill(-hostPid, 'SIGKILL') } catch { /* group already gone */ }
+      }
+      await runPromise.catch(() => undefined)
+      if (descendantPid > 0) expect(await waitForPidToDisappear(descendantPid, 2_000)).toBe(true)
+    }
+  }, 15_000)
+
   it('contains an asynchronous spawn error instead of crashing the host process', async () => {
     expect(() => startProcess({
       command: '/definitely/missing/etch-provider',

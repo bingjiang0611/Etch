@@ -286,6 +286,40 @@ function validateAuditDecisions(
   return normalized
 }
 
+function filterAuditPatches(audit: AuditResult, chinese: ReadonlyMap<string, string>): AuditResult {
+  const counts = new Map<number, number>()
+  for (const patch of audit.patches) counts.set(patch.cueId, (counts.get(patch.cueId) ?? 0) + 1)
+  const duplicateCueIds = new Set([...counts].filter(([, count]) => count > 1).map(([cueId]) => cueId))
+  const patches: AuditResult['patches'] = []
+  const rejections = [...(audit.rejections ?? [])]
+
+  audit.patches.forEach((patch, index) => {
+    let reason = ''
+    const current = chinese.get(String(patch.cueId))
+    if (duplicateCueIds.has(patch.cueId)) {
+      reason = '同一 cue 出现重复 patch，所有重复项均已拒绝'
+    } else if (current === undefined) {
+      reason = 'cue 不存在'
+    } else if (patch.before !== current) {
+      reason = 'before 与当前完整译文不一致'
+    } else if (!patch.after.trim()) {
+      reason = 'after 为空'
+    } else if (/[\t\r\n]/u.test(patch.after)) {
+      reason = 'after 不能包含 Tab 或换行'
+    } else if (patch.after !== patch.after.trim()) {
+      reason = 'after 不能有首尾空白'
+    } else if (patch.before === patch.after) {
+      reason = 'before 与 after 相同'
+    } else {
+      patches.push(patch)
+    }
+    if (reason) rejections.push({ index, cueId: patch.cueId, reason })
+  })
+
+  const filtered = { glossary: audit.glossary, patches, historicalClassifications: audit.historicalClassifications }
+  return rejections.length ? { ...filtered, rejections } : filtered
+}
+
 export class TaskPipeline {
   readonly #running = new Map<string, Promise<void>>()
   readonly #runningTaskIds = new Map<string, string>()
@@ -2331,31 +2365,29 @@ export class TaskPipeline {
       sessionId = provider.sessionId
       try {
         const rawAudit = JSON.parse(this.#jsonObject(provider.text))
-        const providerAudit = historicalRepairBase
+        const parsedAudit = historicalRepairBase
           ? mergeHistoricalAuditRepair(
               historicalRepairBase,
               HistoricalAuditRepairSchema.parse(rawAudit),
               historicalRepairCues.map((cue) => cue.cueId)
             )
           : AuditResultSchema.parse(rawAudit)
-        const candidateChinese = new Map(chinese)
-        const audit = {
-          ...providerAudit,
-          glossary: mergeAuthoritativeGlossary(providerAudit.glossary, glossary.entries, rows, providerAudit.historicalClassifications)
-        }
+        const providerAudit = filterAuditPatches(parsedAudit, chinese)
         const invalidCueReferences = [
           ...providerAudit.glossary.flatMap((entry) => entry.cueIds.map((cueId) => ({ kind: 'glossary', cueId }))),
-          ...providerAudit.patches.map((patch) => ({ kind: 'patch', cueId: patch.cueId })),
           ...providerAudit.historicalClassifications.map((classification) => ({ kind: 'historicalClassifications', cueId: classification.cueId }))
         ].filter((reference) => !knownCueIds.has(reference.cueId))
         if (invalidCueReferences.length) {
           const detail = invalidCueReferences.map((reference) => `${reference.kind} ${reference.cueId}`).join('；')
           throw new Error(`审计响应引用了不存在的 cue：${detail}`)
         }
+        const candidateChinese = new Map(chinese)
+        const audit = {
+          ...providerAudit,
+          glossary: mergeAuthoritativeGlossary(providerAudit.glossary, glossary.entries, rows, providerAudit.historicalClassifications)
+        }
         for (const patch of providerAudit.patches.filter((item) => item.confidence === 'high')) {
-          const id = String(patch.cueId)
-          if (candidateChinese.get(id) !== patch.before) throw new Error(`审计 patch ${id} 的 before 与当前译文不一致`)
-          candidateChinese.set(id, patch.after)
+          candidateChinese.set(String(patch.cueId), patch.after)
         }
         const auditedRows = english.map((cue) => ({ id: Number(cue.id), en: cue.lines.join(' '), zh: candidateChinese.get(cue.id)! }))
         const violations = historicalGlossaryViolations(auditedRows, glossary.entries, providerAudit.historicalClassifications)

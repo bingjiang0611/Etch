@@ -707,7 +707,17 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
       confidence: 'high'
     }
     const provider = await auditProvider(root, [
-      { glossary: [], patches: [], historicalClassifications: classifications },
+      {
+        glossary: [],
+        patches: [{
+          cueId: 1,
+          before: '预热',
+          after: '缓存。',
+          reason: '错误地只返回了局部译文',
+          confidence: 'high'
+        }],
+        historicalClassifications: classifications
+      },
       {
         glossary: [{ source: 'cache', target: '缓存', cueIds: [1] }],
         patches: [repairPatch],
@@ -726,7 +736,8 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
       .toBe('1\t预热缓存。\n2\tKVCache 可降低流量。\n3\t这些缓存是共享的。\n')
     expect(JSON.parse(await readFile(join(directory, completed.artifacts.audit.relativePath), 'utf8'))).toMatchObject({
       patches: [repairPatch],
-      historicalClassifications: classifications
+      historicalClassifications: classifications,
+      rejections: [{ index: 0, cueId: 1, reason: 'before 与当前完整译文不一致' }]
     })
     const prompts = (await readFile(provider.promptLog, 'utf8')).split('\n---PROMPT---\n')
     expect(prompts).toHaveLength(3)
@@ -778,11 +789,11 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
     ]
     const provider = await auditProvider(root, [
       {
-        glossary: [{ source: 'invented', target: '杜撰', cueIds: [999] }],
+        glossary: [{ source: 'invented', target: '杜撰', cueIds: [2] }],
         patches: [{ cueId: 998, before: '不存在', after: '仍不存在', reason: '越界歧义', confidence: 'ambiguous' }],
         historicalClassifications: [
           ...correct,
-          { source: 'KVCache', cueId: 999, target: null, reason: '模型自行添加的未知 source' }
+          { source: 'KVCache', cueId: 2, target: null, reason: '模型自行添加的未知 source' }
         ]
       },
       { glossary: [], patches: [], historicalClassifications: correct }
@@ -806,7 +817,7 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
     ])
   })
 
-  it('repairs out-of-range glossary and ambiguous patch cue references before publishing', async () => {
+  it('retries an out-of-range glossary cue while locally rejecting an out-of-range patch cue', async () => {
     const root = await mkdtemp(join(tmpdir(), 'etch-audit-invalid-cue-reference-'))
     directories.push(root)
     const { directory, store } = await historicalAuditTask(root)
@@ -830,14 +841,14 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
 
     expect((await store.load(directory)).pipeline.stages.audit.status).toBe('completed')
     expect(await readFile(provider.promptLog, 'utf8')).toContain(
-      '"section":"audit-validation-failure","data":"审计响应引用了不存在的 cue：glossary 999；patch 998"'
+      '"section":"audit-validation-failure","data":"审计响应引用了不存在的 cue：glossary 999"'
     )
     const probes = (await readFile(provider.artifactProbeLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { auditExists: boolean })
     expect(probes.every((probe) => !probe.auditExists)).toBe(true)
   })
 
-  it('restarts each audit repair from the original Chinese cue map', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'etch-audit-clean-map-'))
+  it('accepts valid patches while rejecting invalid siblings without retrying or checkpointing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'etch-audit-local-patch-rejection-'))
     directories.push(root)
     const original = '1\t预热缓冲。\n2\tKVCache 可降低流量。\n3\t这些缓存是共享的。\n'
     const { directory, store } = await historicalAuditTask(root, original)
@@ -846,14 +857,17 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
       { source: 'cache', cueId: 3, target: '缓存', reason: '复数词面，语义相同' }
     ]
     const validPatch = { cueId: 1, before: '预热缓冲。', after: '预热缓存。', reason: '采用历史术语', confidence: 'high' }
-    const provider = await auditProvider(root, [
-      {
-        glossary: [],
-        patches: [validPatch, { cueId: 3, before: '错误 before', after: '这些缓存是共享的。', reason: '错误', confidence: 'high' }],
-        historicalClassifications: classifications
-      },
-      { glossary: [], patches: [validPatch], historicalClassifications: classifications }
-    ])
+    const provider = await auditProvider(root, [{
+      glossary: [],
+      patches: [
+        validPatch,
+        { cueId: 2, before: 'KVCache 可降低流量。', after: 'KVCache 能降低流量。', reason: '重复一', confidence: 'high' },
+        { cueId: 2, before: 'KVCache 可降低流量。', after: 'KVCache 会降低流量。', reason: '重复二', confidence: 'ambiguous' },
+        { cueId: 3, before: '这些缓存', after: '共享的。', reason: '局部 before/after', confidence: 'high' },
+        { cueId: 998, before: '不存在', after: '仍不存在', reason: '越界歧义', confidence: 'ambiguous' }
+      ],
+      historicalClassifications: classifications
+    }])
     const settings = defaultSettings('/Users/test')
     settings.toolOverrides.codex = provider.executable
     const pipeline = new TaskPipeline(store, settings, new HistoricalGlossaryService(store, () => []), () => undefined)
@@ -862,9 +876,19 @@ ${codexLifecycleScript(JSON.stringify(codexSessionId('history-session')), 'provi
 
     const completed = await store.load(directory)
     expect(completed.pipeline.stages.audit.status).toBe('completed')
+    expect(completed.translation.auditCheckpoint).toBeUndefined()
+    expect((await readFile(provider.argsLog, 'utf8')).trim().split('\n')).toHaveLength(1)
     expect(await readFile(join(directory, completed.artifacts.chineseCues.relativePath), 'utf8'))
       .toBe('1\t预热缓存。\n2\tKVCache 可降低流量。\n3\t这些缓存是共享的。\n')
-    expect((await readFile(provider.promptLog, 'utf8'))).toContain('审计 patch 3 的 before 与当前译文不一致')
+    expect(JSON.parse(await readFile(join(directory, completed.artifacts.audit.relativePath), 'utf8'))).toMatchObject({
+      patches: [validPatch],
+      rejections: [
+        { index: 1, cueId: 2, reason: '同一 cue 出现重复 patch，所有重复项均已拒绝' },
+        { index: 2, cueId: 2, reason: '同一 cue 出现重复 patch，所有重复项均已拒绝' },
+        { index: 3, cueId: 3, reason: 'before 与当前完整译文不一致' },
+        { index: 4, cueId: 998, reason: 'cue 不存在' }
+      ]
+    })
   })
 
   it('fails audit after three invalid responses without mutating Chinese cues or publishing audit artifacts', async () => {

@@ -140,6 +140,23 @@ describe('JSON 对象提取', () => {
       .toBe('{"text":"a } { b","nested":{"ok":true}}')
   })
 
+  it('默认仍返回第一个合法对象，predicate 会跳过不匹配对象', () => {
+    const text = '分析 {"id":417,"text":"cue"} ... {"patches":[]}'
+
+    expect(extractJsonObject(text)).toBe('{"id":417,"text":"cue"}')
+    expect(extractJsonObject(text, '指定错误', (parsed) => Array.isArray(parsed.patches)))
+      .toBe('{"patches":[]}')
+  })
+
+  it('predicate 异常时继续寻找后续匹配对象', () => {
+    const text = '{"id":417} ... {"patches":[]}'
+
+    expect(extractJsonObject(text, '指定错误', (parsed) => {
+      if ('id' in parsed) throw new Error('unexpected cue object')
+      return Array.isArray(parsed.patches)
+    })).toBe('{"patches":[]}')
+  })
+
   it('跳过不闭合的前置花括号，找到后续完整对象', () => {
     expect(extractJsonObject('草稿 { 不完整\n{"ok":true}')).toBe('{"ok":true}')
   })

@@ -41,9 +41,12 @@ const PROCESS_HOST_SOURCE = [
   'const env = { ...process.env }',
   "delete env.ELECTRON_RUN_AS_NODE",
   "process.on('SIGTERM', () => undefined)",
-  "const child = spawn(command, args, { cwd: process.cwd(), env, detached: false, stdio: 'inherit' })",
+  'let child',
+  "try { child = spawn(command, args, { cwd: process.cwd(), env, detached: false, stdio: ['inherit', 'pipe', 'pipe'] }) } catch (error) { process.stderr.write(`Etch process host: ${error.message}\\n`); process.exit(127) }",
+  "child.stdout.pipe(process.stdout, { end: false })",
+  "child.stderr.pipe(process.stderr, { end: false })",
   "child.once('error', (error) => { process.stderr.write(`Etch process host: ${error.message}\\n`); process.exit(127) })",
-  "child.once('close', (code, signal) => { if (signal) process.exit(128 + (constants.signals[signal] ?? 1)); else process.exit(code ?? 1) })"
+  "child.once('exit', (code, signal) => { if (signal) process.exit(128 + (constants.signals[signal] ?? 1)); else process.exit(code ?? 1) })"
 ].join(';')
 
 export type VerifiedSignalResult = 'signaled' | 'gone' | 'mismatch' | 'failed'

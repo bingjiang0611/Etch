@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { UNTRUSTED_PROMPT_DATA_GUARD } from '../src/core/prompt-boundary'
 import {
   AUDIT_MAX_ATTEMPTS,
+  AuditResultSchema,
   HistoricalAuditRepairSchema,
   consistencyAuditRepairPrompt,
   consistencyAuditHistoricalRepairPrompt,
@@ -39,6 +40,18 @@ describe('translation pipeline', () => {
     expect(audit).toContain('glossary.target 必须是可以直接嵌入字幕的单一标准译法')
     expect(audit).toContain('classification.target 必须逐字复制该规则的完整原始 target')
     expect(audit).toContain('confidence 只能是字符串 "high" 或 "ambiguous"，禁止数字分数')
+  })
+
+  it('preserves optional local audit patch rejections without changing clean results', () => {
+    const clean = { glossary: [], patches: [], historicalClassifications: [] }
+    expect(AuditResultSchema.parse(clean)).toEqual(clean)
+    expect(AuditResultSchema.parse({
+      ...clean,
+      rejections: [{ index: 1, cueId: 246, reason: 'before 与当前完整译文不一致' }]
+    })).toEqual({
+      ...clean,
+      rejections: [{ index: 1, cueId: 246, reason: 'before 与当前完整译文不一致' }]
+    })
   })
 
   it('recognizes full-width semicolons in historical target alternatives', () => {

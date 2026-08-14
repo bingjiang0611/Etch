@@ -236,6 +236,12 @@ export const AuditPatchSchema = z.object({
   confidence: z.enum(['high', 'ambiguous'])
 })
 
+export const AuditRejectionSchema = z.object({
+  index: z.number().int().nonnegative(),
+  cueId: z.number().int().positive().optional(),
+  reason: z.string().min(1)
+})
+
 export const AuditResultSchema = z.object({
   glossary: z.array(z.object({ source: z.string().min(1), target: z.string().min(1), cueIds: z.array(z.number().int().positive()) })),
   patches: z.array(AuditPatchSchema),
@@ -244,7 +250,8 @@ export const AuditResultSchema = z.object({
     cueId: z.number().int().positive(),
     target: z.string().min(1).nullable(),
     reason: z.string().min(1)
-  })).default([])
+  })).default([]),
+  rejections: z.array(AuditRejectionSchema).optional()
 })
 export type AuditResult = z.infer<typeof AuditResultSchema>
 
