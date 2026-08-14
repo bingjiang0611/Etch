@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { writeJsonAtomic } from '../storage/atomic-json'
 import { ProcessExitedBeforeRegistrationError, probeEffectiveProcessGroup, probeProcessGroup, probeProcessIdentity, processCommandHasHostIdentity, processIdentityMatches, signalVerifiedProcess, type ExpectedProcessIdentity, type ProcessIdentityProbe } from './process-runner'
@@ -28,6 +29,8 @@ const RegistrySchemaV2 = z.object({ schemaVersion: z.literal(2), active: z.array
 const RegistrySchema = z.union([RegistrySchemaV1, RegistrySchemaV2])
 
 const registryQueues = new Map<string, Promise<void>>()
+const REGISTRATION_PROBE_ATTEMPTS = 10
+const REGISTRATION_PROBE_DELAY_MS = 25
 
 export class RunRegistry {
   #recoveryCohort: Set<string> | undefined
@@ -52,18 +55,25 @@ export class RunRegistry {
       if (records.some((record) => record.runId === input.runId)) {
         throw new Error(`Provider 运行 ${input.runId} 已经登记`)
       }
-      let identity = await probeProcessIdentity(input.pid)
-      for (let attempt = 1; identity.state === 'unknown' && attempt < 3; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 25))
+      let identity: ProcessIdentityProbe = { state: 'unknown' }
+      let verified = false
+      for (let attempt = 0; attempt < REGISTRATION_PROBE_ATTEMPTS; attempt += 1) {
         identity = await probeProcessIdentity(input.pid)
+        if (identity.state === 'absent') break
+        if (identity.state === 'present') {
+          verified = identity.pgid === input.pgid
+            && processIdentityMatches({ ...input, processStartedAt: identity.startedAt }, identity)
+            && processCommandHasHostIdentity(identity.command, input)
+          if (verified) break
+        }
+        if (attempt + 1 < REGISTRATION_PROBE_ATTEMPTS) {
+          await delay(REGISTRATION_PROBE_DELAY_MS)
+        }
       }
       if (identity.state === 'absent' && await this.#groupIsEffectivelyAbsent(input.pgid)) {
         throw new ProcessExitedBeforeRegistrationError()
       }
-      if (identity.state !== 'present'
-        || identity.pgid !== input.pgid
-        || !processIdentityMatches({ ...input, processStartedAt: identity.startedAt }, identity)
-        || !processCommandHasHostIdentity(identity.command, input)) {
+      if (!verified || identity.state !== 'present') {
         throw new Error('无法证明新进程身份与进程组，拒绝登记')
       }
       const record = RunRecordSchema.parse({ ...input, processStartedAt: identity.startedAt, registeredAt: new Date().toISOString() })

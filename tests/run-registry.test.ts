@@ -79,6 +79,18 @@ async function waitForPidToDisappear(pid: number, timeoutMs: number): Promise<bo
 }
 
 describe('RunRegistry', () => {
+  it('registers a process immediately while its detached host identity settles', async () => {
+    const runs = await registry()
+    const running = nodeProcess(runs)
+    const input = registration(running)
+
+    await expect(runs.register(input)).resolves.toMatchObject({
+      runId: input.runId,
+      pid: running.pid,
+      pgid: running.pid
+    })
+  })
+
   it('stops only the active process registered for the requested task', async () => {
     const runs = await registry(100)
     const first = await stableProcess(runs)

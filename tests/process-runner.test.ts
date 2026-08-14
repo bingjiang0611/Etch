@@ -34,12 +34,31 @@ describe('process runner safety', () => {
     expect(classifyProcessGroupStates('unexpected')).toBe('unknown')
   })
 
-  it('probes a live process group and a missing process group through ps', async () => {
-    const running = nodeProcess('setInterval(() => undefined, 1_000)')
+  it('probes every member of a live process group after its leader exits', async () => {
+    const running = startProcess({
+      command: process.execPath,
+      args: ['-e', [
+        "const { spawn } = require('node:child_process')",
+        "const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1_000)'], { stdio: 'ignore' })",
+        'console.log(child.pid)',
+        'child.unref()'
+      ].join(';')],
+      cwd: process.cwd()
+    }, { runId: randomUUID(), appInstanceToken: randomUUID() })
+    processes.push(running)
+    const result = await running.result
+    const memberPid = Number(result.stdout.trim())
 
-    await expect(probeProcessGroupLiveness(running.pid)).resolves.toBe('present')
-    await expect(probeProcessGroupLiveness(2_147_483_647)).resolves.toBe('absent')
-  })
+    try {
+      const member = await probeProcessIdentity(memberPid)
+      expect(member).toMatchObject({ state: 'present', pgid: running.pid })
+      await expect(probeProcessGroupLiveness(running.pid)).resolves.toBe('present')
+      await expect(probeProcessGroupLiveness(2_147_483_647)).resolves.toBe('absent')
+    } finally {
+      try { process.kill(-running.pid, 'SIGKILL') } catch { /* already gone */ }
+      await waitForPidToDisappear(memberPid, 1_000)
+    }
+  }, 15_000)
 
   it('runs an argv-only child behind a token-attested process-group host', async () => {
     const hostIdentity = { runId: randomUUID(), appInstanceToken: randomUUID() }

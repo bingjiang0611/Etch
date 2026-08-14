@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.41/Etch-0.2.41-arm64.dmg"><strong>公開版 v0.2.41 DMG をダウンロード</strong></a>
+  <a href="https://github.com/bingjiang0611/Etch/releases/download/v0.2.42/Etch-0.2.42-arm64.dmg"><strong>公開版 v0.2.42 DMG をダウンロード</strong></a>
   ·
   <a href="#3-ステップで開始">3 ステップで開始</a>
   ·
@@ -21,10 +21,10 @@
 </p>
 
 <p align="center">
-  <sub>公開 v0.2.41 DMG · Apple Silicon · macOS 13.5+ · HTTP(S) URL 入力</sub>
+  <sub>公開 v0.2.42 DMG · Apple Silicon · macOS 13.5+ · HTTP(S) URL 入力</sub>
 </p>
 
-> 公開版 `v0.2.41` には、英中ハード字幕、動画要約、Web 翻訳の 3 種類のタスクが含まれています。
+> 公開版 `v0.2.42` には、英中ハード字幕、動画要約、Web 翻訳の 3 種類のタスクが含まれています。
 
 ## 確認でき、途中から再開できる動画制作フロー
 
@@ -49,7 +49,7 @@ Web 翻訳は独立したパイプラインで処理します。通常の Web �
 
 ### 1. インストール
 
-1. 検証済みの [GitHub Release v0.2.41](https://github.com/bingjiang0611/Etch/releases/tag/v0.2.41) から `Etch-0.2.41-arm64.dmg` をダウンロードします。
+1. 検証済みの [GitHub Release v0.2.42](https://github.com/bingjiang0611/Etch/releases/tag/v0.2.42) から `Etch-0.2.42-arm64.dmg` をダウンロードします。
 2. DMG を開き、`Etch.app` を `Applications` にドラッグします。
 3. 初回起動時に Gatekeeper でブロックされた場合は、Finder で Etch を右クリックして「開く」を選択します。それでも開けない場合は、「システム設定 → プライバシーとセキュリティ」から「このまま開く」を選びます。
 
@@ -73,11 +73,11 @@ Web の「Markdown 変換のみ」は動画ツールも Provider も不要です
 
 タスクキューに対応プラットフォームの HTTPS 動画 URL、または HTTP(S) の通常 Web ページ / X status URL を 1～50 件貼り付け、タスク種別を選び、必要に応じて翻訳スタイルを入力します。実行中のタスクは停止でき、最後に確定した段階から再開できます。
 
-現在の公開バージョンは `0.2.41` です。入力は **HTTP(S) URL のみ**で、ローカルファイルの取り込みはまだ計画段階です。
+現在の公開バージョンは `0.2.42` です。入力は **HTTP(S) URL のみ**で、ローカルファイルの取り込みはまだ計画段階です。
 
 ## Bilibili へ投稿
 
-このフローは公開 `v0.2.41` インストーラーに含まれています。
+このフローは公開 `v0.2.42` インストーラーに含まれています。
 
 <p align="center">
   <img src="./assets/readme/bilibili-publish.png" width="100%" alt="Etch の Bilibili 投稿確認画面。タイトル、カテゴリ、タグ、著作権区分、転載元、説明文、カバー画像を表示">
@@ -110,7 +110,7 @@ Web の「Markdown 変換のみ」は動画ツールも Provider も不要です
 | Implemented | Web ページ / X から Markdown / HTML | 通常の Web ページと単一 X status の取得、本文クリーニング、静止画像のローカル化、再開可能な normal/refined 翻訳または変換のみ、対照校正、構造検証、Markdown 書き出し、4 方向プレビュー後のオフライン単一ファイル HTML 公開に対応。完全な thread、引用投稿、poll、X 動画は未展開。 |
 | Implemented | 再開可能なタスク | `task.json` を正本とし、成果物の確定を lease、revision、fingerprint で保護。 |
 | Partial | 動画要約（3 稿選抜の長文 + 挿絵） | 新規タスク作成時に「動画要約」を選択できます：字幕抽出 → 素材分析パック → 外部証拠台帳 → A/B/C の 3 稿を採点して融合 → 中国語の長文と 8-12 枚の挿絵。checkpoint で検証済みの Qoder または Codex を選び、表紙の検収後に残りの画像を 1 枚ずつ生成・永続化します。実動画と実 Provider を使った完全な L3 要約は未検証。 |
-| Implemented | Bilibili への直接投稿 | 現在のソースに、1 アカウントの QR コード接続、手動・自動投稿、複数タスクの同時投稿、検証可能なレシートを実装。公開 `v0.2.41` インストーラーにも収録済みで、実アカウントによる L3 投稿は未検証。 |
+| Implemented | Bilibili への直接投稿 | 現在のソースに、1 アカウントの QR コード接続、手動・自動投稿、複数タスクの同時投稿、検証可能なレシートを実装。公開 `v0.2.42` インストーラーにも収録済みで、実アカウントによる L3 投稿は未検証。 |
 | Partial | Provider、長尺メディア、一般配布 | 4 種類のプロトコルは自動テスト済みですが、実アカウントと現在のサーバー挙動は端末ごとの確認が必要です。全体ディスク予算、Developer ID、公証、自動更新は未実装。 |
 | Planned | ローカルファイルの取り込み | Schema は予約済みですが、UI、APFS clone/copy、空き容量チェック、復旧経路は未実装。 |
 
@@ -127,7 +127,7 @@ npm ci
 npm run dev
 ```
 
-`npm run pack` は `dist/mac-arm64/Etch.app` を構築・検証し、`npm run dist:mac` は `dist/Etch-0.2.41-arm64.dmg` を構築、マウント、検証します。DMG 検証では、ボリューム内の allowlist、App の署名、entitlements、arm64 アーキテクチャ、バージョン、最低 macOS バージョンに加え、固定版 `biliup` sidecar のアーキテクチャ、バージョン、実行権限、SHA-256 を確認します。
+`npm run pack` は `dist/mac-arm64/Etch.app` を構築・検証し、`npm run dist:mac` は `dist/Etch-0.2.42-arm64.dmg` を構築、マウント、検証します。DMG 検証では、ボリューム内の allowlist、App の署名、entitlements、arm64 アーキテクチャ、バージョン、最低 macOS バージョンに加え、固定版 `biliup` sidecar のアーキテクチャ、バージョン、実行権限、SHA-256 を確認します。
 
 </details>
 

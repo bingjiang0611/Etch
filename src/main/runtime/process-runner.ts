@@ -1,10 +1,13 @@
 import { execFile, spawn } from 'node:child_process'
+import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const SIGNAL_GRACE_MS = 2_000
 const GROUP_SETTLE_MS = SIGNAL_GRACE_MS + 500
 const DEFAULT_CAPTURE_LIMIT_BYTES = 8 * 1024 * 1024
+const IDENTITY_PROBE_ATTEMPTS = 10
+const IDENTITY_PROBE_DELAY_MS = 25
 
 export type ProcessIdentityProbe =
   | { state: 'present'; startedAt: string; pgid: number; command: string }
@@ -80,7 +83,7 @@ export async function probeProcessIdentity(pid: number): Promise<ProcessIdentity
       '-o', 'lstart=',
       '-o', 'pgid=',
       '-o', 'command='
-    ], { timeout: 2_000 })
+    ], { timeout: 2_000, env: { ...process.env, LC_ALL: 'C' } })
     const identity = stdout.trimEnd().match(/^(.{24})\s+(\d+)\s+(.*)$/u)
     const pgid = Number(identity?.[2])
     if (!identity?.[1]?.trim() || !Number.isSafeInteger(pgid) || pgid <= 0 || !identity[3]?.trim()) return { state: 'unknown' }
@@ -110,11 +113,19 @@ export async function probeProcessGroupLiveness(pgid: number): Promise<ProcessGr
   if (!Number.isSafeInteger(pgid) || pgid <= 0) return 'unknown'
   try {
     const { stdout } = await execFileAsync('/bin/ps', [
-      '-ww',
-      '-g', String(pgid),
+      '-ax',
+      '-o', 'pgid=',
       '-o', 'state='
     ], { timeout: 2_000 })
-    return classifyProcessGroupStates(stdout)
+    const states: string[] = []
+    for (const line of stdout.split('\n')) {
+      if (!line.trim()) continue
+      const member = line.match(/^\s*(\d+)\s+(\S+)\s*$/u)
+      const memberPgid = Number(member?.[1])
+      if (!member || !Number.isSafeInteger(memberPgid) || memberPgid <= 0) return 'unknown'
+      if (memberPgid === pgid) states.push(member[2])
+    }
+    return classifyProcessGroupStates(states.join('\n'))
   } catch (error) {
     return processIsAbsent(error) ? 'absent' : 'unknown'
   }
@@ -138,7 +149,11 @@ export async function signalVerifiedProcess(
   signal: NodeJS.Signals,
   allowLeaderlessGroup = false
 ): Promise<VerifiedSignalResult> {
-  const identity = await probeProcessIdentity(expected.pid)
+  let identity = await probeProcessIdentity(expected.pid)
+  for (let attempt = 1; identity.state === 'unknown' && attempt < IDENTITY_PROBE_ATTEMPTS; attempt += 1) {
+    await delay(IDENTITY_PROBE_DELAY_MS)
+    identity = await probeProcessIdentity(expected.pid)
+  }
   if (identity.state === 'absent') {
     const group = probeProcessGroup(expected.pgid)
     if (group === 'absent') return 'gone'
